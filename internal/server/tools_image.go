@@ -13,7 +13,7 @@ import (
 func (s *Server) registerImageTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "generate_image",
-		Description: "Generate an image from a text prompt using Google's Gemini image models.",
+		Description: "Generate an image from a text prompt using Google's Gemini image models. Supports optional thinking/reasoning mode for complex compositions.",
 	}, s.handleGenerateImage)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
@@ -28,6 +28,13 @@ func (s *Server) registerImageTools() {
 }
 
 func (s *Server) handleGenerateImage(ctx context.Context, _ *mcp.CallToolRequest, input provider.ImageRequest) (*mcp.CallToolResult, provider.ImageResult, error) {
+	if input.ThinkingBudget > 8192 {
+		return nil, provider.ImageResult{}, fmt.Errorf("thinkingBudget must be <= 8192, got %d", input.ThinkingBudget)
+	}
+	if input.ThinkingBudget > 0 && !input.Thinking {
+		input.Thinking = true
+	}
+
 	result, err := s.images.Generate(ctx, input)
 	if err != nil {
 		return nil, provider.ImageResult{}, fmt.Errorf("generate image: %w", err)
