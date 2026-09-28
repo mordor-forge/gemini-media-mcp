@@ -5,8 +5,10 @@
 //
 //	GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=... go test -tags=e2e ./internal/media/ -run E2E -v -timeout 15m
 //
-// Set GEMINI_MEDIA_E2E_VIDEO=1 to include video. Vertex AI works too
-// (GOOGLE_CLOUD_PROJECT + ADC, or GOOGLE_GENAI_USE_VERTEXAI=true).
+// Set GEMINI_MEDIA_E2E_VIDEO=1 to include video, and
+// GEMINI_MEDIA_E2E_OUTPUT_DIR=<dir> to keep the generated files for review
+// (otherwise they go to a temporary directory that is deleted). Vertex AI
+// works too (GOOGLE_CLOUD_PROJECT + ADC, or GOOGLE_GENAI_USE_VERTEXAI=true).
 package media
 
 import (
@@ -30,7 +32,11 @@ func liveService(t *testing.T) *Service {
 		t.Skip("set GEMINI_MEDIA_E2E=1 to run live tests (they cost money)")
 	}
 	dir := t.TempDir()
-	cfg, err := config.Load(config.Flags{OutputDir: filepath.Join(dir, "out")}, config.OSEnv)
+	outDir := filepath.Join(dir, "out")
+	if keep := os.Getenv("GEMINI_MEDIA_E2E_OUTPUT_DIR"); keep != "" {
+		outDir = keep
+	}
+	cfg, err := config.Load(config.Flags{OutputDir: outDir}, config.OSEnv)
 	if err != nil {
 		t.Fatal(err)
 	}

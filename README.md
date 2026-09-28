@@ -177,6 +177,7 @@ go test -race ./...
 golangci-lint run
 python3 scripts/validate-skills.py skills
 GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=... go test -tags=e2e ./internal/media/ -run E2E -v   # live, costs cents
+# add GEMINI_MEDIA_E2E_VIDEO=1 for the video test (~$0.20), GEMINI_MEDIA_E2E_OUTPUT_DIR=./e2e-out to keep the files
 ```
 
 - [AGENTS.md](AGENTS.md): guide for coding agents and contributors.

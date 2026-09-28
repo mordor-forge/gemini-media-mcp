@@ -19,3 +19,6 @@ coverage.out
 node_modules/
 *.mcpb
 *.tgz
+
+# Local E2E outputs (GEMINI_MEDIA_E2E_OUTPUT_DIR)
+/e2e-out/
