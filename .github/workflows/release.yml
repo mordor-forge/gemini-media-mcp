@@ -1,0 +1,236 @@
+# Release pipeline, triggered by pushing a v* tag.
+#
+#   verify    tests + packaging validation (manifests must already carry the tag's
+#             version: run scripts/sync-version.sh X.Y.Z and commit before tagging)
+#   release   GoReleaser (binaries, archives, Gemini CLI extension archives, GitHub
+#             release) -> MCP Bundle -> npm packages -> stamped server.json
+#   docker    multi-arch image on ghcr.io
+#   registry  publish server.json to the MCP Registry (after npm + image exist)
+#
+# Optional configuration (the workflow succeeds without it):
+#   secrets.NPM_TOKEN               npm automation/granular token with publish rights on
+#                                   gemini-media-mcp and gemini-media-mcp-<os>-<cpu>
+#   vars.NPM_TRUSTED_PUBLISHING     "true" to publish with npm trusted publishing (OIDC)
+#                                   instead of a token; configure this workflow as the
+#                                   trusted publisher of all 7 packages on npmjs.com first
+#   vars.MCP_REGISTRY_PUBLISH       "false" to skip the MCP Registry
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Vet and test
+        run: |
+          go vet ./...
+          go test -race ./...
+      - name: Validate packaging
+        run: scripts/validate-packaging.sh --expect-version "${GITHUB_REF_NAME#v}"
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # GitHub release + assets
+      id-token: write # npm provenance / trusted publishing, build attestations
+      attestations: write
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NPM_TRUSTED_PUBLISHING: ${{ vars.NPM_TRUSTED_PUBLISHING }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      npm_published: ${{ steps.npm.outputs.published }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # changelog
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false # never feed a release build from a shared cache
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24 # npm >= 11.5 for trusted publishing
+          registry-url: https://registry.npmjs.org
+
+      - id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >>"$GITHUB_OUTPUT"
+
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build MCP Bundle
+        id: mcpb
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          bundle=$(scripts/build-mcpb.sh --version "$VERSION")
+          echo "path=$bundle" >>"$GITHUB_OUTPUT"
+          echo "sha256=$(cat "$bundle.sha256")" >>"$GITHUB_OUTPUT"
+
+      - name: Upload MCP Bundle to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$GITHUB_REF_NAME" "${{ steps.mcpb.outputs.path }}" --clobber
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.mcpb
+
+      - name: Build npm packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/build-npm-packages.sh --version "$VERSION"
+
+      # Platform packages first, the launcher last, so `npx gemini-media-mcp@X`
+      # never resolves before its binaries exist. Re-runs skip published versions.
+      - name: Publish to npm
+        id: npm
+        if: env.NPM_TOKEN != '' || env.NPM_TRUSTED_PUBLISHING == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tag=latest
+          case "$VERSION" in *-*) tag=next ;; esac
+          while read -r dir; do
+            name=$(jq -r .name "$dir/package.json")
+            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "$name@$VERSION is already published"
+              continue
+            fi
+            npm publish "$dir" --provenance --access public --tag "$tag"
+          done <dist/npm/publish-order.txt
+          echo "published=true" >>"$GITHUB_OUTPUT"
+
+      - name: Skip npm (no NPM_TOKEN)
+        if: env.NPM_TOKEN == '' && env.NPM_TRUSTED_PUBLISHING != 'true'
+        run: echo "::warning::npm publishing skipped - set secrets.NPM_TOKEN or vars.NPM_TRUSTED_PUBLISHING=true. server.json will omit the npm package."
+
+      - name: Stamp server.json
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.mcpb.outputs.sha256 }}
+          NPM_PUBLISHED: ${{ steps.npm.outputs.published }}
+        run: |
+          scripts/sync-version.sh "$VERSION"
+          jq --arg sha "$SHA256" --arg npm "${NPM_PUBLISHED:-false}" '
+            (.packages[] | select(.registryType == "mcpb") | .fileSha256) = $sha
+            | if $npm == "true" then . else .packages |= map(select(.registryType != "npm")) end' \
+            server.json >dist/server.json
+          cat dist/server.json
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: server-json
+          path: dist/server.json
+          if-no-files-found: error
+
+  docker:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          # 1.2.3, 1.2, 1 and latest for releases; only the exact tag for pre-releases.
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+          labels: |
+            io.modelcontextprotocol.server.name=io.github.mordor-forge/gemini-media-mcp
+          annotations: |
+            io.modelcontextprotocol.server.name=io.github.mordor-forge/gemini-media-mcp
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  registry:
+    needs: [release, docker]
+    if: vars.MCP_REGISTRY_PUBLISH != 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # mcp-publisher login github-oidc (namespace io.github.mordor-forge)
+    env:
+      MCP_PUBLISHER_VERSION: v1.8.1
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: server-json
+      - name: Install mcp-publisher
+        run: |
+          curl -sSfL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher --help >/dev/null
+      - name: Publish to the MCP Registry
+        run: |
+          ./mcp-publisher validate server.json
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish server.json

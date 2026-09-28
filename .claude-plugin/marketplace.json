@@ -1,0 +1,17 @@
+{
+  "name": "mordor-forge",
+  "owner": {
+    "name": "mordor-forge",
+    "url": "https://github.com/mordor-forge"
+  },
+  "description": "Plugins from mordor-forge: Google generative media (Nano Banana, Veo, Gemini TTS, Lyria) for coding agents.",
+  "plugins": [
+    {
+      "name": "gemini-media",
+      "source": "./",
+      "description": "Generate images, video, speech and music with Google's Gemini media models, with cost estimates and budgets.",
+      "category": "design",
+      "tags": ["images", "video", "audio", "music", "gemini", "mcp"]
+    }
+  ]
+}

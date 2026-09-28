@@ -1,0 +1,58 @@
+{
+  "name": "gemini-media",
+  "displayName": "Gemini Media",
+  "version": "1.0.0",
+  "description": "Generate images (Nano Banana), video (Veo), speech (Gemini TTS) and music (Lyria) with Google's generative media models, with cost estimates and spend budgets.",
+  "author": {
+    "name": "mordor-forge",
+    "url": "https://github.com/mordor-forge"
+  },
+  "homepage": "https://github.com/mordor-forge/gemini-media-mcp#readme",
+  "repository": "https://github.com/mordor-forge/gemini-media-mcp",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "gemini",
+    "nano-banana",
+    "veo",
+    "lyria",
+    "text-to-speech",
+    "image-generation",
+    "video-generation",
+    "music-generation"
+  ],
+  "userConfig": {
+    "gemini_api_key": {
+      "type": "string",
+      "title": "Gemini API key",
+      "description": "Optional. Key from https://aistudio.google.com/apikey, stored in your system keychain. Leave empty to use GEMINI_API_KEY / GOOGLE_API_KEY from your environment, the key saved by `npx -y gemini-media-mcp configure --api-key-stdin`, or Vertex AI (GOOGLE_CLOUD_PROJECT + gcloud credentials).",
+      "sensitive": true
+    },
+    "output_dir": {
+      "type": "directory",
+      "title": "Output directory",
+      "description": "Where generated images, videos and audio are saved.",
+      "default": "~/generated_media"
+    },
+    "daily_budget_usd": {
+      "type": "number",
+      "title": "Daily budget (USD)",
+      "description": "Optional. Refuse new generations once today's estimated spend reaches this amount. Leave empty to keep the budget from your config file (none by default).",
+      "min": 0
+    }
+  },
+  "mcpServers": {
+    "gemini-media": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "gemini-media-mcp@1.0.0"
+      ],
+      "env": {
+        "GEMINI_MEDIA_API_KEY": "${user_config.gemini_api_key}",
+        "GEMINI_MEDIA_OUTPUT_DIR": "${user_config.output_dir}",
+        "GEMINI_MEDIA_BUDGET_DAILY_USD": "${user_config.daily_budget_usd}"
+      }
+    }
+  }
+}

@@ -221,6 +221,21 @@ Google returns no cost with any response, and Veo operations carry no usage at a
 | Speech | Gemini 3.8 Flash / Flash-Lite TTS (verbatim text plus per-turn `speech_metadata` style, injected through the SDK's request hook until the SDK ships the field); legacy 2.5/3.1 models get in-text directions automatically; 2-speaker dialogue; all 30 voices; custom `voice_…` IDs; WAV output from both PCM and WAV responses |
 | Music | Lyria 3.5 (full songs, WAV, image inspiration), Lyria 3 Clip / Pro; lyrics and structure returned |
 
+### 2.8 Packaging for agent harnesses
+
+One repository serves every harness from a single canonical `skills/` directory. There are no symlinks and no duplicated skill content. Every harness launches the server with `npx -y gemini-media-mcp`: a small npm wrapper that pulls a per-platform Go binary through `optionalDependencies`, the pattern esbuild and kubernetes-mcp-server use.
+
+| Harness | Manifest |
+|---|---|
+| Codex, VS Code/Copilot, Cursor | `plugin.json` + `mcp.json` (Agent Plugins 1.0) and a `.codex-plugin/` overlay that forwards credential environment variables |
+| Claude Code, claude.ai, Cowork | `.claude-plugin/plugin.json` (with a keychain-stored `userConfig` API key), plus `.claude-plugin/marketplace.json` (also read by Codex, VS Code and `npx skills`) |
+| Gemini CLI | `gemini-extension.json` with `settings`, since the CLI strips `*KEY*` variables. Release archives are named for the CLI's asset matcher |
+| Claude Desktop | `mcpb/` bundle (manifest 0.3, universal macOS binary, Linux architecture launcher) |
+| MCP Registry | `server.json` (schema 2025-12-11) with npm, OCI and MCPB packages; published through GitHub OIDC |
+| Docker | distroless non-root image on GHCR, `/output` and `/state` volumes, carrying the registry label |
+
+A release is one tag. `scripts/sync-version.sh` stamps the version into every manifest, and `scripts/validate-packaging.sh` (also run in CI) checks versions, schemas and layout, calling `claude plugin validate`, `mcpb validate` and `mcp-publisher validate` when those tools are installed. `release.yml` then runs GoReleaser, the MCPB bundle, npm publishing (skipped unless a token or trusted publishing is configured), the GHCR image and the registry publish. Per-client install snippets are in [`packaging/INSTALL-SNIPPETS.md`](../packaging/INSTALL-SNIPPETS.md).
+
 ---
 
 ## 3. What I deliberately did not do (follow-ups)

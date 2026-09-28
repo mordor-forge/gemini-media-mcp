@@ -2,6 +2,8 @@ module github.com/mordor-forge/gemini-media-mcp
 
 go 1.26.0
 
+toolchain go1.26.8
+
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	go.yaml.in/yaml/v3 v3.0.5
