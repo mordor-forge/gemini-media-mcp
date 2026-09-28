@@ -1,0 +1,20 @@
+{
+  "should_trigger": [
+    "make a 20 second promo video for our lamp with voiceover and music",
+    "create a podcast intro with music and a voice saying the show name",
+    "produce a short story video, 4 scenes, same character, with narration",
+    "social ad for our app launch, vertical, with captions and a beat",
+    "turn this product photo into an animated ad with a jingle",
+    "trailer for my indie game: a few shots, epic music and a narrator",
+    "30 second explainer about our API with voiceover and b-roll",
+    "plan and budget three Reels for our cafe, each with music"
+  ],
+  "should_not_trigger": [
+    "just generate one image of a desk lamp",
+    "make a single 8 second clip of waves",
+    "record a voiceover for this script",
+    "compose a 30 second jingle",
+    "edit my wedding video in Premiere and color grade it",
+    "write a storyboard document for my film, I will shoot it myself"
+  ]
+}

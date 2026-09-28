@@ -1,0 +1,43 @@
+{
+  "skill_name": "gemini-media-production",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Make a 20-second vertical promo for our new desk lamp (lamp.jpg) for Instagram Reels, with a voiceover and music.",
+      "expected_output": "Writes a plan first (9:16, shot list with modes/models/durations respecting Veo rules, voiceover script about 45-50 words, instrumental music cue). Prices every asset with estimate_cost, presents draft vs final totals and asks for approval. Uses lamp.jpg as reference for keyframes and ingredients, runs video jobs with generate_video + get_video polling, generates speech and music, and assembles with the ffmpeg recipes (concat, ducked VO over music) if a shell with ffmpeg exists. Reports the final file, asset paths and total spend.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Create a 15-second intro for my podcast 'Night Shift Stories': moody music and a voice saying the show name.",
+      "expected_output": "No video. Generates an instrumental clip with gemini-music guidance and a short voice line with gemini-speech guidance (style in style, not in text), then mixes them with the podcast-intro ffmpeg recipe (music first, voice delayed, ducking, fade), trimming to about 15 s. If no ffmpeg, delivers both files plus timing instructions.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Produce a 1-minute short film in 4K about a lighthouse keeper: 8 shots, dialogue, and an orchestral score.",
+      "expected_output": "Treats it as expensive: builds the shot list, calls estimate_cost for 8 fast/standard 4k 8-second clips (compare true), keyframes, speech and music, shows draft (lite 720p) and final totals, and waits for approval before any video call. Handles [confirmation] by asking and retrying with the approved approvedCostUsd; stops on [budget].",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Scheduled job, no human available: produce a 16:9 teaser (~24 s) for our API launch using the copy in launch.md.",
+      "expected_output": "Does not ask questions. Makes a compact plan, uses the draft path (nb2 keyframes, lite 720p clips, tts voiceover, clip music), keeps every call below the approval threshold and within the configured budget, produces a full draft cut if ffmpeg is available (otherwise an edit decision list), and reports plan, asset paths, final file, spend and the cost of a final-quality version.",
+      "files": [
+        "evals/files/launch.md"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Put together a short ad from the images and audio you just made - I'm using this in a browser chat with no terminal.",
+      "expected_output": "Recognizes that ffmpeg assembly is not possible and delivers an edit decision list instead: ordered asset paths with in/out times, voiceover start, music level and fades, plus any missing assets to generate. Does not claim to have rendered a final video.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Make a three-scene story video of the same little fox character: finding a lantern, crossing a river, reaching home at night.",
+      "expected_output": "Creates a character sheet with generate_image, writes a character bible sentence reused in every prompt, generates per-scene keyframes with the sheet in referenceImages at one aspect ratio, animates them (image-to-video or ingredients on fast), keeps style words consistent, and assembles or lists the clips. Estimates and approves cost before the video stage.",
+      "files": []
+    }
+  ]
+}

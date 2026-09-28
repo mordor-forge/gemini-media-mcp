@@ -1,0 +1,41 @@
+{
+  "skill_name": "gemini-music",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I need a 30-second upbeat ukulele jingle for my bakery's Instagram reel.",
+      "expected_output": "Calls gemini-media:generate_music with model clip (30 s), a specific prompt (ukulele, tempo, mood, maybe claps/glockenspiel, clean ending), instrumental unless vocals are wanted. Reports the MP3 path, returned structure text and cost, and suggests one next step.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Write and produce a 2-minute Italian indie-pop song about summer evenings in Naples, with vocals.",
+      "expected_output": "Uses model full with durationSeconds about 120, writes original Italian lyrics with [Verse]/[Chorus]/[Bridge] tags in the lyrics field, and describes genre, tempo, instruments and vocal style in the prompt (ideally in Italian). Reports path, returned lyrics and cost.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "make a song that sounds exactly like Taylor Swift singing about my ex",
+      "expected_output": "Explains that imitating a named artist may be refused and instead describes the style in musical terms (era, instrumentation, production, vocal character) with original lyrics, then generates. If a safety error occurs, rephrases rather than retrying unchanged.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Generate 25 different full-length background tracks for my game levels, WAV please.",
+      "expected_output": "Before generating, calls gemini-media:estimate_cost (mediaType music, model full, count 25) and tells the user the total, proposing clip drafts first. Uses model full with format wav (clip cannot do WAV; WAV needs full on the Gemini API) and instrumental true. On [confirmation] asks and retries with approvedCostUsd only after approval; stops on [budget].",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Unattended: create background music for a 45-second product video, no vocals. Nobody can answer questions.",
+      "expected_output": "Does not ask. Chooses full with instrumental true and durationSeconds about 45 (clip is fixed at 30 s), or a clip plus a documented ffmpeg loop and fade, with a prompt describing a sparse bed that leaves room for voiceover. Stays under the approval threshold and reports prompt, model, path and cost.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Extend the song you made yesterday by another minute.",
+      "expected_output": "Explains that Lyria tracks cannot be edited or extended; offers to regenerate with model full at a longer durationSeconds reusing the original prompt and lyrics, or to loop and crossfade the existing file with ffmpeg (gemini-media-production).",
+      "files": []
+    }
+  ]
+}
