@@ -37,7 +37,10 @@ if [ -z "$version" ]; then
   version=$(jq -r '.version' "$dist/metadata.json")
 fi
 version=${version#v}
-[ -n "$version" ] && [ "$version" != "null" ] || { echo "could not determine the version" >&2; exit 1; }
+if [ -z "$version" ] || [ "$version" = "null" ]; then
+  echo "could not determine the version" >&2
+  exit 1
+fi
 
 rm -rf "$out"
 mkdir -p "$out"
