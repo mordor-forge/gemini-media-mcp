@@ -64,10 +64,6 @@ func TestSaveUniqueNamesAndProvenance(t *testing.T) {
 			t.Fatalf("temp file left behind: %s", e.Name())
 		}
 	}
-	recent, err := s.Recent(2)
-	if err != nil || len(recent) != 2 {
-		t.Fatalf("Recent = %v, %v", recent, err)
-	}
 }
 
 func TestOpenRejectsTraversal(t *testing.T) {

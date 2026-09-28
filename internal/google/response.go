@@ -44,9 +44,6 @@ type Usage struct {
 	TrafficType      string         `json:"trafficType,omitempty"`
 }
 
-// Empty reports whether no usage was returned.
-func (u Usage) Empty() bool { return u.TotalTokens == 0 && u.PromptTokens == 0 && u.OutputTokens == 0 }
-
 // ParseResponse extracts media, text and metadata. It ignores "thought" parts
 // (interim drafts some image models emit) and returns a classified safety
 // error when the response was blocked and carries no media.

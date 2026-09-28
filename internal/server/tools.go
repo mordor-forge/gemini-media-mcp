@@ -315,7 +315,7 @@ func imageToolResult(verb string, res *media.ImageResult) *mcp.CallToolResult {
 	content := []mcp.Content{&mcp.TextContent{Text: joinLines(lines)}}
 	for i, f := range res.Files {
 		content = append(content, resourceLink(f))
-		if i < len(res.Previews) {
+		if i < len(res.Previews) && res.Previews[i] != nil {
 			content = append(content, &mcp.ImageContent{Data: res.Previews[i], MIMEType: "image/jpeg"})
 		}
 	}

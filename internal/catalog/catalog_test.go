@@ -154,6 +154,9 @@ func TestValidateRules(t *testing.T) {
 	if _, err := lite.Validate(Params{"referenceImages": "1"}, "gemini-api"); err == nil {
 		t.Fatal("lite has no reference images")
 	}
+	if _, err := lite.Validate(Params{"lastFrame": "x"}, "gemini-api"); err == nil {
+		t.Fatal("lite lastFrame without image must fail")
+	}
 	if _, err := fast.Validate(Params{"referenceImages": "2", "image": "x"}, "gemini-api"); err == nil {
 		t.Fatal("reference images + first frame must fail")
 	}
@@ -291,6 +294,23 @@ models:
 	}
 	if _, err := s.Status(); err != nil {
 		t.Fatalf("status should clear after a good reload: %v", err)
+	}
+}
+
+func TestBrokenOverrideAtStartupFallsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(path, []byte("models: [oops"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewSource(path, nil, nil)
+	if err != nil {
+		t.Fatalf("a broken override must not prevent startup: %v", err)
+	}
+	if _, ok := s.Get().Lookup("nb2"); !ok {
+		t.Fatal("embedded catalog should be served")
+	}
+	if _, err := s.Status(); err == nil {
+		t.Fatal("the override error must be reported")
 	}
 }
 

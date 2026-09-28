@@ -223,21 +223,21 @@ func TestEditImageDefaultsToSourceModelAndRestrictsInputs(t *testing.T) {
 func TestVideoLifecycle(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	e.api.OpDoneAfter = 1
-	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "waves", Model: "fast", Resolution: "1080p", Seed: ptr(7)})
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "waves", Model: "fast", Resolution: "720p", Seed: ptr(7)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.State != jobs.StateWorking || !job.Cost.Pending || job.Cost.EstimatedUSD != 0.96 || !jobs.IsJobID(job.JobID) {
+	if job.State != jobs.StateWorking || !job.Cost.Pending || job.Cost.EstimatedUSD != 0.8 || !jobs.IsJobID(job.JobID) {
 		t.Fatalf("job = %+v", job)
 	}
 	vc := e.api.VideoCalls[0]
-	if vc.Model != "veo-3.1-fast-generate-preview" || vc.Config.Resolution != "1080p" || vc.Config.Seed != nil {
+	if vc.Model != "veo-3.1-fast-generate-preview" || vc.Config.Resolution != "720p" || vc.Config.Seed != nil {
 		t.Fatalf("video call = %+v (seed must be dropped on the Gemini API)", vc.Config)
 	}
 	if !strings.Contains(strings.Join(job.Warnings, " "), "seed") {
 		t.Fatalf("expected a dropped-seed warning: %v", job.Warnings)
 	}
-	if s := e.ledger.Summarize("all", 5); s.Totals.Pending != 0.96 {
+	if s := e.ledger.Summarize("all", 5); s.Totals.Pending != 0.8 {
 		t.Fatalf("pending spend = %+v", s.Totals)
 	}
 
@@ -248,7 +248,7 @@ func TestVideoLifecycle(t *testing.T) {
 	if done.State != jobs.StateCompleted || len(done.Files) != 1 || done.Files[0].DurationSeconds != 8 || done.RemoteExpiresAt == nil {
 		t.Fatalf("completed job = %+v", done)
 	}
-	if s := e.ledger.Summarize("all", 5); s.Totals.All != 0.96 || s.Totals.Pending != 0 {
+	if s := e.ledger.Summarize("all", 5); s.Totals.All != 0.8 || s.Totals.Pending != 0 {
 		t.Fatalf("settled spend = %+v", s.Totals)
 	}
 	again, _ := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID})
@@ -285,6 +285,13 @@ func TestVideoValidationAndLegacyOperations(t *testing.T) {
 	}
 	if _, err := e.svc.ExtendVideo(context.Background(), ExtendVideoRequest{JobID: lite.JobID, Prompt: "more"}); apperr.KindOf(err) != apperr.Invalid {
 		t.Fatalf("lite cannot be extended: %v", err)
+	}
+	hd, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "fast", Resolution: "1080p", WaitSeconds: 30})
+	if err != nil || hd.State != jobs.StateCompleted {
+		t.Fatalf("1080p job: %+v %v", hd, err)
+	}
+	if _, err := e.svc.ExtendVideo(context.Background(), ExtendVideoRequest{JobID: hd.JobID, Prompt: "more"}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "720p") {
+		t.Fatalf("only 720p clips can be extended: %v", err)
 	}
 	// Operation names from v0.x of this server still work.
 	legacy, err := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: "models/veo-3.1-generate-preview/operations/abc", WaitSeconds: ptr(0)})
@@ -505,5 +512,89 @@ func TestUnconfiguredModeExplainsSetup(t *testing.T) {
 	}
 	if len(e.api.ContentCalls)+len(e.api.VideoCalls) != 0 || e.ledger.Summarize("all", 5).Calls != 0 {
 		t.Fatal("no API calls or ledger entries without credentials")
+	}
+}
+
+func TestUnpricedModelsCannotBypassBudgets(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{DailyUSD: 5})
+	_, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "veo-9.0-generate-preview"})
+	if apperr.KindOf(err) != apperr.Confirm || len(e.api.VideoCalls) != 0 {
+		t.Fatalf("unpriced model under a budget must require approval first: %v", err)
+	}
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "veo-9.0-generate-preview", ApprovedCostUSD: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Cost.EstimatedUSD != 2 || e.ledger.Summarize("all", 1).Totals.Pending != 2 {
+		t.Fatalf("approved maximum should be reserved as the estimate: %+v", job.Cost)
+	}
+	// Without any budget configured, unpriced models just warn.
+	free := newEnv(t, nil, spend.Budget{})
+	if _, err := free.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "veo-9.0-generate-preview"}); err != nil {
+		t.Fatalf("no budget, no approval needed: %v", err)
+	}
+}
+
+func TestBilledOutputThatCannotBeSavedIsStillCharged(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	data := pngData(t)
+	e.api.ContentFn = func(googletest.ContentCall) (*genai.GenerateContentResponse, error) {
+		return googletest.ImageResponse(data), nil
+	}
+	// Replace the output directory with a file so saving fails.
+	if err := os.RemoveAll(e.store.Dir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.store.Dir(), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.svc.GenerateImage(context.Background(), ImageRequest{Prompt: "x"})
+	if err == nil || !strings.Contains(err.Error(), "billed") {
+		t.Fatalf("want a billed-but-unsaved error, got %v", err)
+	}
+	s := e.ledger.Summarize("all", 1)
+	if s.Totals.All < 0.06 || s.Recent[0].Status != spend.StatusOK || s.Recent[0].Error == "" {
+		t.Fatalf("the billed call must be recorded as spent: %+v", s)
+	}
+}
+
+func TestUndownloadableVideoStopsRetryingAndSettles(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	e.api.DownloadErr = genai.APIError{Code: 404, Message: "file expired"}
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != jobs.StateFailed || !strings.Contains(got.Error, "billed") {
+		t.Fatalf("permanent download failure should end the job: %+v", got)
+	}
+	s := e.ledger.Summarize("all", 1)
+	if s.Totals.Pending != 0 || s.Totals.All != 0.4 {
+		t.Fatalf("the generated video is billed and no longer pending: %+v", s.Totals)
+	}
+
+	// Transient download errors are retried on later calls, up to a limit.
+	e2 := newEnv(t, nil, spend.Budget{})
+	e2.api.DownloadErr = genai.APIError{Code: 503, Message: "busy"}
+	job, _ = e2.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	for i := 0; i < maxDownloadAttempts; i++ {
+		got, _ = e2.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
+	}
+	if got.State != jobs.StateFailed || e2.api.Downloads != maxDownloadAttempts {
+		t.Fatalf("transient failures: state=%s downloads=%d", got.State, e2.api.Downloads)
+	}
+}
+
+func TestCanceledWaitKeepsTheHandle(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	e.api.OpDoneAfter = 100
+	e.svc.sleep = func(context.Context, time.Duration) error { return context.Canceled }
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", WaitSeconds: 60})
+	if err != nil || job.JobID == "" || job.State != jobs.StateWorking {
+		t.Fatalf("a canceled wait must still return the job handle: %+v %v", job, err)
 	}
 }

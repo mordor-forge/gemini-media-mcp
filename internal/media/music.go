@@ -46,8 +46,7 @@ func (s *Service) GenerateMusic(ctx context.Context, req MusicRequest) (*MusicRe
 		return nil, apperr.Invalidf("prompt is required")
 	}
 	format := strings.ToLower(req.Format)
-	modelName := firstNonEmpty(req.Model, s.cfg.Defaults.Music)
-	r, location, warnings, err := s.resolve(modelName, catalog.Music)
+	r, location, warnings, err := s.resolve(req.Model, catalog.Music)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +72,7 @@ func (s *Service) GenerateMusic(ctx context.Context, req MusicRequest) (*MusicRe
 
 	prompt := musicPrompt(req, m)
 	est := m.EstimateMusic(1)
-	res, err := s.reserve(est, req.ApprovedCostUSD)
+	res, err := s.reserve(&est, req.ApprovedCostUSD)
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +98,9 @@ func (s *Service) GenerateMusic(ctx context.Context, req MusicRequest) (*MusicRe
 		Tool: "generate_music", Model: m.ID, Prompt: prompt, Inputs: refsOf(images), ModelText: parsed.Text,
 	})
 	if err != nil {
-		return nil, s.fail(res, entry, fmt.Errorf("saving music: %w", err))
+		entry.Status, entry.Usage, entry.Error = spend.StatusOK, parsed.Usage, "saving output: "+err.Error()
+		cost := s.settle(res, entry, est, nil) // billed even though saving failed
+		return nil, fmt.Errorf("the music was generated and billed (~$%.2f) but could not be saved: %w", cost.USD, err)
 	}
 	entry.Status = spend.StatusOK
 	entry.Usage = parsed.Usage

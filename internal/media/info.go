@@ -156,20 +156,12 @@ func (s *Service) EstimateCost(_ context.Context, req EstimateRequest) (*Estimat
 	if mt == "audio" || mt == "tts" {
 		mt = catalog.Speech
 	}
-	var def string
 	switch mt {
-	case catalog.Image:
-		def = s.cfg.Defaults.Image
-	case catalog.Video:
-		def = s.cfg.Defaults.Video
-	case catalog.Speech:
-		def = s.cfg.Defaults.Speech
-	case catalog.Music:
-		def = s.cfg.Defaults.Music
+	case catalog.Image, catalog.Video, catalog.Speech, catalog.Music:
 	default:
 		return nil, apperr.Invalidf("mediaType must be image, video, speech or music")
 	}
-	r, location, _, err := s.resolve(firstNonEmpty(req.Model, def), mt)
+	r, location, _, err := s.resolve(req.Model, mt)
 	if err != nil {
 		return nil, err
 	}
@@ -246,10 +238,10 @@ func (s *Service) Usage(_ context.Context, req UsageRequest) (*UsageResult, erro
 		return nil, apperr.Invalidf("period must be session, today, month or all")
 	}
 	recent := req.Recent
-	if recent == 0 {
+	if recent <= 0 {
 		recent = 10
 	}
-	recent = min(max(recent, 0), 100)
+	recent = min(recent, 100)
 	out := &UsageResult{
 		Period:     period,
 		Summary:    s.ledger.Summarize(period, recent),

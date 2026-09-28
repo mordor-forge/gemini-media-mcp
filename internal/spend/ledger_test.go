@@ -95,6 +95,12 @@ func TestPendingJobUpdatesAndCrossProcessVisibility(t *testing.T) {
 	if !ok || got.Status != StatusFailed {
 		t.Fatalf("Get = %+v", got)
 	}
+	// An entry written by another process is visible to Get without a Reserve first.
+	r3, _ := a.Reserve(0.1, 0)
+	fromA, _ := r3.Settle(Entry{Tool: "t", Model: "m", Status: StatusPending, CostUSD: 0.1})
+	if _, ok := b.Get(fromA.ID); !ok {
+		t.Fatal("Get must refresh from disk")
+	}
 }
 
 func TestLedgerToleratesCorruptLines(t *testing.T) {

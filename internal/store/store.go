@@ -198,52 +198,6 @@ func (s *Store) Open(uriOrName string) (string, []byte, error) {
 	return path, data, nil
 }
 
-// Recent lists up to n most recently modified media files.
-func (s *Store) Recent(n int) ([]Asset, error) {
-	entries, err := os.ReadDir(s.dir)
-	if err != nil {
-		return nil, err
-	}
-	type item struct {
-		a   Asset
-		mod time.Time
-	}
-	var items []item
-	for _, e := range entries {
-		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		items = append(items, item{
-			a: Asset{
-				Path:     filepath.Join(s.dir, e.Name()),
-				Name:     e.Name(),
-				URI:      URIScheme + e.Name(),
-				MIMEType: MIMEFromExt(e.Name()),
-				Bytes:    info.Size(),
-			},
-			mod: info.ModTime(),
-		})
-	}
-	// Newest first.
-	for i := 1; i < len(items); i++ {
-		for j := i; j > 0 && items[j].mod.After(items[j-1].mod); j-- {
-			items[j], items[j-1] = items[j-1], items[j]
-		}
-	}
-	if n > 0 && len(items) > n {
-		items = items[:n]
-	}
-	out := make([]Asset, len(items))
-	for i, it := range items {
-		out[i] = it.a
-	}
-	return out, nil
-}
-
 var slugRe = regexp.MustCompile(`[^a-z0-9._-]+`)
 
 func slugify(s string) string {

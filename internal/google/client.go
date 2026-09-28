@@ -113,9 +113,10 @@ func (p *Pool) clientConfig(location string) *genai.ClientConfig {
 			Attempts:     &attempts,
 			InitialDelay: &initial,
 			MaxDelay:     &maxDelay,
-			// 408 is excluded on purpose: a timed-out generation may still
-			// complete (and bill) server-side, so retrying could double-charge.
-			HTTPStatusCodes: []int32{429, 500, 502, 503, 504},
+			// Only codes meaning "not processed" are retried. Generation calls
+			// are billed and not idempotent: after a 500/504/408 the request
+			// may still complete server-side, so a retry could double-charge.
+			HTTPStatusCodes: []int32{429, 503},
 		}
 	}
 	return cc

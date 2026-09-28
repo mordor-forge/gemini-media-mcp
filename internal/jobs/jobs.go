@@ -43,16 +43,17 @@ type Job struct {
 	Prompt      string         `json:"prompt,omitempty"`
 	Params      map[string]any `json:"params,omitempty"`
 	OutputName  string         `json:"outputName,omitempty"`
-	Owner       string         `json:"owner,omitempty"`
 	LedgerID    string         `json:"ledgerId,omitempty"`
 	EstimateUSD float64        `json:"estimateUsd,omitempty"`
 	State       string         `json:"state"`
 	Error       string         `json:"error,omitempty"`
 	Outputs     []store.Asset  `json:"outputs,omitempty"`
 	ParentID    string         `json:"parentId,omitempty"`
-	CreatedAt   time.Time      `json:"createdAt"`
-	UpdatedAt   time.Time      `json:"updatedAt"`
-	CompletedAt *time.Time     `json:"completedAt,omitempty"`
+	// DownloadAttempts counts failed downloads of a finished operation.
+	DownloadAttempts int        `json:"downloadAttempts,omitempty"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+	CompletedAt      *time.Time `json:"completedAt,omitempty"`
 	// RemoteExpiresAt is when the provider deletes the generated output
 	// (Gemini API keeps videos for two days).
 	RemoteExpiresAt *time.Time `json:"remoteExpiresAt,omitempty"`

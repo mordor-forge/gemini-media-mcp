@@ -272,6 +272,9 @@ func cmdConfigure(args []string, stdin io.Reader, stdout io.Writer) error {
 		return fmt.Errorf("%w\nflags: --api-key-stdin --backend --project --location --output-dir --daily-budget-usd --config", err)
 	}
 	if *path == "" {
+		*path = os.Getenv("GEMINI_MEDIA_CONFIG")
+	}
+	if *path == "" {
 		dir, err := os.UserConfigDir()
 		if err != nil {
 			return err

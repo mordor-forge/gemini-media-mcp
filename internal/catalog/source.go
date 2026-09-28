@@ -44,7 +44,15 @@ func NewSource(path string, defaults map[string]string, log *slog.Logger) (*Sour
 	}
 	s := &Source{base: embedded, path: path, defaults: defaults, now: time.Now, log: log}
 	if err := s.reload(true); err != nil {
-		return nil, err
+		// Never fail startup over a bad override: serve the embedded catalog
+		// and report the problem via Status (get_config, list_models).
+		log.Warn("catalog override ignored; using the built-in catalog", "err", err)
+		saved := s.path
+		s.path = ""
+		if err2 := s.reload(true); err2 != nil {
+			return nil, err2 // the embedded catalog itself is broken
+		}
+		s.path, s.lastErr = saved, err
 	}
 	return s, nil
 }

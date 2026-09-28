@@ -81,14 +81,12 @@ func (s *Store) LoadInput(ref string, pol InputPolicy) (*Input, error) {
 	}
 	path = expandHome(path)
 
-	// A bare name that does not exist relative to the working directory is
-	// looked up in the output directory, so agents can chain outputs by name.
+	// A bare file name refers to an earlier output when one exists, so agents
+	// can chain outputs by name regardless of the server's working directory.
 	if !filepath.IsAbs(path) && filepath.Base(path) == path {
-		if _, err := os.Stat(path); err != nil {
-			candidate := filepath.Join(s.dir, path)
-			if _, err2 := os.Stat(candidate); err2 == nil {
-				path = candidate
-			}
+		candidate := filepath.Join(s.dir, path)
+		if _, err := os.Stat(candidate); err == nil {
+			path = candidate
 		}
 	}
 

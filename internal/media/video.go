@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,9 @@ const DefaultGetVideoWait = 45
 
 // geminiVideoRetention is how long the Gemini API keeps generated videos.
 const geminiVideoRetention = 48 * time.Hour
+
+// maxDownloadAttempts bounds retries of a finished job's download.
+const maxDownloadAttempts = 3
 
 // VideoRequest is the input of generate_video.
 type VideoRequest struct {
@@ -88,11 +92,7 @@ func (s *Service) GenerateVideo(ctx context.Context, req VideoRequest) (*VideoJo
 	if err := s.videoAllowed(); err != nil {
 		return nil, err
 	}
-	modelName := req.Model
-	if modelName == "" {
-		modelName = s.cfg.Defaults.Video
-	}
-	r, location, warnings, err := s.resolve(modelName, catalog.Video)
+	r, location, warnings, err := s.resolve(req.Model, catalog.Video)
 	if err != nil {
 		return nil, err
 	}
@@ -155,12 +155,12 @@ func (s *Service) GenerateVideo(ctx context.Context, req VideoRequest) (*VideoJo
 		d := int32(req.DurationSeconds)
 		vcfg.DurationSeconds = &d
 	}
-	if req.Seed != nil && !contains(dropped, "seed") {
+	if req.Seed != nil && !slices.Contains(dropped, "seed") {
 		sd := int32(*req.Seed)
 		vcfg.Seed = &sd
 	}
 	withAudio := true
-	if req.GenerateAudio != nil && !contains(dropped, "generateAudio") {
+	if req.GenerateAudio != nil && !slices.Contains(dropped, "generateAudio") {
 		vcfg.GenerateAudio = req.GenerateAudio
 		withAudio = *req.GenerateAudio
 	}
@@ -223,6 +223,9 @@ func (s *Service) ExtendVideo(ctx context.Context, req ExtendVideoRequest) (*Vid
 	if !m.Capabilities.Extend {
 		return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s does not support extension", m.ID), Hint: "Generate the first clip with fast or standard to be able to extend it."}
 	}
+	if res, _ := parent.Params["resolution"].(string); res != "" && !strings.EqualFold(res, "720p") {
+		return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("job %s is %s; Veo can only extend 720p clips", parent.ID, res), Hint: "Generate the base clip at 720p to extend it, or start a new clip from its last frame (generate_video with image)."}
+	}
 	var warnings []string
 	seed := ""
 	if req.Seed != nil {
@@ -239,7 +242,7 @@ func (s *Service) ExtendVideo(ctx context.Context, req ExtendVideoRequest) (*Vid
 		return nil, err
 	}
 	vcfg := &genai.GenerateVideosConfig{NegativePrompt: req.NegativePrompt}
-	if req.Seed != nil && !contains(dropped, "seed") {
+	if req.Seed != nil && !slices.Contains(dropped, "seed") {
 		sd := int32(*req.Seed)
 		vcfg.Seed = &sd
 	}
@@ -262,7 +265,7 @@ func (s *Service) videoAllowed() error {
 }
 
 func (s *Service) startVideo(ctx context.Context, tool string, m *catalog.Model, apiID, location string, src *genai.GenerateVideosSource, vcfg *genai.GenerateVideosConfig, est catalog.Estimate, prompt string, params map[string]any, outName, parentID string, approved float64, wait int, warnings []string) (*VideoJob, error) {
-	res, err := s.reserve(est, approved)
+	res, err := s.reserve(&est, approved)
 	if err != nil {
 		return nil, err
 	}
@@ -294,14 +297,20 @@ func (s *Service) startVideo(ctx context.Context, tool string, m *catalog.Model,
 	}
 	job.LedgerID = settled.ID
 	if err := s.jobs.Put(job); err != nil {
-		return nil, fmt.Errorf("saving job: %w", err)
+		// The operation is already running (and billing): never drop the
+		// handle. get_video accepts operation names as a fallback.
+		s.log.Error("saving video job failed", "job", job.ID, "err", err)
+		out := s.jobView(job)
+		out.JobID = op.Name
+		out.Warnings = append(warnings, "the job record could not be saved ("+err.Error()+"); pass this operation name as jobId to get_video")
+		return out, nil
 	}
 
 	var out *VideoJob
 	if wait <= 0 {
 		out = s.jobView(job) // return the handle without an immediate re-poll
-	} else if out, err = s.pollJob(ctx, job, op, wait); err != nil {
-		return nil, err
+	} else {
+		out = s.pollJob(ctx, job, op, wait)
 	}
 	out.Warnings = append(warnings, out.Warnings...)
 	return out, nil
@@ -320,7 +329,7 @@ func (s *Service) GetVideo(ctx context.Context, req GetVideoRequest) (*VideoJob,
 	if req.WaitSeconds != nil {
 		wait = *req.WaitSeconds
 	}
-	return s.pollJob(ctx, job, nil, wait)
+	return s.pollJob(ctx, job, nil, wait), nil
 }
 
 var opModelRe = regexp.MustCompile(`models/([^/]+)/operations/`)
@@ -371,52 +380,70 @@ func (s *Service) lockJob(id string) func() {
 	return mu.Unlock
 }
 
-// pollJob checks the job until it finishes or wait elapses. op may carry an
-// already-fetched operation.
-func (s *Service) pollJob(ctx context.Context, job *jobs.Job, op *genai.GenerateVideosOperation, wait int) (*VideoJob, error) {
-	unlock := s.lockJob(job.ID)
-	defer unlock()
-	// Re-read under the lock: another call may have finished the job.
-	if fresh, err := s.jobs.Get(job.ID); err == nil {
-		job = fresh
-	}
+// pollJob checks the job until it finishes or wait elapses. fresh may carry
+// the just-created operation (skips the first status call). It never returns
+// an error: the job keeps running server-side, so callers always get a handle.
+func (s *Service) pollJob(ctx context.Context, job *jobs.Job, fresh *genai.GenerateVideosOperation, wait int) *VideoJob {
 	wait = min(max(wait, 0), s.cfg.MaxVideoWaitSeconds)
 	deadline := s.now().Add(time.Duration(wait) * time.Second)
 	interval := 5 * time.Second
+	skipFetch := fresh != nil && !fresh.Done
 
-	for !job.Done() {
-		if op == nil || !op.Done {
-			fetched, err := s.api.GetVideosOperation(ctx, job.Location, &genai.GenerateVideosOperation{Name: job.Operation})
-			if err != nil {
-				cerr := google.Classify(err, "checking video job", job.Model, s.backend())
-				if apperr.KindOf(cerr) == apperr.Canceled {
-					return nil, cerr
-				}
-				// Transient polling failures should not lose the job.
-				out := s.jobView(job)
-				out.Warnings = append(out.Warnings, "status check failed: "+truncate(cerr.Error(), 200))
-				out.Next = "Call get_video again in a little while."
-				return out, nil
+	for {
+		if !skipFetch {
+			view, done := s.checkJob(ctx, job)
+			if done {
+				return view.VideoJob
 			}
-			op = fetched
+			job = view.job
 		}
-		if op.Done {
-			s.finishJob(ctx, job, op)
-			break
-		}
+		skipFetch = false
 		remaining := deadline.Sub(s.now())
 		if remaining <= 0 {
-			break
+			return s.jobView(job)
 		}
 		elapsed := s.now().Sub(job.CreatedAt).Seconds()
 		progress(ctx, fmt.Sprintf("video job %s running for %.0fs", job.ID, elapsed), elapsed, 0)
 		if err := s.sleep(ctx, min(interval, remaining)); err != nil {
-			return s.jobView(job), nil // client cancelled the wait; the job keeps running
+			return s.jobView(job) // the client stopped waiting; the job keeps running
 		}
 		interval = min(interval+5*time.Second, 15*time.Second)
-		op = nil
 	}
-	return s.jobView(job), nil
+}
+
+type jobCheck struct {
+	*VideoJob
+	job *jobs.Job
+}
+
+// checkJob polls the operation once and finishes the job when it is done.
+// It holds the per-job lock only for this step, so concurrent waiters on the
+// same job don't serialize their waits. done reports that the caller should
+// stop waiting (finished job or an error worth surfacing).
+func (s *Service) checkJob(ctx context.Context, job *jobs.Job) (jobCheck, bool) {
+	unlock := s.lockJob(job.ID)
+	defer unlock()
+	if latest, err := s.jobs.Get(job.ID); err == nil {
+		job = latest // another call may have finished it
+	}
+	if job.Done() {
+		return jobCheck{s.jobView(job), job}, true
+	}
+	op, err := s.api.GetVideosOperation(ctx, job.Location, &genai.GenerateVideosOperation{Name: job.Operation})
+	if err != nil {
+		cerr := google.Classify(err, "checking video job", job.Model, s.backend())
+		out := s.jobView(job)
+		if apperr.KindOf(cerr) != apperr.Canceled {
+			out.Warnings = append(out.Warnings, "status check failed: "+truncate(cerr.Error(), 200))
+			out.Next = "The job is still tracked. Call get_video again in a little while."
+		}
+		return jobCheck{out, job}, true
+	}
+	if !op.Done {
+		return jobCheck{nil, job}, false
+	}
+	s.finishJob(ctx, job, op)
+	return jobCheck{s.jobView(job), job}, job.Done()
 }
 
 // finishJob downloads outputs and settles spend for a finished operation.
@@ -439,13 +466,21 @@ func (s *Service) finishJob(ctx context.Context, job *jobs.Job, op *genai.Genera
 		}
 	default:
 		var assets []store.Asset
+		permanent := false
 		for _, gv := range op.Response.GeneratedVideos {
 			if gv == nil || gv.Video == nil {
 				continue
 			}
 			data, err := s.api.DownloadVideo(ctx, job.Location, gv.Video)
 			if err != nil {
-				job.Error = "download failed: " + google.Classify(err, "downloading video", job.Model, s.backend()).Error()
+				cerr := google.Classify(err, "downloading video", job.Model, s.backend())
+				switch apperr.KindOf(cerr) {
+				case apperr.NotFound, apperr.Permission, apperr.Unknown:
+					// Expired remote files, Cloud Storage outputs, or errors
+					// retrying cannot fix.
+					permanent = true
+				}
+				job.Error = "download failed: " + cerr.Error()
 				continue
 			}
 			mime := firstNonEmpty(gv.Video.MIMEType, "video/mp4")
@@ -460,10 +495,17 @@ func (s *Service) finishJob(ctx context.Context, job *jobs.Job, op *genai.Genera
 			assets = append(assets, *asset)
 		}
 		if len(assets) == 0 {
-			// Keep the job working so a later get_video retries the download.
-			job.CompletedAt = nil
-			_ = s.jobs.Put(job)
-			return
+			job.DownloadAttempts++
+			if job.DownloadAttempts < maxDownloadAttempts && !permanent && ctx.Err() == nil {
+				// Keep the job working so a later get_video retries the download.
+				job.CompletedAt = nil
+				_ = s.jobs.Put(job)
+				return
+			}
+			// Generated (and billed) but not retrievable: stop retrying.
+			job.State, status = jobs.StateFailed, spend.StatusOK
+			job.Error = "the video was generated (and billed) but could not be downloaded: " + job.Error
+			break
 		}
 		job.Outputs, job.State, job.Error, status = assets, jobs.StateCompleted, "", spend.StatusOK
 		if job.Backend == string(config.BackendGeminiAPI) {
@@ -481,6 +523,9 @@ func (s *Service) finishJob(ctx context.Context, job *jobs.Job, op *genai.Genera
 			e.Error = job.Error
 			if status != spend.StatusOK {
 				e.CostUSD = 0 // failed and filtered generations are not billed
+			}
+			if e.Status == spend.StatusOK && job.State == jobs.StateFailed {
+				e.Error = job.Error
 			}
 			if _, err := s.ledger.Record(e); err != nil {
 				s.log.Warn("recording spend failed", "err", err)

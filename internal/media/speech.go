@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"slices"
 	"strings"
 
 	"google.golang.org/genai"
@@ -72,8 +73,7 @@ func (s *Service) GenerateSpeech(ctx context.Context, req SpeechRequest) (*Speec
 	if format != "wav" && format != "pcm" {
 		return nil, apperr.Invalidf("format must be wav or pcm")
 	}
-	modelName := firstNonEmpty(req.Model, s.cfg.Defaults.Speech)
-	r, location, warnings, err := s.resolve(modelName, catalog.Speech)
+	r, location, warnings, err := s.resolve(req.Model, catalog.Speech)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func (s *Service) GenerateSpeech(ctx context.Context, req SpeechRequest) (*Speec
 		if strings.TrimSpace(t.Speaker) == "" || strings.TrimSpace(t.Text) == "" {
 			return nil, apperr.Invalidf("dialogue line %d needs speaker and text", i+1)
 		}
-		if !contains(speakers, t.Speaker) {
+		if !slices.Contains(speakers, t.Speaker) {
 			speakers = append(speakers, t.Speaker)
 		}
 	}
@@ -134,7 +134,7 @@ func (s *Service) GenerateSpeech(ctx context.Context, req SpeechRequest) (*Speec
 
 	parts, meta, spoken := buildSpeechParts(text, req.Dialogue, speakers, req.Style, metadataStyle)
 	est := m.EstimateSpeech(spoken)
-	res, err := s.reserve(est, req.ApprovedCostUSD)
+	res, err := s.reserve(&est, req.ApprovedCostUSD)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,9 @@ func (s *Service) GenerateSpeech(ctx context.Context, req SpeechRequest) (*Speec
 	blob := parsed.Media[0]
 	data, mime, ext, duration, err := normalizeSpeech(blob, format)
 	if err != nil {
-		return nil, s.fail(res, entry, err)
+		entry.Status, entry.Usage, entry.Error = spend.StatusOK, parsed.Usage, "converting audio: "+err.Error()
+		s.settle(res, entry, est, nil)
+		return nil, fmt.Errorf("converting audio: %w", err)
 	}
 	if customVoice != "" {
 		voices[""] = customVoice
@@ -183,7 +185,9 @@ func (s *Service) GenerateSpeech(ctx context.Context, req SpeechRequest) (*Speec
 	prov := &store.Provenance{Tool: "generate_speech", Model: m.ID, Prompt: spoken, Params: map[string]any{"voices": voices, "style": req.Style, "languageCode": req.LanguageCode}}
 	asset, err := s.store.Save("speech", req.OutputName, ext, data, mime, prov)
 	if err != nil {
-		return nil, s.fail(res, entry, fmt.Errorf("saving audio: %w", err))
+		entry.Status, entry.Usage, entry.Error = spend.StatusOK, parsed.Usage, "saving output: "+err.Error()
+		cost := s.settle(res, entry, est, nil) // billed even though saving failed
+		return nil, fmt.Errorf("the audio was generated and billed (~$%.4f) but could not be saved: %w", cost.USD, err)
 	}
 	asset.DurationSeconds = duration
 

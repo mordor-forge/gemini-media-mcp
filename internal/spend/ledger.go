@@ -284,6 +284,7 @@ func (l *Ledger) recordLocked(e *Entry) error {
 func (l *Ledger) Get(id string) (Entry, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	_ = l.refreshLocked() // pick up entries written by other processes
 	e, ok := l.entries[id]
 	return e, ok
 }

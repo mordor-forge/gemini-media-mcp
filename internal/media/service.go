@@ -134,7 +134,25 @@ func (s *Service) resolve(name, mediaType string) (*catalog.Resolved, string, []
 }
 
 // reserve checks budgets for an estimate.
-func (s *Service) reserve(est catalog.Estimate, approved float64) (*spend.Reservation, error) {
+// reserve checks budgets for an estimate. Models without price data would
+// estimate $0 and slip past every cap, so when any cap or confirmation
+// threshold is configured they need an explicit approvedCostUsd, which is
+// then reserved (and recorded) as their estimated cost.
+func (s *Service) reserve(est *catalog.Estimate, approved float64) (*spend.Reservation, error) {
+	if est.Basis == catalog.BasisUnpriced {
+		b := s.ledger.Budget()
+		if b.ConfirmAboveUSD > 0 || b.SessionUSD > 0 || b.DailyUSD > 0 || b.MonthlyUSD > 0 {
+			if approved <= 0 {
+				return nil, &apperr.Error{
+					Kind:    apperr.Confirm,
+					Message: "this model has no price data, so its cost cannot be estimated and budgets cannot protect you",
+					Hint:    "Ask the user for the maximum they accept for this call and retry with approvedCostUsd set to it, or add the model's pricing in a catalog override file (GEMINI_MEDIA_CATALOG).",
+				}
+			}
+			est.USD, est.Basis = approved, spend.BasisEstimate
+			est.Breakdown = fmt.Sprintf("unpriced model; using the approved maximum $%.2f", approved)
+		}
+	}
 	return s.ledger.Reserve(est.USD, approved)
 }
 
@@ -276,13 +294,4 @@ func dropWarning(dropped []string, backend string) []string {
 		return nil
 	}
 	return []string{fmt.Sprintf("ignored %s: not supported on the %s backend", strings.Join(dropped, ", "), backend)}
-}
-
-func contains(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
 }

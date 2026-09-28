@@ -43,6 +43,8 @@ type Fake struct {
 	OpResult func(name string) *genai.GenerateVideosOperation
 	// Listed is returned by ListModels.
 	Listed []*genai.Model
+	// DownloadErr, when set, makes DownloadVideo fail.
+	DownloadErr error
 }
 
 // Backend implements google.API.
@@ -90,6 +92,9 @@ func (f *Fake) DownloadVideo(context.Context, string, *genai.Video) ([]byte, err
 	f.Mu.Lock()
 	defer f.Mu.Unlock()
 	f.Downloads++
+	if f.DownloadErr != nil {
+		return nil, f.DownloadErr
+	}
 	return MP4(8), nil
 }
 

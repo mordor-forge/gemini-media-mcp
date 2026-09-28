@@ -180,6 +180,9 @@ models:
         - when: {resolution: ["1080p"]}
           require: {durationSeconds: ["8"]}
           message: 1080p requires durationSeconds 8
+        - when: {lastFrame: ["*"]}
+          require: {image: ["*"]}
+          message: lastFrame requires a first-frame image
     pricing:
       asOf: "2026-09-24"
       source: https://ai.google.dev/gemini-api/docs/pricing

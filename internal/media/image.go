@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -97,9 +98,6 @@ func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source 
 	if size == "0.5K" {
 		size = "512"
 	}
-	if modelName == "" {
-		modelName = s.cfg.Defaults.Image
-	}
 	r, location, warnings, err := s.resolve(modelName, catalog.Image)
 	if err != nil {
 		return nil, err
@@ -138,12 +136,12 @@ func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source 
 		return nil, err
 	}
 	warnings = append(warnings, dropWarning(dropped, s.backend())...)
-	if contains(dropped, "googleSearch") {
+	if slices.Contains(dropped, "googleSearch") {
 		search = false
 	}
 
 	est := m.EstimateImage(size, count, len(prompt), len(inputs), s.backend(), location)
-	res, err := s.reserve(est, approved)
+	res, err := s.reserve(&est, approved)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +188,8 @@ func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source 
 	result := &ImageResult{Model: m.ID, Warnings: warnings}
 	var usage google.Usage
 	var texts []string
-	var firstErr error
+	var firstErr, saveErr error
+	succeeded := 0
 	for _, o := range outcomes {
 		if o.res != nil {
 			usage = addUsage(usage, o.res.Usage)
@@ -202,6 +201,7 @@ func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source 
 			}
 			continue
 		}
+		succeeded++
 		if o.res.Text != "" {
 			texts = append(texts, o.res.Text)
 		}
@@ -211,34 +211,45 @@ func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source 
 				Params: map[string]any{"aspectRatio": aspect, "imageSize": size, "googleSearch": search},
 			})
 			if err != nil {
-				return nil, s.fail(res, entry, fmt.Errorf("saving image: %w", err))
+				saveErr = err
+				continue
 			}
 			result.Files = append(result.Files, *asset)
+			var prev []byte // aligned with Files; nil when no preview
 			if s.cfg.InlinePreviewsEnabled() {
-				if prev, err := store.Preview(blob.Data, s.cfg.PreviewMaxPixels); err == nil {
-					result.Previews = append(result.Previews, prev)
-				}
+				prev, _ = store.Preview(blob.Data, s.cfg.PreviewMaxPixels)
 			}
+			result.Previews = append(result.Previews, prev)
 		}
 	}
 	result.Text = strings.Join(dedupe(texts), "\n")
 	result.Warnings = dedupe(result.Warnings)
 
-	if len(result.Files) == 0 {
+	if succeeded == 0 {
 		return nil, s.fail(res, entry, firstErr)
 	}
-	if firstErr != nil {
-		result.Warnings = append(result.Warnings, fmt.Sprintf("%d of %d variations failed: %v", count-len(result.Files), count, firstErr))
-	}
-
+	// From here on Google has billed the call: always settle it as spent.
 	entry.Status = spend.StatusOK
 	entry.Usage = usage
 	entry.Outputs = assetPaths(result.Files)
+	if saveErr != nil {
+		entry.Error = "saving output: " + saveErr.Error()
+	}
 	var actual *catalog.Estimate
 	if a, ok := m.CostFromUsage(tokenUsage(usage), s.backend(), location); ok {
 		actual = &a
 	}
 	result.Cost = s.settle(res, entry, est, actual)
+
+	if len(result.Files) == 0 {
+		return nil, fmt.Errorf("the image(s) were generated and billed (~$%.3f) but could not be saved: %w", result.Cost.USD, saveErr)
+	}
+	if saveErr != nil {
+		result.Warnings = append(result.Warnings, "some images could not be saved: "+saveErr.Error())
+	}
+	if firstErr != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("%d of %d variations failed: %v", count-succeeded, count, firstErr))
+	}
 	return result, nil
 }
 
