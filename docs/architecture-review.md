@@ -113,7 +113,8 @@ A request flows like this. An MCP tool call reaches `server`, which attaches pro
 - **Unknown model IDs pass through.** The family is inferred from the ID (`veo-*`, `lyria-*`, `*tts*`, `gemini-*image*`), so a model launched tomorrow works by raw ID before the catalog knows it. It is unvalidated and unpriced, and says so.
 - **Live discovery.** `list_models live:true` asks the API what the key can actually call. It flags catalog models that are unavailable, and lists media models the catalog doesn't know yet. `gemini-media-mcp doctor` runs the same check from a terminal.
 - **Configuration.** Loading is layered: defaults < `config.yaml` < env < flags. Unknown keys warn instead of failing, which gives forward compatibility. The Google SDK env names, the old env names and new `GEMINI_MEDIA_*` names are all honored. `get_config` reports the source of every setting.
-- **Transient failures.** SDK-level retries with backoff are enabled for 429 and 5xx. 408 is deliberately excluded to avoid double billing. Per-request timeouts are configurable.
+- **Transient failures.** SDK-level retries with backoff are enabled only for 429 and 503, the codes that mean "not processed". Generation calls are billed and not idempotent: after a 500, 504 or 408 the work may still finish server-side, so a retry could double-charge. Per-request timeouts are configurable.
+- **Crash-free startup.** A broken override file falls back to the embedded catalog and is reported, instead of preventing startup. Missing credentials put the server in a degraded mode where `get_config`, `list_models` and `estimate_cost` still work and generation tools return setup instructions.
 
 ### 2.2 Authentication
 
@@ -195,6 +196,8 @@ Google returns no cost with any response, and Veo operations carry no usage at a
 2. **Estimate, then reserve.** Before any API call, the estimate is reserved against session, daily and monthly caps. Concurrent calls count each other's reservations, and the ledger re-reads lines appended by other processes, so caps hold across several agent sessions.
 3. **Confirmation threshold.** Calls estimated above `confirmAboveUsd` are refused with a `[confirmation]` error until retried with `approvedCostUsd`. That makes "ask the human" explicit and portable.
 
+   Models without price data (a raw ID the catalog doesn't know yet) would estimate $0 and slip past every cap. When any budget or threshold is configured, they require `approvedCostUsd`, which is then reserved and recorded as their cost.
+
    Elicitation was not used because:
    - client support is uneven;
    - go-sdk's `Elicit` errors on 2026-07-28 sessions;
@@ -203,6 +206,7 @@ Google returns no cost with any response, and Veo operations carry no usage at a
    - Token-priced models are priced from `usageMetadata` per modality. For images this matches Google's per-image prices exactly (1120 tokens × $60/M = $0.067).
    - Veo is priced from parameters.
    - Failed and safety-filtered generations are recorded at $0.
+   - Outputs that Google generated (and billed) but the server could not save or download are recorded as spent, with the error attached.
    - Pending video jobs count toward caps until they settle.
 5. **Report.** Results show `cost {estimatedUsd, usd, basis}`. `get_usage` breaks spend down by period, model and tool, with budget remaining and running jobs. `gemini-media-mcp usage` shows the same from a terminal. The ledger is plain JSONL, easy to import anywhere.
 
@@ -213,7 +217,7 @@ Google returns no cost with any response, and Veo operations carry no usage at a
 | Area | Now supported |
 |---|---|
 | Images | GA Nano Banana 2 / Pro / 2 Lite; 512px–4K; 14 aspect ratios (NB2); up to 14 references; Google Search grounding; 1–4 parallel variations; model commentary returned; thought images filtered |
-| Video | Veo 3.1 Lite/Fast/Standard with backend-specific IDs; first frame, first+last frame, reference "ingredients"; negative prompt; seed and silent video on Vertex; person generation; extension on both backends; MP4 duration read from the file; `raiMediaFilteredReasons` surfaced |
+| Video | Veo 3.1 Lite/Fast/Standard with backend-specific IDs; first frame, first+last frame, reference "ingredients"; negative prompt; seed and silent video on Vertex; person generation; extension on both backends (720p sources, checked locally); MP4 duration read from the file; `raiMediaFilteredReasons` surfaced |
 | Speech | Gemini 3.8 Flash / Flash-Lite TTS (verbatim text plus per-turn `speech_metadata` style, injected through the SDK's request hook until the SDK ships the field); legacy 2.5/3.1 models get in-text directions automatically; 2-speaker dialogue; all 30 voices; custom `voice_…` IDs; WAV output from both PCM and WAV responses |
 | Music | Lyria 3.5 (full songs, WAV, image inspiration), Lyria 3 Clip / Pro; lyrics and structure returned |
 
