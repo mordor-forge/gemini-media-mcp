@@ -1,55 +1,87 @@
 name: CI
-on: [push, pull_request]
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version-file: go.mod
       - name: Build
         run: go build ./...
+      - name: Unit tests (race)
+        if: runner.os == 'Linux'
+        run: go test -race -count=1 ./...
       - name: Unit tests
-        run: go test ./... -v
+        if: runner.os != 'Linux'
+        run: go test -count=1 ./...
+      - name: E2E tests compile
+        run: go vet -tags=e2e ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
       - name: Vet
         run: go vet ./...
-      - name: Lint
-        uses: golangci/golangci-lint-action@v7
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.11.4
-      - name: Security scan
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+          version: v2.14.0
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+  skills-and-packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Validate skills (Agent Skills spec)
+        run: python3 scripts/validate-skills.py skills
+      - name: Validate packaging manifests
+        run: |
+          if [ -x scripts/validate-packaging.sh ]; then scripts/validate-packaging.sh; else echo "no packaging validator"; fi
 
   e2e:
+    # Live API smoke tests (cost a few cents). Only on main, only with a key.
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test]
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
-      - name: E2E tests
+          go-version-file: go.mod
+      - name: E2E (images, speech, music; no video)
+        if: env.GEMINI_API_KEY != ''
         env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-        run: go test -tags=e2e -run "TestE2E_Generate(Image|Audio|Music|Video)$|TestE2E_ListModels$" ./internal/provider/gemini/ -v -timeout 10m
-
-  release:
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: test
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_MEDIA_E2E: "1"
+        run: go test -tags=e2e -run 'TestE2E_(ListModelsLive|Image|Speech|Music)$' ./internal/media/ -v -timeout 10m
