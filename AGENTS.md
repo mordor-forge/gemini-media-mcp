@@ -60,6 +60,7 @@ internal/catalog       models.yaml (embedded) + optional hot-reloaded override f
 internal/config        layered config: defaults < config.yaml < env (GEMINI_MEDIA_*, GOOGLE_*) < flags; auth selection
 internal/store         saving generated files (collision-free names), input-file access policy
 internal/spend         append-only usage ledger (usage.jsonl) and session/daily/monthly budgets
+internal/filelock      cross-process advisory file lock (flock / LockFileEx) guarding the ledger
 internal/jobs          persisted long-running jobs (Veo video operations)
 internal/apperr        classified, agent-actionable errors
 internal/version       Version/Commit/Date injected with -ldflags (see .goreleaser.yaml, Dockerfile)

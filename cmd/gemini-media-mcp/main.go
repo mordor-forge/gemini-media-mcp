@@ -155,6 +155,11 @@ func build(ctx context.Context, flags config.Flags, stderr io.Writer) (*app, err
 	if err != nil {
 		return nil, err
 	}
+	// A reservation must outlive the slowest call it covers (every retry
+	// attempt timing out), or it could lapse while the call is still running.
+	if ttl := cfg.RequestTimeout()*time.Duration(cfg.Retry.Attempts) + 10*time.Minute; ttl > spend.DefaultReservationTTL {
+		ledger.SetReservationTTL(ttl)
+	}
 	reg, err := jobs.Open(filepath.Join(cfg.StateDir, "jobs"))
 	if err != nil {
 		return nil, err

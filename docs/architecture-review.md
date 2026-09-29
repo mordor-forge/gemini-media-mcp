@@ -193,7 +193,7 @@ Google returns no cost with any response, and Veo operations carry no usage at a
    - TTS audio tokens per second.
 
    Each entry carries `asOf` and `source`, and prices can be overridden without a release.
-2. **Estimate, then reserve.** Before any API call, the estimate is reserved against session, daily and monthly caps. Concurrent calls count each other's reservations, and the ledger re-reads lines appended by other processes, so caps hold across several agent sessions.
+2. **Estimate, then reserve.** Before any API call, the estimate is reserved against session, daily and monthly caps. The reservation is itself a ledger line, and the check plus the reservation run under an exclusive lock on `usage.jsonl.lock` (flock / LockFileEx), so caps hold across concurrent calls and across several server processes sharing one state directory. The call's final entry supersedes its reservation. A process that dies mid-call leaves a reservation that expires after an hour (longer when request timeouts × retries could exceed it). Writers also terminate a torn last line left by an interrupted write before appending, and read every entry back.
 3. **Confirmation threshold.** Calls estimated above `confirmAboveUsd` are refused with a `[confirmation]` error until retried with `approvedCostUsd`. That makes "ask the human" explicit and portable.
 
    Models without price data (a raw ID the catalog doesn't know yet) would estimate $0 and slip past every cap. When any budget or threshold is configured, they require `approvedCostUsd`, which is then reserved and recorded as their cost.

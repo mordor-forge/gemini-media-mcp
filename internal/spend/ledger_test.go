@@ -142,3 +142,150 @@ func TestConcurrentReservationsNeverExceedCap(t *testing.T) {
 		t.Fatalf("admitted %d calls of $0.30 under a $1 cap, want 3", admitted)
 	}
 }
+
+// Two server processes sharing one ledger must not both admit calls that
+// only fit the cap individually (regression: reservations were process-local).
+func TestReservationsAreSharedAcrossProcesses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "u.jsonl")
+	a, _ := Open(path, Budget{DailyUSD: 1})
+	b, _ := Open(path, Budget{DailyUSD: 1})
+
+	ra, err := a.Reserve(0.6, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Reserve(0.6, 0); apperr.KindOf(err) != apperr.Budget {
+		t.Fatalf("b admitted $0.60 while a holds $0.60 of a $1 cap: %v", err)
+	}
+	if got := b.Summarize("today", 10); got.Totals.InFlight != 0.6 || got.Totals.Today != 0 || len(got.Recent) != 0 {
+		t.Fatalf("in-flight hold must be reported separately from spend: %+v", got)
+	}
+	if _, err := ra.Settle(Entry{Tool: "t", Model: "m", Status: StatusOK, CostUSD: 0.6}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Reserve(0.6, 0); apperr.KindOf(err) != apperr.Budget {
+		t.Fatalf("settled spend must keep counting: %v", err)
+	}
+	// A released reservation frees the budget for the other process.
+	ra2, err := a.Reserve(0.3, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Reserve(0.3, 0); apperr.KindOf(err) != apperr.Budget {
+		t.Fatalf("second hold not visible: %v", err)
+	}
+	ra2.Release()
+	rb, err := b.Reserve(0.3, 0)
+	if err != nil {
+		t.Fatalf("released hold still counted: %v", err)
+	}
+	rb.Release()
+
+	// The session cap only counts this process's holds.
+	c, _ := Open(path, Budget{SessionUSD: 0.5})
+	if _, err := a.Reserve(0.3, 0); err != nil {
+		t.Fatal(err)
+	}
+	rc, err := c.Reserve(0.4, 0)
+	if err != nil {
+		t.Fatalf("another process's hold must not count against this session: %v", err)
+	}
+	rc.Release()
+}
+
+func TestConcurrentProcessesNeverExceedCap(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "u.jsonl")
+	day := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	admitted := 0
+	for i := 0; i < 12; i++ {
+		l, err := Open(path, Budget{DailyUSD: 1}) // one ledger per "process"
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.now = func() time.Time { return day }
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r, err := l.Reserve(0.3, 0)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			admitted++
+			mu.Unlock()
+			if _, err := r.Settle(Entry{Tool: "t", Model: "m", Status: StatusOK, CostUSD: 0.3}); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	if admitted != 3 {
+		t.Fatalf("admitted %d calls of $0.30 under a $1 daily cap across processes, want 3", admitted)
+	}
+}
+
+func TestAbandonedReservationExpires(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "u.jsonl")
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	crashed, _ := Open(path, Budget{DailyUSD: 1})
+	crashed.now = func() time.Time { return now }
+	if _, err := crashed.Reserve(0.8, 0); err != nil { // never settled
+		t.Fatal(err)
+	}
+	l, _ := Open(path, Budget{DailyUSD: 1})
+	l.now = func() time.Time { return now.Add(10 * time.Minute) }
+	if _, err := l.Reserve(0.5, 0); apperr.KindOf(err) != apperr.Budget {
+		t.Fatalf("live hold ignored: %v", err)
+	}
+	l.now = func() time.Time { return now.Add(DefaultReservationTTL + time.Minute) }
+	if _, err := l.Reserve(0.5, 0); err != nil {
+		t.Fatalf("expired hold still blocks the budget: %v", err)
+	}
+}
+
+// An interrupted write leaves a line without a newline; the next settlement
+// must not be glued onto it and lost (regression).
+func TestIncompleteTailIsRepairedBeforeAppend(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "u.jsonl")
+	valid := `{"id":"x","ts":"2026-09-28T10:00:00Z","tool":"t","model":"m","status":"ok","costUsd":0.25,"basis":"unit_params"}` + "\n"
+	if err := os.WriteFile(path, []byte(valid+`{"id":"torn","ts":"2026-09-28T11:00:00Z","tool":"t","mod`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := Open(path, Budget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.now = func() time.Time { return time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC) }
+	r, err := l.Reserve(0.6, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Settle(Entry{Tool: "t", Model: "m", Status: StatusOK, CostUSD: 0.6}); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.Summarize("all", 0).Totals.All; got < 0.849 || got > 0.851 {
+		t.Fatalf("total = %v, want 0.85 (the settlement was lost)", got)
+	}
+	// A fresh reader agrees.
+	fresh, _ := Open(path, Budget{})
+	if got := fresh.Summarize("all", 0).Totals.All; got < 0.849 || got > 0.851 {
+		t.Fatalf("fresh reader total = %v, want 0.85", got)
+	}
+}
+
+// Ledgers written by older versions may already hold a settlement glued onto
+// a torn line; it is salvaged.
+func TestGluedEntryIsSalvaged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "u.jsonl")
+	glued := `{"id":"torn","ts":"2026-09-28T11:00:00Z","tool":"t","mod` +
+		`{"id":"y","ts":"2026-09-28T11:01:00Z","tool":"t","model":"m","status":"ok","costUsd":0.6,"basis":"usage_metadata"}` + "\n"
+	if err := os.WriteFile(path, []byte(glued), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, _ := Open(path, Budget{})
+	if got := l.Summarize("all", 0).Totals.All; got != 0.6 {
+		t.Fatalf("total = %v, want the glued $0.60 settlement", got)
+	}
+}

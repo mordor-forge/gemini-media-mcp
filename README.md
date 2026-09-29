@@ -137,7 +137,7 @@ On Vertex, an API key without a project uses express mode, which does not suppor
 Google doesn't return costs, so the server computes them from its price table and the token usage the API reports. Every call records an estimate before it runs and the reconciled cost afterwards. Failed and safety-blocked generations count as $0.
 
 - Results include `cost {estimatedUsd, usd, basis}`. `get_usage` and `gemini-media-mcp usage` summarize spend. The ledger is a plain JSONL file in the state directory.
-- Budgets are enforced before each call, across concurrent calls and across several server processes.
+- Budgets are enforced before each call, across concurrent calls and across several server processes sharing a state directory (in-flight calls hold their estimate under a file lock).
 - With `GEMINI_MEDIA_CONFIRM_ABOVE_USD=1`, an expensive call (for example a $3.20 Veo clip) comes back as a `[confirmation]` error. The agent asks you, then retries with `approvedCostUsd`.
 - These figures are estimates. For a hard stop, also set a spend cap in AI Studio or a budget in Cloud Billing.
 
