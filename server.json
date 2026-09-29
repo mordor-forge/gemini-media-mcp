@@ -76,6 +76,12 @@
         },
         {
           "type": "named",
+          "name": "-v",
+          "description": "Named volume that keeps the spend ledger, budgets and video jobs across container runs, mounted at /state.",
+          "value": "gemini-media-state:/state"
+        },
+        {
+          "type": "named",
           "name": "-e",
           "description": "Save generated media to the mounted /output volume.",
           "value": "MEDIA_OUTPUT_DIR=/output"

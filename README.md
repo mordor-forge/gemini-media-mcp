@@ -56,7 +56,8 @@ An MCP server for Google's generative media models: **images** (Nano Banana 2 / 
 Other ways to install:
 - `go install github.com/mordor-forge/gemini-media-mcp/cmd/gemini-media-mcp@latest` (Go 1.26+)
 - release binaries on the [Releases](https://github.com/mordor-forge/gemini-media-mcp/releases) page
-- `docker run -i --rm -e GEMINI_API_KEY -v "$PWD/media:/output" ghcr.io/mordor-forge/gemini-media-mcp`
+- `docker run -i --rm -e GEMINI_API_KEY -v "$PWD/media:/output" -v gemini-media-state:/state ghcr.io/mordor-forge/gemini-media-mcp`
+  (the named `/state` volume keeps spend accounting and video jobs between runs)
 
 ## Tools
 

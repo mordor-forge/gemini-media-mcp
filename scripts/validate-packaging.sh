@@ -162,6 +162,7 @@ if [ -z "$ctx" ] || [ -f "$ctx" ]; then ok "contextFileName ${ctx:-<none>} exist
 echo "== MCP Registry server.json"
 check "\$schema is 2025-12-11" '."$schema" == "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"' server.json
 check "description is at most 100 characters" '.description | length <= 100' server.json
+check "OCI package persists /state on a named volume (ledger, budgets, video jobs)" '[.packages[] | select(.registryType == "oci") | .runtimeArguments[] | select(.name == "-v") | .value | test("^[A-Za-z0-9][A-Za-z0-9_.-]*:/state$")] | any' server.json
 check "MCPB URL contains \"mcp\" and is a GitHub release asset" '.packages[] | select(.registryType == "mcpb") | .identifier | test("^https://github.com/.+/releases/download/.+mcp")' server.json
 if jq -e '.packages[] | select(.registryType == "mcpb") | .fileSha256 | test("^0{64}$")' server.json >/dev/null; then
   if [ "$release" = true ]; then fail "server.json MCPB fileSha256 is still the placeholder"; else ok "MCPB fileSha256 is the placeholder (stamped by the release workflow)"; fi

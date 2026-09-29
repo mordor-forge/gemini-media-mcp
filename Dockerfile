@@ -4,7 +4,7 @@
 #
 # stdio (what MCP clients spawn):
 #   docker run -i --rm -e GEMINI_API_KEY -v "$HOME/generated_media:/output" \
-#     ghcr.io/mordor-forge/gemini-media-mcp
+#     -v gemini-media-state:/state ghcr.io/mordor-forge/gemini-media-mcp
 #
 # Streamable HTTP (remote/shared use; the token is required off loopback):
 #   docker run -d -p 8765:8765 \
@@ -15,7 +15,8 @@
 #     ghcr.io/mordor-forge/gemini-media-mcp
 #   -> endpoint http://localhost:8765/mcp with header "Authorization: Bearer <token>"
 #
-# Generated files go to /output, spend ledger and video jobs to /state. On Linux,
+# Generated files go to /output, spend ledger and video jobs to /state (keep
+# /state on a named volume: with --rm an anonymous one is lost). On Linux,
 # add --user "$(id -u):$(id -g)" so files in a bind-mounted /output belong to you.
 # A config file can be mounted at /home/nonroot/.config/gemini-media-mcp/config.yaml
 # (or anywhere, with -e GEMINI_MEDIA_CONFIG=/path).
