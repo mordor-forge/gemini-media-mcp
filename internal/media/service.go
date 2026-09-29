@@ -46,7 +46,8 @@ type Service struct {
 	now     func() time.Time
 	sleep   func(context.Context, time.Duration) error
 
-	jobLocks sync.Map // job ID -> *sync.Mutex
+	jobLocks sync.Map // job ID -> chan struct{} (capacity 1): a lock that honors contexts
+	fetching sync.Map // job ID -> struct{}: outputs being downloaded in the background
 }
 
 // New builds a Service.
@@ -133,7 +134,6 @@ func (s *Service) resolve(name, mediaType string) (*catalog.Resolved, string, []
 	return r, location, warnings, nil
 }
 
-// reserve checks budgets for an estimate.
 // reserve checks budgets for an estimate. Models without price data would
 // estimate $0 and slip past every cap, so when any cap or confirmation
 // threshold is configured they need an explicit approvedCostUsd, which is

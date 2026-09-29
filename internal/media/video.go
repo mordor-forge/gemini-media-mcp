@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"google.golang.org/genai"
@@ -373,19 +372,34 @@ func (s *Service) findJob(id string) (*jobs.Job, error) {
 	return j, nil
 }
 
-func (s *Service) lockJob(id string) func() {
-	v, _ := s.jobLocks.LoadOrStore(id, &sync.Mutex{})
-	mu := v.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
+// lockJob serializes work on one job across concurrent calls. It gives up
+// when ctx ends, so a caller's wait also bounds the time spent queueing
+// behind another caller (for example one that is downloading the video).
+func (s *Service) lockJob(ctx context.Context, id string) (func(), error) {
+	v, _ := s.jobLocks.LoadOrStore(id, make(chan struct{}, 1))
+	ch := v.(chan struct{})
+	select {
+	case ch <- struct{}{}:
+		return func() { <-ch }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // pollJob checks the job until it finishes or wait elapses. fresh may carry
 // the just-created operation (skips the first status call). It never returns
 // an error: the job keeps running server-side, so callers always get a handle.
+//
+// A positive wait bounds the whole call, upstream status requests and lock
+// queueing included. A zero wait checks once, without a deadline.
 func (s *Service) pollJob(ctx context.Context, job *jobs.Job, fresh *genai.GenerateVideosOperation, wait int) *VideoJob {
 	wait = min(max(wait, 0), s.cfg.MaxVideoWaitSeconds)
 	deadline := s.now().Add(time.Duration(wait) * time.Second)
+	if wait > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(wait)*time.Second)
+		defer cancel()
+	}
 	interval := 5 * time.Second
 	skipFetch := fresh != nil && !fresh.Done
 
@@ -399,13 +413,13 @@ func (s *Service) pollJob(ctx context.Context, job *jobs.Job, fresh *genai.Gener
 		}
 		skipFetch = false
 		remaining := deadline.Sub(s.now())
-		if remaining <= 0 {
+		if remaining <= 0 || ctx.Err() != nil {
 			return s.jobView(job)
 		}
 		elapsed := s.now().Sub(job.CreatedAt).Seconds()
 		progress(ctx, fmt.Sprintf("video job %s running for %.0fs", job.ID, elapsed), elapsed, 0)
 		if err := s.sleep(ctx, min(interval, remaining)); err != nil {
-			return s.jobView(job) // the client stopped waiting; the job keeps running
+			return s.jobView(job) // the wait ended or the client left; the job keeps running
 		}
 		interval = min(interval+5*time.Second, 15*time.Second)
 	}
@@ -419,10 +433,24 @@ type jobCheck struct {
 // checkJob polls the operation once and finishes the job when it is done.
 // It holds the per-job lock only for this step, so concurrent waiters on the
 // same job don't serialize their waits. done reports that the caller should
-// stop waiting (finished job or an error worth surfacing).
+// stop waiting (finished job, the end of its wait, or an error worth
+// surfacing).
 func (s *Service) checkJob(ctx context.Context, job *jobs.Job) (jobCheck, bool) {
-	unlock := s.lockJob(job.ID)
-	defer unlock()
+	unlock, err := s.lockJob(ctx, job.ID)
+	if err != nil {
+		// The wait ended while another call held the job (usually while
+		// downloading it). Report the latest state; nothing is lost.
+		if latest, gerr := s.jobs.Get(job.ID); gerr == nil {
+			job = latest
+		}
+		return jobCheck{s.jobView(job), job}, true
+	}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			unlock()
+		}
+	}()
 	if latest, err := s.jobs.Get(job.ID); err == nil {
 		job = latest // another call may have finished it
 	}
@@ -431,9 +459,10 @@ func (s *Service) checkJob(ctx context.Context, job *jobs.Job) (jobCheck, bool) 
 	}
 	op, err := s.api.GetVideosOperation(ctx, job.Location, &genai.GenerateVideosOperation{Name: job.Operation})
 	if err != nil {
-		cerr := google.Classify(err, "checking video job", job.Model, s.backend())
 		out := s.jobView(job)
-		if apperr.KindOf(cerr) != apperr.Canceled {
+		// A status request cut short by the end of the wait (or a client
+		// that left) is not a failure worth reporting.
+		if cerr := google.Classify(err, "checking video job", job.Model, s.backend()); ctx.Err() == nil && apperr.KindOf(cerr) != apperr.Canceled {
 			out.Warnings = append(out.Warnings, "status check failed: "+truncate(cerr.Error(), 200))
 			out.Next = "The job is still tracked. Call get_video again in a little while."
 		}
@@ -442,8 +471,38 @@ func (s *Service) checkJob(ctx context.Context, job *jobs.Job) (jobCheck, bool) 
 	if !op.Done {
 		return jobCheck{nil, job}, false
 	}
-	s.finishJob(ctx, job, op)
-	return jobCheck{s.jobView(job), job}, job.Done()
+
+	// The operation finished (a video that exists is billed): settle it and
+	// download its outputs detached from this call, so neither the end of
+	// the wait nor a disconnecting client can interrupt the download. The
+	// job lock passes to that goroutine, which records the outcome in the
+	// job registry for this or any later get_video call.
+	fetched := *job
+	finished := make(chan struct{})
+	s.fetching.Store(job.ID, struct{}{})
+	handedOff = true
+	go func() {
+		defer unlock()
+		defer close(finished)
+		defer s.fetching.Delete(fetched.ID)
+		dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.downloadTimeout())
+		defer cancel()
+		s.finishJob(dctx, &fetched, op)
+	}()
+	select {
+	case <-finished:
+		return jobCheck{s.jobView(&fetched), &fetched}, fetched.Done()
+	case <-ctx.Done():
+		return jobCheck{s.jobView(job), job}, true
+	}
+}
+
+// downloadTimeout bounds one background download of a job's outputs.
+func (s *Service) downloadTimeout() time.Duration {
+	if d := s.cfg.RequestTimeout(); d > 0 {
+		return d
+	}
+	return 10 * time.Minute
 }
 
 // finishJob downloads outputs and settles spend for a finished operation.
@@ -466,7 +525,7 @@ func (s *Service) finishJob(ctx context.Context, job *jobs.Job, op *genai.Genera
 		}
 	default:
 		var assets []store.Asset
-		permanent := false
+		permanent, interrupted := false, false
 		for _, gv := range op.Response.GeneratedVideos {
 			if gv == nil || gv.Video == nil {
 				continue
@@ -475,10 +534,13 @@ func (s *Service) finishJob(ctx context.Context, job *jobs.Job, op *genai.Genera
 			if err != nil {
 				cerr := google.Classify(err, "downloading video", job.Model, s.backend())
 				switch apperr.KindOf(cerr) {
-				case apperr.NotFound, apperr.Permission, apperr.Unknown:
-					// Expired remote files, Cloud Storage outputs, or errors
+				case apperr.NotFound, apperr.Permission, apperr.Invalid:
+					// Expired remote files, Cloud Storage outputs, or requests
 					// retrying cannot fix.
 					permanent = true
+				case apperr.Canceled, apperr.Timeout:
+					// Interrupted, not refused: the file is still there.
+					interrupted = true
 				}
 				job.Error = "download failed: " + cerr.Error()
 				continue
@@ -495,19 +557,26 @@ func (s *Service) finishJob(ctx context.Context, job *jobs.Job, op *genai.Genera
 			assets = append(assets, *asset)
 		}
 		if len(assets) == 0 {
-			job.DownloadAttempts++
-			if job.DownloadAttempts < maxDownloadAttempts && !permanent && ctx.Err() == nil {
+			// Interruptions don't count as attempts: the video is paid for,
+			// and the provider's retention (NotFound once it lapses) is
+			// what eventually makes a retry pointless.
+			if !interrupted || permanent {
+				job.DownloadAttempts++
+			}
+			if job.DownloadAttempts < maxDownloadAttempts && !permanent {
 				// Keep the job working so a later get_video retries the download.
 				job.CompletedAt = nil
-				_ = s.jobs.Put(job)
+				if err := s.jobs.Put(job); err != nil {
+					s.log.Warn("saving job failed", "job", job.ID, "err", err)
+				}
 				return
 			}
 			// Generated (and billed) but not retrievable: stop retrying.
-			job.State, status = jobs.StateFailed, spend.StatusOK
+			job.State, job.Billed, status = jobs.StateFailed, true, spend.StatusOK
 			job.Error = "the video was generated (and billed) but could not be downloaded: " + job.Error
 			break
 		}
-		job.Outputs, job.State, job.Error, status = assets, jobs.StateCompleted, "", spend.StatusOK
+		job.Outputs, job.State, job.Error, job.Billed, status = assets, jobs.StateCompleted, "", true, spend.StatusOK
 		if job.Backend == string(config.BackendGeminiAPI) {
 			exp := job.CreatedAt.Add(geminiVideoRetention)
 			job.RemoteExpiresAt = &exp
@@ -548,11 +617,19 @@ func (s *Service) jobView(job *jobs.Job) *VideoJob {
 	case jobs.StateWorking:
 		v.Cost.Pending = true
 		v.Next = fmt.Sprintf("Call get_video with jobId %s (e.g. waitSeconds 45) until state is completed. Veo usually takes 1-3 minutes.", job.ID)
+		if _, ok := s.fetching.Load(job.ID); ok {
+			v.Next = fmt.Sprintf("The video is ready and being downloaded. Call get_video with jobId %s again in a few seconds.", job.ID)
+		}
 	case jobs.StateCompleted:
 		if m, ok := s.catalog.Get().Lookup(job.Model); ok && m.Capabilities.Extend {
 			v.Next = "Review the video. To continue the shot, call extend_video with this jobId."
 		}
 	case jobs.StateFailed, jobs.StateFiltered:
+		if job.Billed {
+			// Delivery failed, billing did not: keep reporting what was spent.
+			v.Next = fmt.Sprintf("Google generated this video and billed about $%.2f, but it could not be downloaded. Tell the user before generating again: a new generate_video call is billed again.", job.EstimateUSD)
+			break
+		}
 		v.Cost.USD = 0
 		v.Next = "Adjust the prompt or inputs and call generate_video again."
 	}

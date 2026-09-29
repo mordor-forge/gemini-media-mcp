@@ -45,6 +45,12 @@ type Fake struct {
 	Listed []*genai.Model
 	// DownloadErr, when set, makes DownloadVideo fail.
 	DownloadErr error
+	// PollHook, when set, runs before each status poll (e.g. to simulate a
+	// slow request); an error it returns is the poll's error.
+	PollHook func(ctx context.Context) error
+	// DownloadHook, when set, runs before each download; an error it returns
+	// is the download's error.
+	DownloadHook func(ctx context.Context) error
 }
 
 // Backend implements google.API.
@@ -72,7 +78,15 @@ func (f *Fake) GenerateVideos(_ context.Context, location, model string, src *ge
 }
 
 // GetVideosOperation implements google.API.
-func (f *Fake) GetVideosOperation(_ context.Context, _ string, op *genai.GenerateVideosOperation) (*genai.GenerateVideosOperation, error) {
+func (f *Fake) GetVideosOperation(ctx context.Context, _ string, op *genai.GenerateVideosOperation) (*genai.GenerateVideosOperation, error) {
+	f.Mu.Lock()
+	hook := f.PollHook
+	f.Mu.Unlock()
+	if hook != nil {
+		if err := hook(ctx); err != nil {
+			return nil, err
+		}
+	}
 	f.Mu.Lock()
 	defer f.Mu.Unlock()
 	f.Polls++
@@ -88,10 +102,18 @@ func (f *Fake) GetVideosOperation(_ context.Context, _ string, op *genai.Generat
 }
 
 // DownloadVideo implements google.API and returns an 8-second fake MP4.
-func (f *Fake) DownloadVideo(context.Context, string, *genai.Video) ([]byte, error) {
+func (f *Fake) DownloadVideo(ctx context.Context, _ string, _ *genai.Video) ([]byte, error) {
+	f.Mu.Lock()
+	hook := f.DownloadHook
+	f.Downloads++
+	f.Mu.Unlock()
+	if hook != nil {
+		if err := hook(ctx); err != nil {
+			return nil, err
+		}
+	}
 	f.Mu.Lock()
 	defer f.Mu.Unlock()
-	f.Downloads++
 	if f.DownloadErr != nil {
 		return nil, f.DownloadErr
 	}

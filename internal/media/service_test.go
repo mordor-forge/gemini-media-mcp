@@ -576,6 +576,14 @@ func TestUndownloadableVideoStopsRetryingAndSettles(t *testing.T) {
 	if s.Totals.Pending != 0 || s.Totals.All != 0.4 {
 		t.Fatalf("the generated video is billed and no longer pending: %+v", s.Totals)
 	}
+	// The job reports what was spent, not $0 and "generate again" (regression),
+	// now and on later calls.
+	again, _ := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
+	for _, v := range []*VideoJob{got, again} {
+		if v.Cost.USD != 0.4 || v.Cost.Pending || !strings.Contains(v.Next, "billed") || strings.HasPrefix(v.Next, "Adjust the prompt") {
+			t.Fatalf("billed undelivered job view: cost=%+v next=%q", v.Cost, v.Next)
+		}
+	}
 
 	// Transient download errors are retried on later calls, up to a limit.
 	e2 := newEnv(t, nil, spend.Budget{})
@@ -596,5 +604,123 @@ func TestCanceledWaitKeepsTheHandle(t *testing.T) {
 	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", WaitSeconds: 60})
 	if err != nil || job.JobID == "" || job.State != jobs.StateWorking {
 		t.Fatalf("a canceled wait must still return the job handle: %+v %v", job, err)
+	}
+}
+
+// Canceling the call that downloads a finished (billed) video must not make
+// the video unrecoverable (regression).
+func TestCanceledDownloadStaysRecoverable(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	e.api.DownloadHook = func(ctx context.Context) error {
+		once.Do(func() { close(started) })
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-started; cancel() }()
+	got, err := e.svc.GetVideo(ctx, GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != jobs.StateWorking || !strings.Contains(got.Next, "being downloaded") {
+		t.Fatalf("a canceled call must leave the job recoverable: %+v", got)
+	}
+	close(release) // the download carries on without the canceled caller
+	got, err = e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != jobs.StateCompleted || len(got.Files) != 1 || e.api.Downloads != 1 {
+		t.Fatalf("after cancellation: state=%s files=%d downloads=%d", got.State, len(got.Files), e.api.Downloads)
+	}
+
+	// A download that fails because it was canceled or timed out is retried
+	// on the next call and does not use up an attempt.
+	e2 := newEnv(t, nil, spend.Budget{})
+	job, _ = e2.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	for _, interruption := range []error{context.Canceled, context.DeadlineExceeded, context.Canceled, context.DeadlineExceeded} {
+		e2.api.DownloadErr = interruption
+		got, _ = e2.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
+		if got.State != jobs.StateWorking {
+			t.Fatalf("interrupted download (%v) ended the job: %+v", interruption, got)
+		}
+		stored, _ := e2.jobs.Get(job.JobID)
+		if stored.DownloadAttempts != 0 {
+			t.Fatalf("interruptions must not count as attempts: %d", stored.DownloadAttempts)
+		}
+	}
+	e2.api.DownloadErr = nil
+	got, _ = e2.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
+	if got.State != jobs.StateCompleted {
+		t.Fatalf("retry after interruption: %+v", got)
+	}
+}
+
+// waitSeconds bounds the whole call, including slow status requests and
+// queueing behind another call that holds the job (regression).
+func TestWaitBoundsUpstreamRequestsAndLocks(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	e.svc.now, e.svc.sleep = time.Now, sleepCtx
+	e.api.OpDoneAfter = 1000
+	e.api.PollHook = func(ctx context.Context) error { return sleepCtx(ctx, 3*time.Second) }
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	got, _ := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(1)})
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("a 1s wait took %v with a 3s status request", d)
+	}
+	if got.State != jobs.StateWorking || len(got.Warnings) != 0 {
+		t.Fatalf("the end of a wait is not a failure: %+v", got)
+	}
+	// A zero wait still completes its single check.
+	e.api.PollHook = func(ctx context.Context) error { return sleepCtx(ctx, 50*time.Millisecond) }
+	polls := e.api.Polls
+	if got, _ = e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)}); e.api.Polls != polls+1 || len(got.Warnings) != 0 {
+		t.Fatalf("zero wait must check once: polls %d->%d %+v", polls, e.api.Polls, got)
+	}
+
+	// Queueing behind a call that is downloading the job.
+	e.api.PollHook, e.api.OpDoneAfter = nil, 0
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	e.api.DownloadHook = func(ctx context.Context) error {
+		once.Do(func() { close(started) })
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	first := make(chan *VideoJob)
+	go func() {
+		v, _ := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(30)})
+		first <- v
+	}()
+	<-started
+	start = time.Now()
+	got, _ = e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(1)})
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("a 1s wait queued for %v behind a download", d)
+	}
+	if got.State != jobs.StateWorking || !strings.Contains(got.Next, "being downloaded") {
+		t.Fatalf("queued call: %+v", got)
+	}
+	close(release)
+	if v := <-first; v.State != jobs.StateCompleted {
+		t.Fatalf("downloading call: %+v", v)
 	}
 }
