@@ -206,7 +206,8 @@ Google returns no cost with any response, and Veo operations carry no usage at a
    - Token-priced models are priced from `usageMetadata` per modality. For images this matches Google's per-image prices exactly (1120 tokens × $60/M = $0.067).
    - Veo is priced from parameters.
    - Failed and safety-filtered generations are recorded at $0.
-   - Outputs that Google generated (and billed) but the server could not save or download are recorded as spent, with the error attached.
+   - A response that consumed tokens but returned no media (for example finish reason `MAX_TOKENS`) is recorded as spent at its token cost. Safety blocks keep their usage on the entry but stay at $0.
+   - Outputs that Google generated (and billed) but the server could not save or download are recorded as spent, with the error attached. A video job in that state keeps reporting its cost.
    - Pending video jobs count toward caps until they settle.
 5. **Report.** Results show `cost {estimatedUsd, usd, basis}`. `get_usage` breaks spend down by period, model and tool, with budget remaining and running jobs. `gemini-media-mcp usage` shows the same from a terminal. The ledger is plain JSONL, easy to import anywhere.
 

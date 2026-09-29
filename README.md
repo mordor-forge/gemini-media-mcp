@@ -134,7 +134,7 @@ On Vertex, an API key without a project uses express mode, which does not suppor
 
 ## Spend and budgets
 
-Google doesn't return costs, so the server computes them from its price table and the token usage the API reports. Every call records an estimate before it runs and the reconciled cost afterwards. Failed and safety-blocked generations count as $0.
+Google doesn't return costs, so the server computes them from its price table and the token usage the API reports. Every call records an estimate before it runs and the reconciled cost afterwards. Failed and safety-blocked generations count as $0. A response that used tokens but returned no media (for example `MAX_TOKENS`) is charged for those tokens.
 
 - Results include `cost {estimatedUsd, usd, basis}`. `get_usage` and `gemini-media-mcp usage` summarize spend. The ledger is a plain JSONL file in the state directory.
 - Budgets are enforced before each call, across concurrent calls and across several server processes sharing a state directory (in-flight calls hold their estimate under a file lock).

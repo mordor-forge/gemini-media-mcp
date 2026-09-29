@@ -186,13 +186,18 @@ func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source 
 	wg.Wait()
 
 	result := &ImageResult{Model: m.ID, Warnings: warnings}
-	var usage google.Usage
+	// usage is everything the API reported; billable leaves out variations
+	// blocked by safety filters, which are not charged.
+	var usage, billable google.Usage
 	var texts []string
 	var firstErr, saveErr error
 	succeeded := 0
 	for _, o := range outcomes {
 		if o.res != nil {
 			usage = addUsage(usage, o.res.Usage)
+			if apperr.KindOf(o.err) != apperr.Safety {
+				billable = addUsage(billable, o.res.Usage)
+			}
 			result.Warnings = append(result.Warnings, modelNotices(o.res)...)
 		}
 		if o.err != nil {
@@ -226,7 +231,8 @@ func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source 
 	result.Warnings = dedupe(result.Warnings)
 
 	if succeeded == 0 {
-		return nil, s.fail(res, entry, firstErr)
+		// No image, but the model may still have consumed billable tokens.
+		return nil, s.settleUnusable(res, entry, firstErr, m, usage, billable, location, est)
 	}
 	// From here on Google has billed the call: always settle it as spent.
 	entry.Status = spend.StatusOK
@@ -236,7 +242,7 @@ func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source 
 		entry.Error = "saving output: " + saveErr.Error()
 	}
 	var actual *catalog.Estimate
-	if a, ok := m.CostFromUsage(tokenUsage(usage), s.backend(), location); ok {
+	if a, ok := m.CostFromUsage(tokenUsage(billable), s.backend(), location); ok {
 		actual = &a
 	}
 	result.Cost = s.settle(res, entry, est, actual)

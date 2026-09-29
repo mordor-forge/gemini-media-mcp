@@ -90,7 +90,14 @@ func (s *Service) GenerateMusic(ctx context.Context, req MusicRequest) (*MusicRe
 	}
 	parsed, err := google.ParseResponse(resp, "audio/")
 	if err != nil {
-		return nil, s.fail(res, entry, err)
+		var recorded, billable google.Usage
+		if parsed != nil {
+			recorded = parsed.Usage
+			if apperr.KindOf(err) != apperr.Safety {
+				billable = parsed.Usage
+			}
+		}
+		return nil, s.settleUnusable(res, entry, err, m, recorded, billable, location, est)
 	}
 	blob := parsed.Media[0]
 	mime := firstNonEmpty(blob.MIMEType, "audio/mpeg")

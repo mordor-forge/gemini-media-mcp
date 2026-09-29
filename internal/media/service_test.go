@@ -724,3 +724,53 @@ func TestWaitBoundsUpstreamRequestsAndLocks(t *testing.T) {
 		t.Fatalf("downloading call: %+v", v)
 	}
 }
+
+// A response that consumed tokens but returned no image (MAX_TOKENS) is still
+// billed: its usage and token cost must reach the ledger (regression).
+func TestUsageWithoutMediaIsRecordedAndBilled(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	usage := &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 10, CandidatesTokenCount: 100, ThoughtsTokenCount: 2000, TotalTokenCount: 2110}
+	e.api.ContentFn = func(googletest.ContentCall) (*genai.GenerateContentResponse, error) {
+		return &genai.GenerateContentResponse{
+			Candidates:    []*genai.Candidate{{FinishReason: genai.FinishReasonMaxTokens, Content: &genai.Content{Parts: []*genai.Part{{Text: "Let me think..."}}}}},
+			UsageMetadata: usage,
+		}, nil
+	}
+	_, err := e.svc.GenerateImage(context.Background(), ImageRequest{Prompt: "x"})
+	if err == nil || !strings.Contains(err.Error(), "MAX_TOKENS") || !strings.Contains(err.Error(), "billed") {
+		t.Fatalf("want a no-image error that says the call was billed, got %v", err)
+	}
+	s := e.ledger.Summarize("all", 1)
+	got := s.Recent[0]
+	if got.Status != spend.StatusOK || got.CostUSD <= 0 || got.Basis != spend.BasisUsage || got.Usage == nil || got.Error == "" {
+		t.Fatalf("ledger entry = %+v", got)
+	}
+	if s.Totals.All != got.CostUSD {
+		t.Fatalf("totals = %+v", s.Totals)
+	}
+
+	// Safety blocks stay distinct: filtered and not charged, usage kept.
+	e2 := newEnv(t, nil, spend.Budget{})
+	e2.api.ContentFn = func(googletest.ContentCall) (*genai.GenerateContentResponse, error) {
+		return &genai.GenerateContentResponse{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonImageSafety}}, UsageMetadata: usage}, nil
+	}
+	if _, err := e2.svc.GenerateImage(context.Background(), ImageRequest{Prompt: "x"}); apperr.KindOf(err) != apperr.Safety || strings.Contains(err.Error(), "billed") {
+		t.Fatalf("want an unbilled safety error, got %v", err)
+	}
+	s = e2.ledger.Summarize("all", 1)
+	if got := s.Recent[0]; got.Status != spend.StatusFiltered || got.CostUSD != 0 || got.Usage == nil || s.Totals.All != 0 {
+		t.Fatalf("filtered entry = %+v totals %+v", got, s.Totals)
+	}
+
+	// The same holds for speech.
+	e3 := newEnv(t, nil, spend.Budget{})
+	e3.api.ContentFn = func(googletest.ContentCall) (*genai.GenerateContentResponse, error) {
+		return &genai.GenerateContentResponse{Candidates: []*genai.Candidate{{FinishReason: genai.FinishReasonMaxTokens}}, UsageMetadata: usage}, nil
+	}
+	if _, err := e3.svc.GenerateSpeech(context.Background(), SpeechRequest{Text: "Hello"}); err == nil || !strings.Contains(err.Error(), "billed") {
+		t.Fatalf("speech: %v", err)
+	}
+	if got := e3.ledger.Summarize("all", 1).Recent[0]; got.Status != spend.StatusOK || got.CostUSD <= 0 || got.Usage == nil {
+		t.Fatalf("speech entry = %+v", got)
+	}
+}

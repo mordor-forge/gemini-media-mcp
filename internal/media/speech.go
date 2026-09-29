@@ -170,7 +170,14 @@ func (s *Service) GenerateSpeech(ctx context.Context, req SpeechRequest) (*Speec
 	}
 	parsed, err := google.ParseResponse(resp, "audio/")
 	if err != nil {
-		return nil, s.fail(res, entry, err)
+		var recorded, billable google.Usage
+		if parsed != nil {
+			recorded = parsed.Usage
+			if apperr.KindOf(err) != apperr.Safety {
+				billable = parsed.Usage
+			}
+		}
+		return nil, s.settleUnusable(res, entry, err, m, recorded, billable, location, est)
 	}
 	blob := parsed.Media[0]
 	data, mime, ext, duration, err := normalizeSpeech(blob, format)

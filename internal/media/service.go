@@ -268,6 +268,49 @@ func (s *Service) fail(res *spend.Reservation, entry spend.Entry, err error) err
 	return err
 }
 
+// settleUnusable records a call that reached the model but returned no
+// usable media (for example finish reason MAX_TOKENS). Google bills the
+// tokens a response reports whether or not the requested media came back, so
+// billable usage is settled as spent at its token cost. Safety blocks stay
+// "filtered" and usage without a token price stays "failed"; the usage is
+// kept on the entry for the record either way.
+func (s *Service) settleUnusable(res *spend.Reservation, entry spend.Entry, err error, m *catalog.Model, recorded, billable google.Usage, location string, est catalog.Estimate) error {
+	if hasTokens(recorded) {
+		entry.Usage = recorded
+	}
+	if hasTokens(billable) {
+		tu := tokenUsage(billable)
+		if len(tu.OutputByModality) == 0 && m.Pricing.OutputPer1M["text"] > 0 {
+			// Nothing came back as media, so the output was text or thinking.
+			// (Models without a text price, like TTS, keep their primary
+			// output rate: over- rather than under-counting protects budgets.)
+			tu.OutputByModality = map[string]int{"text": billable.OutputTokens}
+		}
+		if actual, ok := m.CostFromUsage(tu, s.backend(), location); ok && actual.USD > 0 {
+			entry.Status = spend.StatusOK
+			entry.Error = truncate(err.Error(), 300)
+			cost := s.settle(res, entry, est, &actual)
+			return billedNote(err, cost.USD, actual.Breakdown)
+		}
+	}
+	return s.fail(res, entry, err)
+}
+
+func hasTokens(u google.Usage) bool {
+	return u.PromptTokens+u.OutputTokens+u.ThoughtsTokens > 0
+}
+
+// billedNote tells the agent that a failed call was still charged.
+func billedNote(err error, usd float64, breakdown string) error {
+	note := fmt.Sprintf(" (the call still consumed %s and is billed about $%.4f)", breakdown, usd)
+	if ae, ok := apperr.As(err); ok {
+		c := *ae
+		c.Message += note
+		return &c
+	}
+	return fmt.Errorf("%w%s", err, note)
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
