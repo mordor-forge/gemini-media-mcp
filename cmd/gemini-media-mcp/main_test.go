@@ -71,3 +71,33 @@ func TestConfigureWritesPrivateFile(t *testing.T) {
 		t.Fatalf("loaded = %+v %v", cfg, err)
 	}
 }
+
+// An existing world-readable config must not stay readable once it holds a
+// key (regression: os.WriteFile only applies the mode on creation).
+func TestConfigureTightensExistingConfig(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions")
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("outputDir: /tmp/media\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil { // defeat the umask
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := run([]string{"configure", "--config", path, "--api-key-stdin"}, strings.NewReader("AQ.test-key\n"), &out, &out); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %v after storing a key, want 0600", info.Mode().Perm())
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "AQ.test-key") || !strings.Contains(string(data), "/tmp/media") {
+		t.Fatalf("config = %q", data)
+	}
+}

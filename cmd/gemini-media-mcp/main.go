@@ -328,11 +328,35 @@ func cmdConfigure(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err := os.MkdirAll(filepath.Dir(*path), 0o700); err != nil {
 		return err
 	}
-	if err := os.WriteFile(*path, data, 0o600); err != nil {
+	if err := writePrivate(*path, data); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintf(stdout, "Wrote %s (mode 0600). Run 'gemini-media-mcp doctor' to verify.\n", *path)
 	return nil
+}
+
+// writePrivate replaces the contents of path, making it owner-only (0600)
+// before the secret is written. os.WriteFile applies its mode only when it
+// creates the file, so an existing 0644 config would stay world-readable.
+// The file is rewritten in place so a symlinked config keeps its link.
+func writePrivate(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("making %s private: %w", path, err)
+	}
+	if err := f.Truncate(0); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func cmdModels(args []string, stdout io.Writer) error {
