@@ -183,3 +183,45 @@ func TestWAV(t *testing.T) {
 		t.Fatal("ExtFromMIME mapping")
 	}
 }
+
+// A symlink planted in the output directory must not expose files outside
+// it through resource URIs (regression: Open followed it unchecked).
+func TestOpenEnforcesContainment(t *testing.T) {
+	out := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "secret.png")
+	img := pngBytes(t, 4, 4)
+	if err := os.WriteFile(outside, img, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(out, "link.png")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	s, _ := New(out)
+	if _, _, err := s.Open(URIScheme + "link.png"); !errors.Is(err, ErrInputNotAllowed) {
+		t.Fatalf("Open through an escaping symlink = %v, want ErrInputNotAllowed", err)
+	}
+	if _, err := s.LoadInput(URIScheme+"link.png", InputPolicy{}); !errors.Is(err, ErrInputNotAllowed) {
+		t.Fatalf("URI input through an escaping symlink = %v, want ErrInputNotAllowed", err)
+	}
+
+	// Links that stay inside, and an output directory that is itself a
+	// symlink, keep working.
+	a, err := s.Save("image", "real", "png", img, "image/png", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(a.Path, filepath.Join(out, "alias.png")); err != nil {
+		t.Fatal(err)
+	}
+	if _, data, err := s.Open(URIScheme + "alias.png"); err != nil || !bytes.Equal(data, img) {
+		t.Fatalf("internal symlink: %v", err)
+	}
+	linkedDir := filepath.Join(t.TempDir(), "media")
+	if err := os.Symlink(out, linkedDir); err != nil {
+		t.Fatal(err)
+	}
+	viaLink, _ := New(linkedDir)
+	if _, _, err := viaLink.Open(a.URI); err != nil {
+		t.Fatalf("symlinked output directory: %v", err)
+	}
+}

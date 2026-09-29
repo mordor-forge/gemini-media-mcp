@@ -8,6 +8,7 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -276,6 +277,45 @@ func TestHTTPHandler(t *testing.T) {
 	out, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "generate_image", Arguments: map[string]any{"prompt": "x"}})
 	if err != nil || out.IsError {
 		t.Fatalf("call over HTTP: %v %+v", err, out)
+	}
+}
+
+// resources/read must not follow a symlink out of the output directory, over
+// stdio or the authenticated HTTP endpoint (regression).
+func TestResourceReadEnforcesContainment(t *testing.T) {
+	s, _ := newTestServer(t)
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("top secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(s.store.Dir(), "leak.png")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	cs := connect(t, s)
+	res, err := cs.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: store.URIScheme + "leak.png"})
+	if err == nil {
+		t.Fatalf("escaping symlink was served: %q", res.Contents[0].Blob)
+	}
+	if strings.Contains(err.Error(), "top secret") || strings.Contains(err.Error(), secret) {
+		t.Fatalf("error leaks the target: %v", err)
+	}
+
+	// Generated files are still readable.
+	out, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "generate_image", Arguments: map[string]any{"prompt": "x"}})
+	if err != nil || out.IsError {
+		t.Fatalf("generate: %v %+v", err, out)
+	}
+	var uri string
+	for _, c := range out.Content {
+		if l, ok := c.(*mcp.ResourceLink); ok {
+			uri = l.URI
+		}
+	}
+	if uri == "" {
+		t.Fatal("no resource link in result")
+	}
+	if _, err := cs.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: uri}); err != nil {
+		t.Fatalf("reading a generated file: %v", err)
 	}
 }
 

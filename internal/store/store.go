@@ -184,18 +184,33 @@ func (s *Store) Provenance(name string) (*Provenance, error) {
 }
 
 // Open resolves a resource URI or bare file name to a file inside the output
-// directory and returns its contents.
+// directory and returns its contents. Symlinks are resolved first and the
+// target must still lie inside the output directory, so a link planted there
+// cannot expose other files through resources/read or URI inputs.
 func (s *Store) Open(uriOrName string) (string, []byte, error) {
 	name := strings.TrimPrefix(uriOrName, URIScheme)
 	if name == "" || name != filepath.Base(name) || strings.HasPrefix(name, ".") {
 		return "", nil, fmt.Errorf("invalid media name %q", uriOrName)
 	}
-	path := filepath.Join(s.dir, name)
-	data, err := os.ReadFile(path)
+	real, err := filepath.EvalSymlinks(filepath.Join(s.dir, name))
 	if err != nil {
 		return "", nil, err
 	}
-	return path, data, nil
+	if !s.allowed(real, nil) {
+		return "", nil, fmt.Errorf("%w: %s resolves outside the output directory", ErrInputNotAllowed, uriOrName)
+	}
+	info, err := os.Stat(real)
+	if err != nil {
+		return "", nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return "", nil, fmt.Errorf("%s is not a regular file", uriOrName)
+	}
+	data, err := os.ReadFile(real)
+	if err != nil {
+		return "", nil, err
+	}
+	return real, data, nil
 }
 
 var slugRe = regexp.MustCompile(`[^a-z0-9._-]+`)
