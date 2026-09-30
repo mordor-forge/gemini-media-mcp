@@ -21,6 +21,11 @@ func (p *GeminiProvider) GenerateVideo(ctx context.Context, req provider.VideoRe
 	}
 
 	model := p.resolveModel(req.Model, "lite")
+
+	if model == p.modelMap["omni"] {
+		return p.generateOmniVideo(ctx, req)
+	}
+
 	if err := p.validateVideoGenerationInput(model, req.AspectRatio, req.Resolution, req.Duration); err != nil {
 		return nil, err
 	}
@@ -134,6 +139,10 @@ func (p *GeminiProvider) Status(ctx context.Context, operationID string) (*provi
 		return nil, fmt.Errorf("operationId is required")
 	}
 
+	if isOmniStub(operationID) {
+		return omniUnavailableStatus(), nil
+	}
+
 	op, err := p.client.Operations.GetVideosOperation(ctx, &genai.GenerateVideosOperation{
 		Name: operationID,
 	}, nil)
@@ -163,6 +172,10 @@ func (p *GeminiProvider) Status(ctx context.Context, operationID string) (*provi
 func (p *GeminiProvider) Download(ctx context.Context, operationID string) (*provider.VideoResult, error) {
 	if operationID == "" {
 		return nil, fmt.Errorf("operationId is required")
+	}
+
+	if isOmniStub(operationID) {
+		return nil, omniUnavailableDownloadError()
 	}
 
 	op, err := p.client.Operations.GetVideosOperation(ctx, &genai.GenerateVideosOperation{
@@ -266,6 +279,8 @@ func (p *GeminiProvider) validateVideoModel(model string, allowLite bool) error 
 			return fmt.Errorf("model %q does not support video extension", model)
 		}
 	case p.modelMap["fast"], p.modelMap["standard"]:
+		return nil
+	case p.modelMap["omni"]:
 		return nil
 	case p.modelMap["nb2"], p.modelMap["pro"], p.modelMap["tts"], p.modelMap["clip"], p.modelMap["full"]:
 		return fmt.Errorf("model %q does not support video generation", model)

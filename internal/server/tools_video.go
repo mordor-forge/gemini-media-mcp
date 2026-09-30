@@ -19,7 +19,7 @@ type OperationInput struct {
 func (s *Server) registerVideoTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:        "generate_video",
-		Description: "Generate a video from a text prompt using Google's Gemini video models. This is an async operation — use video_status to poll progress and download_video to retrieve the result.",
+		Description: "Generate a video from a text prompt using Google's Gemini video models. Model tiers: lite (default/cheapest), fast, standard (highest quality), omni (Gemini Omni — developer API not yet available, returns stub). This is an async operation — use video_status to poll progress and download_video to retrieve the result.",
 	}, s.handleGenerateVideo)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{

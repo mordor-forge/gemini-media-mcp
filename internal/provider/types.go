@@ -2,10 +2,12 @@ package provider
 
 // ImageRequest describes a text-to-image generation request.
 type ImageRequest struct {
-	Prompt      string `json:"prompt" jsonschema:"Text description of the image to generate"`
-	Model       string `json:"model,omitempty" jsonschema:"Model tier: nb2 (default) or pro. Raw model IDs also accepted"`
-	AspectRatio string `json:"aspectRatio,omitempty" jsonschema:"Aspect ratio (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9)"`
-	Resolution  string `json:"resolution,omitempty" jsonschema:"Output resolution (1K, 2K, 4K)"`
+	Prompt         string `json:"prompt" jsonschema:"Text description of the image to generate"`
+	Model          string `json:"model,omitempty" jsonschema:"Model tier: nb2 (default) or pro. Raw model IDs also accepted"`
+	AspectRatio    string `json:"aspectRatio,omitempty" jsonschema:"Aspect ratio (1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9)"`
+	Resolution     string `json:"resolution,omitempty" jsonschema:"Output resolution (1K, 2K, 4K)"`
+	Thinking       bool   `json:"thinking,omitempty" jsonschema:"Enable thinking/reasoning for complex compositions. The model plans layout, lighting, and perspective before generating. Slower but higher quality for detailed scenes."`
+	ThinkingBudget int32  `json:"thinkingBudget,omitempty" jsonschema:"Token budget for thinking (default 1024, max 8192). Higher values give the model more reasoning time. Only used when thinking is enabled."`
 }
 
 // EditImageRequest describes an image editing request.
@@ -78,11 +80,18 @@ type VideoResult struct {
 	Duration    int    `json:"duration,omitempty"`
 }
 
+// Speaker identifies a speaker and their voice for multi-speaker TTS.
+type Speaker struct {
+	Name      string `json:"name" jsonschema:"Speaker identifier used in the prompt (e.g. Host, Guest)"`
+	VoiceName string `json:"voiceName" jsonschema:"Prebuilt voice name for this speaker (e.g. Kore, Puck, Aoede)"`
+}
+
 // AudioRequest describes a text-to-speech audio generation request.
 type AudioRequest struct {
-	Prompt       string `json:"prompt" jsonschema:"Text to convert to speech or instructions for audio generation"`
-	VoiceName    string `json:"voiceName,omitempty" jsonschema:"Prebuilt voice name (e.g. Aoede, Kore, Puck)"`
-	LanguageCode string `json:"languageCode,omitempty" jsonschema:"Language code (e.g. en-US, it-IT, cs-CZ)"`
+	Prompt       string    `json:"prompt" jsonschema:"Text to convert to speech or instructions for audio generation"`
+	VoiceName    string    `json:"voiceName,omitempty" jsonschema:"Prebuilt voice name (e.g. Aoede, Kore, Puck)"`
+	LanguageCode string    `json:"languageCode,omitempty" jsonschema:"Language code (e.g. en-US, it-IT, cs-CZ)"`
+	Speakers     []Speaker `json:"speakers,omitempty" jsonschema:"Multi-speaker dialogue config (max 2 speakers). When set, voiceName is ignored. Use speaker names in the prompt text."`
 }
 
 // AudioResult contains the result of an audio generation operation.

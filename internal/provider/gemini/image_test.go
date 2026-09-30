@@ -165,7 +165,7 @@ func TestMimeFromPath(t *testing.T) {
 }
 
 func TestBuildImageGenerateConfig_Defaults(t *testing.T) {
-	config := buildImageGenerateConfig("", "")
+	config := buildImageGenerateConfig(provider.ImageRequest{})
 	if len(config.ResponseModalities) != 2 {
 		t.Fatalf("ResponseModalities len = %d, want 2", len(config.ResponseModalities))
 	}
@@ -175,10 +175,13 @@ func TestBuildImageGenerateConfig_Defaults(t *testing.T) {
 	if config.ImageConfig != nil {
 		t.Fatalf("ImageConfig = %#v, want nil", config.ImageConfig)
 	}
+	if config.ThinkingConfig != nil {
+		t.Fatal("ThinkingConfig should be nil when thinking is disabled")
+	}
 }
 
 func TestBuildImageGenerateConfig_WithAspectRatioAndResolution(t *testing.T) {
-	config := buildImageGenerateConfig("16:9", "2K")
+	config := buildImageGenerateConfig(provider.ImageRequest{AspectRatio: "16:9", Resolution: "2K"})
 	if config.ImageConfig == nil {
 		t.Fatal("ImageConfig is nil, want populated config")
 	}
@@ -191,7 +194,7 @@ func TestBuildImageGenerateConfig_WithAspectRatioAndResolution(t *testing.T) {
 }
 
 func TestBuildImageGenerateConfig_WithAspectRatioOnly(t *testing.T) {
-	config := buildImageGenerateConfig("9:16", "")
+	config := buildImageGenerateConfig(provider.ImageRequest{AspectRatio: "9:16"})
 	if config.ImageConfig == nil {
 		t.Fatal("ImageConfig is nil, want populated config")
 	}
@@ -200,5 +203,35 @@ func TestBuildImageGenerateConfig_WithAspectRatioOnly(t *testing.T) {
 	}
 	if config.ImageConfig.ImageSize != "" {
 		t.Errorf("ImageSize = %q, want empty", config.ImageConfig.ImageSize)
+	}
+}
+
+func TestBuildImageGenerateConfig_ThinkingEnabled(t *testing.T) {
+	config := buildImageGenerateConfig(provider.ImageRequest{Thinking: true})
+	if config.ThinkingConfig == nil {
+		t.Fatal("ThinkingConfig is nil, want populated")
+	}
+	if config.ThinkingConfig.ThinkingBudget == nil {
+		t.Fatal("ThinkingBudget is nil, want default 1024")
+	}
+	if *config.ThinkingConfig.ThinkingBudget != 1024 {
+		t.Errorf("ThinkingBudget = %d, want 1024", *config.ThinkingConfig.ThinkingBudget)
+	}
+}
+
+func TestBuildImageGenerateConfig_ThinkingCustomBudget(t *testing.T) {
+	config := buildImageGenerateConfig(provider.ImageRequest{Thinking: true, ThinkingBudget: 4096})
+	if config.ThinkingConfig == nil {
+		t.Fatal("ThinkingConfig is nil, want populated")
+	}
+	if *config.ThinkingConfig.ThinkingBudget != 4096 {
+		t.Errorf("ThinkingBudget = %d, want 4096", *config.ThinkingConfig.ThinkingBudget)
+	}
+}
+
+func TestBuildImageGenerateConfig_ThinkingDisabledIgnoresBudget(t *testing.T) {
+	config := buildImageGenerateConfig(provider.ImageRequest{Thinking: false, ThinkingBudget: 4096})
+	if config.ThinkingConfig != nil {
+		t.Fatal("ThinkingConfig should be nil when thinking is disabled")
 	}
 }

@@ -10,13 +10,13 @@ Unified Go MCP server for AI media generation via Google Gemini API and Vertex A
 
 ## Features
 
-- **Image generation** -- text-to-image with configurable aspect ratios and resolutions (1K/2K/4K)
+- **Image generation** -- text-to-image with configurable aspect ratios, resolutions (1K/2K/4K), and optional thinking/reasoning mode
 - **Image editing** -- modify existing images with natural language prompts
 - **Multi-reference composition** -- combine up to 3 reference images with style/content guidance
-- **Video generation** -- text-to-video via Veo 3.1 Lite, Fast, and Standard tiers
+- **Video generation** -- text-to-video via Veo 3.1 Lite, Fast, Standard, and Omni (stubbed, pending API) tiers
 - **Image-to-video** -- animate still images into video clips
 - **Video extension** -- chain clips for longer content (Fast and Standard tiers)
-- **Text-to-speech** -- generate spoken audio with configurable voices and languages
+- **Text-to-speech** -- generate spoken audio with configurable voices, languages, and multi-speaker dialogue (max 2 speakers)
 - **Music generation** -- AI music via Lyria 3 (30s clips or full songs with vocals, structure control)
 - **Single binary** -- no runtime dependencies, runs over stdio transport
 - **Provider abstraction** -- backend-agnostic interfaces for image, video, audio, and model operations
@@ -59,15 +59,15 @@ If you're unsure which backend is active, call `get_config` from your MCP client
 
 | Tool | Description | Type |
 |------|-------------|------|
-| `generate_image` | Generate image from text prompt | Sync |
+| `generate_image` | Generate image from text prompt (supports thinking mode) | Sync |
 | `edit_image` | Edit existing image with text prompt | Sync |
 | `compose_images` | Multi-reference image composition (up to 3) | Sync |
-| `generate_video` | Generate video from text prompt (returns operation ID) | Async |
+| `generate_video` | Generate video from text prompt; supports Veo and Omni tiers (returns operation ID) | Async |
 | `animate_image` | Animate image into video (first frame) | Async |
 | `extend_video` | Chain video clips for longer content | Async |
 | `video_status` | Check video generation progress | Sync |
 | `download_video` | Download completed video | Sync |
-| `generate_audio` | Generate spoken audio from text (TTS) | Sync |
+| `generate_audio` | Generate spoken audio from text (TTS); supports multi-speaker dialogue | Sync |
 | `generate_music` | Generate AI music from text description (Lyria) | Sync |
 | `list_models` | Show available models with capabilities and pricing | Sync |
 | `get_config` | Show current backend and configuration | Sync |
@@ -85,6 +85,11 @@ Async tools return an operation ID immediately. Use `video_status` to poll for c
 
 Both tiers support resolutions 1K, 2K, 4K and aspect ratios 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9.
 
+The `generate_image` tool supports an optional **thinking mode** for complex compositions:
+
+- `thinking: true` -- the model reasons about layout, lighting, and perspective before generating. Produces higher quality results for detailed scenes at the cost of latency.
+- `thinkingBudget` -- token budget for reasoning (default: 1024, max: 8192). Higher values give the model more time to plan. Setting `thinkingBudget` without `thinking: true` auto-enables thinking.
+
 ### Video
 
 | Tier | Model | Best For | Cost |
@@ -92,6 +97,9 @@ Both tiers support resolutions 1K, 2K, 4K and aspect ratios 1:1, 2:3, 3:2, 3:4, 
 | lite (default) | `veo-3.1-lite-generate-preview` | High-volume, drafts | $0.05/sec (720p), $0.08/sec (1080p) |
 | fast | `veo-3.1-fast-generate-preview` | Good quality iterations | $0.15/sec (720p/1080p), $0.35/sec (4k) |
 | standard | `veo-3.1-generate-preview` | Final renders, 4K | $0.40/sec (720p/1080p), $0.60/sec (4k) |
+| omni | `gemini-omni-flash` (pending) | Gemini Omni native video | TBD — developer API not yet available |
+
+The **omni** tier is a stub for Gemini Omni's native video generation via `generateContent`. The developer API has not been released yet; calling `generate_video` with `model: "omni"` returns a sentinel operation that `video_status` reports as `"unavailable"`. When Google releases the Omni developer API, this tier will activate automatically with a server update.
 
 Supported aspect ratios are `16:9` and `9:16`. Supported durations are `4`, `6`, and `8` seconds. Lite supports `720p` and `1080p`. Fast and Standard support `720p`, `1080p`, and `4K`. Video extension (`extend_video`) is only available on Fast and Standard tiers, and the extension tier must match the original generation.
 
@@ -106,6 +114,7 @@ The `generate_audio` tool converts text to spoken audio. It supports:
 - **Voice selection** -- Choose from prebuilt voices like `Aoede`, `Kore`, `Puck`, and more. Default: `Aoede`
 - **Language** -- Set the language code (e.g., `en-US`, `it-IT`, `cs-CZ`, `de-DE`). Default: `en-US`
 - **Natural speech** -- Generates expressive, natural-sounding speech with appropriate pacing and intonation
+- **Multi-speaker dialogue** -- Set `speakers` (max 2) for podcast-style or conversational audio. Each speaker has a `name` (used in the prompt text) and a `voiceName`. When `speakers` is set, `voiceName` is ignored
 
 Output is saved as raw PCM audio (`audio/L16`, 24kHz sample rate). The file can be played with tools like `ffplay` or converted to other formats:
 

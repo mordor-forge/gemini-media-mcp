@@ -36,14 +36,35 @@ func (p *GeminiProvider) GenerateAudio(ctx context.Context, req provider.AudioRe
 	}
 	config := &genai.GenerateContentConfig{
 		ResponseModalities: []string{"AUDIO"},
-		SpeechConfig: &genai.SpeechConfig{
+	}
+
+	if len(req.Speakers) > 0 {
+		speakerConfigs := make([]*genai.SpeakerVoiceConfig, len(req.Speakers))
+		for i, s := range req.Speakers {
+			speakerConfigs[i] = &genai.SpeakerVoiceConfig{
+				Speaker: s.Name,
+				VoiceConfig: &genai.VoiceConfig{
+					PrebuiltVoiceConfig: &genai.PrebuiltVoiceConfig{
+						VoiceName: s.VoiceName,
+					},
+				},
+			}
+		}
+		config.SpeechConfig = &genai.SpeechConfig{
+			MultiSpeakerVoiceConfig: &genai.MultiSpeakerVoiceConfig{
+				SpeakerVoiceConfigs: speakerConfigs,
+			},
+			LanguageCode: languageCode,
+		}
+	} else {
+		config.SpeechConfig = &genai.SpeechConfig{
 			VoiceConfig: &genai.VoiceConfig{
 				PrebuiltVoiceConfig: &genai.PrebuiltVoiceConfig{
 					VoiceName: voiceName,
 				},
 			},
 			LanguageCode: languageCode,
-		},
+		}
 	}
 
 	resp, err := p.client.Models.GenerateContent(ctx, model, contents, config)

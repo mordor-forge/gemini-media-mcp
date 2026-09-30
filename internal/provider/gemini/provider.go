@@ -88,6 +88,7 @@ func defaultModelMap() map[string]string {
 		"tts":      "gemini-2.5-flash-preview-tts",
 		"clip":     "lyria-3-clip-preview",
 		"full":     "lyria-3-pro-preview",
+		"omni":     "gemini-omni-flash",
 	}
 }
 

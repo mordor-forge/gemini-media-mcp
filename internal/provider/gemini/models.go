@@ -58,5 +58,11 @@ func (p *GeminiProvider) ListModels(_ context.Context) ([]provider.ModelInfo, er
 			AspectRatios: []string{},
 			PricePerSec:  "standard Gemini token pricing (~$0.15/song)",
 		},
+		{
+			ID: p.modelMap["omni"] + " (pending)", Tier: "omni", MediaType: "video",
+			Resolutions:  []string{},
+			AspectRatios: []string{"16:9", "9:16"},
+			PricePerSec:  "TBD — developer API not yet available",
+		},
 	}, nil
 }
