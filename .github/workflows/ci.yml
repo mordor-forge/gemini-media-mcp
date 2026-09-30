@@ -34,6 +34,8 @@ jobs:
       - name: Unit tests
         if: runner.os != 'Linux'
         run: go test -count=1 ./...
+      # Paid live E2E tests run locally only. CI compiles and vets them
+      # without API calls, including on main pushes and manual runs.
       - name: E2E tests compile
         run: go vet -tags=e2e ./...
 
@@ -71,21 +73,3 @@ jobs:
         run: node --test npm/test/*.test.js
       - name: Validate packaging manifests
         run: scripts/validate-packaging.sh --offline
-
-  e2e:
-    # Live API smoke tests (cost a few cents). Only on main, only with a key.
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [test]
-    env:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GOOGLE_API_KEY }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-      - name: E2E (images, speech, music; no video)
-        if: env.GEMINI_API_KEY != ''
-        env:
-          GEMINI_MEDIA_E2E: "1"
-        run: go test -tags=e2e -run 'TestE2E_(ListModelsLive|Image|Speech|Music)$' ./internal/media/ -v -timeout 10m

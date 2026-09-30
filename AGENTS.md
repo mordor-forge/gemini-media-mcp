@@ -31,7 +31,8 @@ Run build, vet, tests and lint before you say a change is done.
   `e2e`) calls Google's paid APIs and needs `GEMINI_MEDIA_E2E=1` plus
   `GEMINI_API_KEY` (or Vertex credentials); the video test alone costs about
   $0.20. Never run them - or any command that generates media - unless the
-  user explicitly asks. `go test ./...` without the tag is free.
+  user explicitly asks. `go test ./...` without the tag is free. Live E2E
+  runs are local-only; CI only compiles and vets the tagged tests.
 - **stdout is the MCP JSON-RPC channel.** In `serve` (stdio) mode any byte
   written to stdout that is not protocol traffic breaks the client. Log with the
   injected `*slog.Logger` (it writes to stderr); never `fmt.Print*` or

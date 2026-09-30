@@ -172,6 +172,10 @@ Plugin installs (Claude Code, Codex, Gemini CLI, VS Code) include the skills. To
 
 ## Development
 
+Paid live E2E tests are run locally with your own API key. CI runs the free
+checks and compiles/vets the E2E tests, but never executes live generation,
+including after merges to `main` or on manual workflow runs.
+
 ```bash
 go build ./...
 go test -race ./...
