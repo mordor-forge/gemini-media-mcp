@@ -1,0 +1,144 @@
+{
+  "$schema": "https://raw.githubusercontent.com/modelcontextprotocol/mcpb/main/schemas/mcpb-manifest-v0.3.schema.json",
+  "manifest_version": "0.3",
+  "name": "gemini-media-mcp",
+  "display_name": "Gemini Media",
+  "version": "1.0.0",
+  "description": "Generate images (Nano Banana), video (Veo), speech (Gemini TTS) and music (Lyria) with Google's generative media models.",
+  "long_description": "Create and edit images with Nano Banana, generate and extend Veo video clips with native audio, turn text into single- or two-voice speech, and compose music with Lyria. Every call reports its estimated cost, `estimate_cost` compares options before you spend, and optional budgets stop runaway spend. Files are saved to your output directory.\n\nUse a Gemini API key from https://aistudio.google.com/apikey, or a Vertex AI project with gcloud application-default credentials.",
+  "author": {
+    "name": "mordor-forge",
+    "url": "https://github.com/mordor-forge"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mordor-forge/gemini-media-mcp"
+  },
+  "homepage": "https://github.com/mordor-forge/gemini-media-mcp",
+  "documentation": "https://github.com/mordor-forge/gemini-media-mcp#readme",
+  "support": "https://github.com/mordor-forge/gemini-media-mcp/issues",
+  "server": {
+    "type": "binary",
+    "entry_point": "server/darwin/gemini-media-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/darwin/gemini-media-mcp",
+      "args": [],
+      "env": {
+        "GEMINI_MEDIA_API_KEY": "${user_config.gemini_api_key}",
+        "GEMINI_MEDIA_PROJECT": "${user_config.google_cloud_project}",
+        "GEMINI_MEDIA_LOCATION": "${user_config.google_cloud_location}",
+        "GEMINI_MEDIA_OUTPUT_DIR": "${user_config.output_dir}"
+      },
+      "platform_overrides": {
+        "win32": {
+          "command": "${__dirname}/server/win32-x64/gemini-media-mcp.exe"
+        },
+        "linux": {
+          "command": "/bin/sh",
+          "args": [
+            "${__dirname}/server/linux/launch.sh"
+          ]
+        }
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "generate_image",
+      "description": "Create images from a prompt, optionally guided by reference images"
+    },
+    {
+      "name": "edit_image",
+      "description": "Change an existing image with an instruction while keeping the rest"
+    },
+    {
+      "name": "generate_video",
+      "description": "Start a Veo video clip with native audio (asynchronous)"
+    },
+    {
+      "name": "get_video",
+      "description": "Check or wait for a video job and download the finished clip"
+    },
+    {
+      "name": "extend_video",
+      "description": "Continue a completed Veo clip by about 7 seconds"
+    },
+    {
+      "name": "generate_speech",
+      "description": "Turn text into speech with one voice or a two-speaker dialogue"
+    },
+    {
+      "name": "generate_music",
+      "description": "Compose music clips or full songs with Lyria"
+    },
+    {
+      "name": "list_models",
+      "description": "List current models, aliases, capabilities and prices"
+    },
+    {
+      "name": "estimate_cost",
+      "description": "Estimate the cost of a request before running it"
+    },
+    {
+      "name": "get_usage",
+      "description": "Report estimated spend and budget remaining"
+    },
+    {
+      "name": "get_config",
+      "description": "Show the active backend, output directory, defaults and warnings"
+    }
+  ],
+  "tools_generated": false,
+  "keywords": [
+    "gemini",
+    "nano banana",
+    "veo",
+    "lyria",
+    "text-to-speech",
+    "image generation",
+    "video generation",
+    "music generation"
+  ],
+  "license": "Apache-2.0",
+  "privacy_policies": [
+    "https://policies.google.com/privacy"
+  ],
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ]
+  },
+  "user_config": {
+    "gemini_api_key": {
+      "type": "string",
+      "title": "Gemini API key",
+      "description": "Key from https://aistudio.google.com/apikey. Leave empty to use Vertex AI or the key saved by `gemini-media-mcp configure`.",
+      "sensitive": true,
+      "required": false,
+      "default": ""
+    },
+    "google_cloud_project": {
+      "type": "string",
+      "title": "Google Cloud project (Vertex AI)",
+      "description": "Optional. Use Vertex AI in this project with gcloud application-default credentials instead of an API key.",
+      "required": false,
+      "default": ""
+    },
+    "google_cloud_location": {
+      "type": "string",
+      "title": "Google Cloud location (Vertex AI)",
+      "description": "Optional Vertex AI region. Empty means global.",
+      "required": false,
+      "default": ""
+    },
+    "output_dir": {
+      "type": "directory",
+      "title": "Output directory",
+      "description": "Where generated media is saved. Empty means ~/generated_media.",
+      "required": false,
+      "default": ""
+    }
+  }
+}

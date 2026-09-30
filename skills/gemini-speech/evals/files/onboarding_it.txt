@@ -1,0 +1,4 @@
+Benvenuto in Orto Smart! In pochi minuti configurerai il tuo primo sensore.
+Per prima cosa, collega il sensore alla presa USB e attendi che la luce diventi verde.
+Poi apri l'app e tocca "Aggiungi dispositivo". Il resto lo facciamo noi.
+Se hai bisogno di aiuto, scrivici a supporto chiocciola ortosmart punto it.

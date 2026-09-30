@@ -1,0 +1,41 @@
+{
+  "skill_name": "gemini-image",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Make me a square Instagram post: a flat lay of a matcha latte, a bamboo whisk and a ceramic bowl on light linen, soft morning window light.",
+      "expected_output": "Calls gemini-media:generate_image once with a descriptive full-sentence prompt, aspectRatio 1:1, default model nb2 at 1K (no pro, no 4K). Reviews the returned preview or file if it can view images (or says it cannot), then reports the file path/uri, model and cost and offers one or two concrete refinements.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I need a 4K poster for our jazz night: 'Blue Hour Sessions', Friday 14 November, 9pm, The Loft. Give me three options with perfect lettering.",
+      "expected_output": "Chooses model pro, aspectRatio 2:3 (or 3:4), imageSize 4K, count 3, with every text string quoted exactly in the prompt. Before generating, calls gemini-media:estimate_cost (mediaType image, model pro, imageSize 4K, count 3, ideally compare true) and tells the user the figure, offering a cheaper 2K or nb2 draft path. If generate_image returns a [confirmation] error it asks the user and only retries with approvedCostUsd after explicit approval. Checks spelling in the results.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "the sky in ~/Pictures/wedding/IMG_2041.jpg is totally blown out, can you give it a soft pink sunset without touching the people?",
+      "expected_output": "Triggers even though the user never says 'generate'. Calls gemini-media:edit_image with image set to the path and a prompt that changes only the sky and explicitly keeps the people, faces, framing and lighting on faces unchanged. If the server rejects the path as outside the allowed directories, it explains the input-file policy (get_config) and how to fix it instead of retrying blindly. Returns the new file path; the original is untouched.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "[Scheduled job - no human is available to answer questions] Create a 16:9 header illustration for our blog post 'Edge computing on the farm' and save it as blog-header-edge-farm.",
+      "expected_output": "Does not ask questions. Uses nb2, aspectRatio 16:9, 1K or 2K, outputName blog-header-edge-farm, a descriptive prompt with a clear style choice. Stays below the confirmation threshold and never sets approvedCostUsd itself. At most two corrective edits. Ends with a short report: prompt, model, parameters, file path, cost.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Make an infographic of this week's weather forecast for Milan that we can show on the office screen.",
+      "expected_output": "Uses googleSearch true with model pro (or nb2 on the Gemini API), aspectRatio 16:9, title and labels described, and notes that estimates exclude any search-grounding fee. Reminds the user to verify the figures in the image against a source. Does not use nb2-lite (no search grounding).",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Here's our mascot, a round orange robot (files: mascot.png). Put him in three scenes: surfing, typing at a desk, and roasting marshmallows at a campfire. He has to look identical in all of them.",
+      "expected_output": "Passes mascot.png in referenceImages for each scene, repeats the same one-sentence character description in every prompt, generates one call per scene (not count 3 with one prompt), and reviews for consistency, re-editing any drifting result with the reference. Reports three file paths and total cost.",
+      "files": []
+    }
+  ]
+}

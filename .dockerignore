@@ -1,6 +1,11 @@
-.git
-.github
-docs
-skills
-README.md
-LICENSE
+# Build context allowlist: the image only needs the Go sources and the license.
+# (npm/, mcpb/, skills/, docs/, packaging/, dist/, .git/ ... are excluded.)
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!LICENSE
+# Tests and fixtures are not compiled into the binary.
+**/*_test.go
+**/testdata/

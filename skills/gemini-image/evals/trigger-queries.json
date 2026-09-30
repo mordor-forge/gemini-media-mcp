@@ -1,0 +1,20 @@
+{
+  "should_trigger": [
+    "can u make me a logo for my coffee cart called Bean There, something retro 70s",
+    "I need a hero image for my landing page, 16:9, a woman working on a laptop in a sunny cafe",
+    "remove the tourist in the background of ~/Desktop/rome.jpg",
+    "turn this pencil sketch of a chair into a realistic product render",
+    "generate 4 variations of a kawaii red panda sticker",
+    "make a poster-style infographic about last night's Champions League results",
+    "put our logo (logo.png) on a white t-shirt mockup worn by a model",
+    "design a YouTube thumbnail for my sourdough video with the big text 'NO KNEAD?'"
+  ],
+  "should_not_trigger": [
+    "plot monthly revenue from sales.csv as a bar chart",
+    "write an SVG icon of a gear for my website's settings button",
+    "animate this photo of my dog so he wags his tail",
+    "compress these PNGs to under 200KB each",
+    "what's in this screenshot? describe the error message",
+    "draw a mermaid diagram of our microservice architecture"
+  ]
+}
