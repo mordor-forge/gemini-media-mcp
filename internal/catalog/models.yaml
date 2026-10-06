@@ -7,9 +7,10 @@
 #
 # Prices are USD list prices (paid tier, standard/on-demand) and are used for
 # estimates only. Authoritative spend lives in AI Studio / Cloud Billing.
-version: "2026-09-28"
+version: "2026-10-06"
 sources:
   - https://ai.google.dev/gemini-api/docs/models
+  - https://ai.google.dev/gemini-api/docs/models/gemini-nano-banana-2.1
   - https://ai.google.dev/gemini-api/docs/deprecations
   - https://ai.google.dev/gemini-api/docs/pricing
   - https://ai.google.dev/gemini-api/docs/veo
@@ -17,24 +18,58 @@ sources:
   - https://ai.google.dev/gemini-api/docs/generate-content/speech-generation
   - https://ai.google.dev/gemini-api/docs/generate-content/music-generation
   - https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/google-models
+  - https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/nano-banana-2-1
   - https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing
 
 defaults:
-  image: gemini-3.1-flash-image
+  image: gemini-nano-banana-2.1
   video: veo-3.1-lite-generate-preview
   speech: gemini-3.8-flash-tts
   music: lyria-3-clip-preview
 
 models:
   # ---------------------------------------------------------------- images
-  - id: gemini-3.1-flash-image
-    aliases: [nb2, nano-banana-2, flash-image]
-    title: Nano Banana 2
+  - id: gemini-nano-banana-2.1
+    aliases: [nb2, nb2.1, nano-banana-2.1, flash-image]
+    title: Nano Banana 2.1
     family: gemini-image
     mediaType: image
     status: ga
+    released: "2026-10-06"
+    summary: Best default. Update to Nano Banana 2 with better visual quality, prompt adherence, text rendering and multi-turn consistency, at half its per-image price. 1K to 4K, extreme aspect ratios, up to 14 reference images.
+    backends: [gemini-api, vertex]
+    vertexLocations: [global]
+    capabilities:
+      aspectRatios: ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"]
+      imageSizes: ["1K", "2K", "4K"]
+      maxReferenceImages: 14
+      edit: true
+      searchGrounding: true
+      geminiApiOnly: [googleSearch]
+    pricing:
+      asOf: "2026-10-06"
+      source: https://ai.google.dev/gemini-api/docs/pricing
+      inputPer1M: {text: 1.50, image: 1.50}
+      outputPer1M: {text: 7.50, image: 30.00}
+      imageOutputTokens: {"1K": 1120, "2K": 1680, "4K": 2520}
+      inputImageTokens: 1120
+      vertexRegionalMultiplier: 1.1
+      batchDiscount: 0.5
+    notes:
+      - No 512px output (minimum 1K). Thinking level defaults to medium; thinking tokens bill at the text output rate.
+      - Grounding with Google Web and Image Search on the Gemini API. Vertex AI search grounding and regional availability are unconfirmed, so googleSearch is dropped there as for Nano Banana 2.
+      - Prices from launch-day listings (Google's pricing page was not reachable to verify); reconciled costs use the usage the API reports.
+
+  - id: gemini-3.1-flash-image
+    aliases: [nano-banana-2]
+    title: Nano Banana 2
+    family: gemini-image
+    mediaType: image
+    status: deprecated
     released: "2026-05-28"
-    summary: Fast, high-quality generation and editing; best default. Supports 512px drafts up to 4K, extreme aspect ratios and up to 14 reference images.
+    shutdown: "2026-10-29"
+    replacement: gemini-nano-banana-2.1
+    summary: Previous default, replaced by Nano Banana 2.1 (better and half the per-image price). Shuts down on the Gemini API on 2026-10-29. The only model with 512px drafts.
     backends: [gemini-api, vertex]
     vertexLocations: [global]
     capabilities:
@@ -64,7 +99,7 @@ models:
     mediaType: image
     status: ga
     released: "2026-05-28"
-    summary: Highest fidelity; best for text rendering, infographics, complex multi-subject scenes and final renders. Slower and about 2x the price of Nano Banana 2.
+    summary: Highest fidelity for dense infographics, complex multi-subject scenes and final renders. Slower and about 4x the per-image price of Nano Banana 2.1; try nb2 first.
     backends: [gemini-api, vertex]
     vertexLocations: [global]
     capabilities:
@@ -91,7 +126,7 @@ models:
     mediaType: image
     status: ga
     released: "2026-06-30"
-    summary: Cheapest image model (about half of Nano Banana 2) for bulk drafts and thumbnails; 1K only, no search grounding, weaker at multi-reference edits.
+    summary: Cheapest image model for bulk drafts and thumbnails. Same per-image price as Nano Banana 2.1 but cheaper input and text tokens; 1K only, no search grounding, weaker at multi-reference edits.
     backends: [gemini-api, vertex]
     vertexLocations: [global]
     capabilities:
@@ -115,7 +150,7 @@ models:
     status: deprecated
     released: "2025-10-02"
     shutdown: "2026-10-02"
-    replacement: gemini-3.1-flash-image
+    replacement: gemini-nano-banana-2.1
     summary: Legacy first-generation model. Shuts down on the Gemini API on 2026-10-02 (Vertex AI on 2027-03-15).
     backends: [gemini-api, vertex]
     vertexLocations: [global, us-central1]
@@ -134,7 +169,7 @@ models:
     mediaType: image
     status: retired
     shutdown: "2026-06-25"
-    replacement: gemini-3.1-flash-image
+    replacement: gemini-nano-banana-2.1
     summary: Preview of Nano Banana 2; shut down 2026-06-25.
 
   - id: gemini-3-pro-image-preview
@@ -150,7 +185,7 @@ models:
     mediaType: image
     status: retired
     shutdown: "2026-01-15"
-    replacement: gemini-3.1-flash-image
+    replacement: gemini-nano-banana-2.1
 
   # ---------------------------------------------------------------- video
   - id: veo-3.1-lite-generate-preview

@@ -217,7 +217,7 @@ Google returns no cost with any response, and Veo operations carry no usage at a
 
 | Area | Now supported |
 |---|---|
-| Images | GA Nano Banana 2 / Pro / 2 Lite; 512px–4K; 14 aspect ratios (NB2); up to 14 references; Google Search grounding; 1–4 parallel variations; model commentary returned; thought images filtered |
+| Images | GA Nano Banana 2.1 (default since 2026-10-06; Nano Banana 2 shuts down 2026-10-29) / Pro / 2 Lite; 1K–4K (512px on NB2 only); 14 aspect ratios (NB2/2.1); up to 14 references; Google Search grounding; 1–4 parallel variations; model commentary returned; thought images filtered |
 | Video | Veo 3.1 Lite/Fast/Standard with backend-specific IDs; first frame, first+last frame, reference "ingredients"; negative prompt; seed and silent video on Vertex; person generation; extension on both backends (720p sources, checked locally); MP4 duration read from the file; `raiMediaFilteredReasons` surfaced |
 | Speech | Gemini 3.8 Flash / Flash-Lite TTS (verbatim text plus per-turn `speech_metadata` style, injected through the SDK's request hook until the SDK ships the field); legacy 2.5/3.1 models get in-text directions automatically; 2-speaker dialogue; all 30 voices; custom `voice_…` IDs; WAV output from both PCM and WAV responses |
 | Music | Lyria 3.5 (full songs, WAV, image inspiration), Lyria 3 Clip / Pro; lyrics and structure returned |

@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![gemini-media-mcp MCP server](https://glama.ai/mcp/servers/mordor-forge/gemini-media-mcp/badges/score.svg)](https://glama.ai/mcp/servers/mordor-forge/gemini-media-mcp)
 
-An MCP server for Google's generative media models: **images** (Nano Banana 2 / Pro), **video** (Veo 3.1), **speech** (Gemini 3.8 TTS) and **music** (Lyria 3.5). It ships as a single Go binary, speaks **stdio and Streamable HTTP** (MCP 2026-07-28), works with the **Gemini API or Vertex AI**, and comes with **agent skills** and plugin packaging for Claude Code, Codex, Gemini CLI, VS Code/Copilot, Cursor and more.
+An MCP server for Google's generative media models: **images** (Nano Banana 2.1 / Pro), **video** (Veo 3.1), **speech** (Gemini 3.8 TTS) and **music** (Lyria 3.5). It ships as a single Go binary, speaks **stdio and Streamable HTTP** (MCP 2026-07-28), works with the **Gemini API or Vertex AI**, and comes with **agent skills** and plugin packaging for Claude Code, Codex, Gemini CLI, VS Code/Copilot, Cursor and more.
 
 - **Current models, updated without a release.** A built-in catalog records IDs, aliases, lifecycle, parameters and prices. Retired models redirect to their replacement, and new model IDs work before the catalog knows them. You can override or extend the catalog with a hot-reloaded YAML file.
 - **Cost-aware.** Every result reports its estimated cost, and `estimate_cost` compares options before you spend. Spend is recorded in a ledger, capped by session, daily and monthly budgets, and calls above a threshold need explicit approval.
@@ -63,7 +63,7 @@ Other ways to install:
 
 | Tool | What it does |
 |---|---|
-| `generate_image` | Text-to-image with up to 14 reference images, 512px–4K, many aspect ratios, 1–4 variations, optional Google Search grounding |
+| `generate_image` | Text-to-image with up to 14 reference images, 1K–4K, many aspect ratios, 1–4 variations, optional Google Search grounding |
 | `edit_image` | Change an existing image (add/remove/restyle/relight/outpaint) while keeping the rest |
 | `generate_video` | Veo clip (4–8 s, native audio) from text, a first frame, first+last frames, or up to 3 reference images. Returns a `jobId` |
 | `get_video` | Wait for a job (long-poll, default 45 s); downloads the video when done. Safe to repeat |
@@ -83,7 +83,7 @@ Use an alias or a full model ID. Run `gemini-media-mcp models` or call `list_mod
 
 | Media | Aliases (default first) |
 |---|---|
-| Image | `nb2` (Nano Banana 2), `pro` (Nano Banana Pro: best text and detail), `nb2-lite` (cheapest) |
+| Image | `nb2` (Nano Banana 2.1, default), `pro` (Nano Banana Pro: highest fidelity), `nb2-lite` (cheapest inputs) |
 | Video | `lite` (cheapest), `fast` (best value: 4K, references, extension), `standard` (highest quality) |
 | Speech | `tts` (Gemini 3.8 Flash TTS), `tts-lite`, `tts-2.5`, `tts-pro` |
 | Music | `clip` (30 s), `full` (Lyria 3.5 songs) |

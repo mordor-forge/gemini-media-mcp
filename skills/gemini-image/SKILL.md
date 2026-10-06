@@ -37,9 +37,9 @@ Results carry `files[]` (each with `path` on the server's disk, a `gemini-media:
 
 | Alias | Choose it for | Limits |
 |-------|---------------|--------|
-| `nb2` (default) | Almost everything, drafts through finals | 512 to 4K; extra ratios 1:4, 4:1, 1:8, 8:1; `googleSearch` on the Gemini API only |
-| `pro` | Legible text, infographics, dense multi-subject scenes, final renders | 1K to 4K; about twice the price of nb2; slower |
-| `nb2-lite` | Bulk drafts, thumbnails, cheap exploration | 1K only; no `googleSearch`; weaker with multiple references |
+| `nb2` (default, Nano Banana 2.1) | Almost everything, drafts through finals, including most text in images | 1K to 4K; extra ratios 1:4, 4:1, 1:8, 8:1; `googleSearch` on the Gemini API only |
+| `pro` | Dense infographics, complex multi-subject scenes, final renders when nb2 falls short | 1K to 4K; about four times the per-image price of nb2; slower |
+| `nb2-lite` | Bulk drafts and thumbnails at scale | 1K only; same per-image price as nb2 but cheaper input; no `googleSearch`; weaker with multiple references |
 
 Prices and capabilities change: call `gemini-media:list_models` (`mediaType: "image"`) for the current list and `gemini-media:estimate_cost` for a specific request. Never quote prices from memory.
 
@@ -48,7 +48,7 @@ Prices and capabilities change: call `gemini-media:list_models` (`mediaType: "im
 | Parameter | Guidance |
 |-----------|----------|
 | `aspectRatio` | Match the destination (table below). Defaults to 1:1, or to the first reference image's ratio. |
-| `imageSize` | `1K` default. `512` (nb2 only) for thumbnails, `2K` for most finals, `4K` only when print or large display needs it. |
+| `imageSize` | `1K` default (also the smallest size), `2K` for most finals, `4K` only when print or large display needs it. |
 | `referenceImages` | Subjects, products, characters or style to carry over. Refer to them by order in the prompt ("the mug in image 1"). |
 | `count` | 1-4 parallel variations, each billed. Use it instead of asking for "four versions" in the prompt; the model does not reliably honor counts written in text. |
 | `googleSearch` | Ground in live information (scores, weather, recent events, real landmarks, data for an infographic). Pair with `pro` for text-heavy results. |
@@ -114,7 +114,7 @@ More templates (infographics with search, icons, object removal, relighting, out
 
 ## Cost and approvals
 
-- Every call is billed; `count`, `imageSize` and model multiply the price. Draft with `nb2` at 1K (or `nb2-lite`/`512`) and upscale only the keeper.
+- Every call is billed; `count`, `imageSize` and model multiply the price. Draft with `nb2` at 1K (or `nb2-lite` for large batches) and upscale only the keeper.
 - Before expensive requests (any 4K, `pro` with `count` > 1, batches of more than four images, many large references) call `gemini-media:estimate_cost` with `mediaType: "image"`, `model`, `imageSize`, `count`, `inputImages` and `compare: true`, then tell the user the figure. Estimates exclude any Google Search grounding fee.
 - An error starting with `[confirmation]` means the call is above the user's approval threshold. Show the user the amount, and only after they agree retry the same call with `approvedCostUsd` set to that amount. Never invent approval.
 - `[budget]` means a spending cap was reached: stop, tell the user, and show `gemini-media:get_usage`. Do not retry.

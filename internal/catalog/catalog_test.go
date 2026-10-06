@@ -113,8 +113,42 @@ func TestResolveDeprecatedWarns(t *testing.T) {
 	}
 	after := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
 	r, err = c.Resolve("nano-banana", Image, "gemini-api", after)
-	if err != nil || r.Model.ID != "gemini-3.1-flash-image" {
+	if err != nil || r.Model.ID != "gemini-nano-banana-2.1" {
 		t.Fatalf("after shutdown the replacement should be used: %+v %v", r, err)
+	}
+}
+
+// Nano Banana 2.1 replaced Nano Banana 2 as the default; the old model keeps
+// working with a warning until its Gemini API shutdown, then redirects.
+func TestNanoBanana21ReplacesNanoBanana2(t *testing.T) {
+	c := Default()
+	if c.Defaults[Image] != "gemini-nano-banana-2.1" {
+		t.Fatalf("default image model = %s", c.Defaults[Image])
+	}
+	for _, alias := range []string{"nb2", "nb2.1", "nano-banana-2.1", "flash-image"} {
+		if r, err := c.Resolve(alias, Image, "gemini-api", now); err != nil || r.Model.ID != "gemini-nano-banana-2.1" || len(r.Warnings) != 0 {
+			t.Errorf("Resolve(%q) = %+v %v", alias, r, err)
+		}
+	}
+	before := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	for _, name := range []string{"gemini-3.1-flash-image", "nano-banana-2"} {
+		r, err := c.Resolve(name, Image, "gemini-api", before)
+		if err != nil || r.Model.ID != "gemini-3.1-flash-image" || len(r.Warnings) == 0 || !strings.Contains(r.Warnings[0], "2026-10-29") {
+			t.Errorf("before shutdown %q = %+v %v", name, r, err)
+		}
+		r, err = c.Resolve(name, Image, "gemini-api", time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC))
+		if err != nil || r.Model.ID != "gemini-nano-banana-2.1" {
+			t.Errorf("after shutdown %q = %+v %v", name, r, err)
+		}
+	}
+	for _, retired := range []string{"gemini-3.1-flash-image-preview", "gemini-2.5-flash-image-preview"} {
+		if r, err := c.Resolve(retired, Image, "gemini-api", now); err != nil || r.Model.ID != "gemini-nano-banana-2.1" {
+			t.Errorf("retired %s = %+v %v", retired, r, err)
+		}
+	}
+	// Future Nano Banana IDs pass through as image models.
+	if fam, mt := InferFamily("gemini-nano-banana-2.2"); fam != FamilyGeminiImage || mt != Image {
+		t.Errorf("InferFamily(gemini-nano-banana-2.2) = %s %s", fam, mt)
 	}
 }
 
@@ -171,7 +205,14 @@ func TestValidateRules(t *testing.T) {
 	if _, err := nb2.Validate(Params{"aspectRatio": "7:3"}, "gemini-api"); err == nil {
 		t.Fatal("bad aspect ratio must fail")
 	}
-	if _, err := nb2.Validate(Params{"aspectRatio": "8:1", "imageSize": "512", "referenceImages": "14"}, "gemini-api"); err != nil {
+	if _, err := nb2.Validate(Params{"aspectRatio": "8:1", "imageSize": "2K", "referenceImages": "14"}, "gemini-api"); err != nil {
+		t.Fatalf("valid NB 2.1 params rejected: %v", err)
+	}
+	if _, err := nb2.Validate(Params{"imageSize": "512"}, "gemini-api"); err == nil {
+		t.Fatal("NB 2.1 has no 512")
+	}
+	old, _ := c.Lookup("gemini-3.1-flash-image")
+	if _, err := old.Validate(Params{"aspectRatio": "8:1", "imageSize": "512", "referenceImages": "14"}, "gemini-api"); err != nil {
 		t.Fatalf("valid NB2 params rejected: %v", err)
 	}
 	pro, _ := c.Lookup("pro")
@@ -188,11 +229,16 @@ func TestEstimates(t *testing.T) {
 	c := Default()
 	nb2, _ := c.Lookup("nb2")
 	e := nb2.EstimateImage("1K", 1, 400, 0, "gemini-api", "")
-	if e.USD < 0.067 || e.USD > 0.07 || e.Basis != BasisTokens {
-		t.Fatalf("NB2 1K estimate = %+v", e)
+	// 1120 image tokens x $30/M + 400 text tokens x $7.50/M + 400 prompt tokens x $1.50/M
+	if e.USD < 0.0336 || e.USD > 0.04 || e.Basis != BasisTokens {
+		t.Fatalf("NB 2.1 1K estimate = %+v", e)
 	}
-	if v := nb2.EstimateImage("4K", 2, 0, 0, "vertex", "us-central1").USD; v < 2*0.151*1.1 {
+	if v := nb2.EstimateImage("4K", 2, 0, 0, "vertex", "us-central1").USD; v < 2*0.0756*1.1 {
 		t.Fatalf("regional multiplier not applied: %v", v)
+	}
+	old, _ := c.Lookup("gemini-3.1-flash-image")
+	if e := old.EstimateImage("1K", 1, 400, 0, "gemini-api", ""); e.USD < 0.067 || e.USD > 0.07 {
+		t.Fatalf("NB2 1K estimate = %+v", e)
 	}
 	std, _ := c.Lookup("standard")
 	if v := std.EstimateVideo("4k", 8, 1, true, "gemini-api").USD; v != 4.8 {
@@ -218,7 +264,7 @@ func TestEstimates(t *testing.T) {
 	}
 
 	got, ok := nb2.CostFromUsage(TokenUsage{PromptTokens: 20, OutputTokens: 1130, OutputByModality: map[string]int{"image": 1120, "text": 10}}, "gemini-api", "")
-	if !ok || got.USD < 0.0672 || got.USD > 0.0673 || got.Basis != BasisUsage {
+	if !ok || got.USD < 0.0336 || got.USD > 0.0338 || got.Basis != BasisUsage {
 		t.Fatalf("CostFromUsage = %+v", got)
 	}
 	if _, ok := clip.CostFromUsage(TokenUsage{PromptTokens: 5}, "gemini-api", ""); ok {

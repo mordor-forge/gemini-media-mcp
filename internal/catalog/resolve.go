@@ -84,7 +84,7 @@ func (c *Catalog) resolveUnknown(name, mediaType, backend string) (*Resolved, er
 	lower := strings.ToLower(strings.TrimPrefix(name, "models/"))
 	switch {
 	case strings.HasPrefix(lower, "imagen"):
-		return nil, &apperr.Error{Kind: apperr.NotFound, Message: fmt.Sprintf("%s: Imagen models were shut down on the Gemini API (August 2026) and discontinued on Vertex AI", name), Hint: "Use gemini-3.1-flash-image (alias nb2) or gemini-3-pro-image (alias pro)."}
+		return nil, &apperr.Error{Kind: apperr.NotFound, Message: fmt.Sprintf("%s: Imagen models were shut down on the Gemini API (August 2026) and discontinued on Vertex AI", name), Hint: "Use gemini-nano-banana-2.1 (alias nb2) or gemini-3-pro-image (alias pro)."}
 	case strings.HasPrefix(lower, "gemini-omni"):
 		return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s is only served through the Gemini Interactions API, which this server does not support yet", name), Hint: "Use a Veo model (fast, standard or lite) for video generation."}
 	}
@@ -112,8 +112,8 @@ func InferFamily(id string) (family, mediaType string) {
 		return FamilyLyria, Music
 	case strings.Contains(id, "tts"):
 		return FamilyGeminiTTS, Speech
-	case strings.HasPrefix(id, "gemini-") && strings.Contains(id, "image"):
-		return FamilyGeminiImage, Image
+	case strings.HasPrefix(id, "gemini-") && (strings.Contains(id, "image") || strings.Contains(id, "banana")):
+		return FamilyGeminiImage, Image // gemini-*-image and gemini-nano-banana-*
 	}
 	return "", ""
 }

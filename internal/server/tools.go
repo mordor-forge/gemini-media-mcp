@@ -26,7 +26,7 @@ func (s *Server) registerTools() {
 		Name:  "generate_image",
 		Title: "Generate image",
 		Description: "Create images from a text prompt, optionally guided by up to 14 reference images (subjects, products, style). " +
-			"Default model nb2 (~$0.07 per 1K image); pro for legible text and complex scenes (~$0.13); nb2-lite for cheap drafts. " +
+			"Default model nb2 (Nano Banana 2.1, ~$0.04 per 1K image); pro for the densest scenes and final renders (~$0.13); nb2-lite for bulk drafts. " +
 			"Returns saved files with URIs you can pass to edit_image, generate_video (image) or other tools.",
 		Annotations: withTitle(generative, "Generate image"),
 	}, s.handleGenerateImage)

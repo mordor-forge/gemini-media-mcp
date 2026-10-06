@@ -97,7 +97,7 @@ func TestGenerateImageEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := e.api.ContentCalls[0]
-	if call.Model != "gemini-3.1-flash-image" {
+	if call.Model != "gemini-nano-banana-2.1" {
 		t.Fatalf("default model = %s", call.Model)
 	}
 	if call.Config.ImageConfig == nil || call.Config.ImageConfig.AspectRatio != "16:9" || call.Config.ImageConfig.ImageSize != "2K" {
@@ -109,14 +109,14 @@ func TestGenerateImageEndToEnd(t *testing.T) {
 	if len(res.Files) != 1 || res.Files[0].Name != "cat.png" || res.Files[0].Width != 64 || res.Text != "A cat." {
 		t.Fatalf("result = %+v", res)
 	}
-	if res.Cost.Basis != catalog.BasisUsage || res.Cost.USD < 0.067 || res.Cost.USD > 0.068 {
+	if res.Cost.Basis != catalog.BasisUsage || res.Cost.USD < 0.0336 || res.Cost.USD > 0.034 { // NB 2.1: 1120 image tokens x $30/M + prompt/text
 		t.Fatalf("cost = %+v", res.Cost)
 	}
 	if len(res.Previews) != 1 || !progressed {
 		t.Fatal("expected a preview and progress notifications")
 	}
 	p, err := e.store.Provenance("cat.png")
-	if err != nil || p.Model != "gemini-3.1-flash-image" || p.Prompt != "a cat" {
+	if err != nil || p.Model != "gemini-nano-banana-2.1" || p.Prompt != "a cat" {
 		t.Fatalf("provenance = %+v %v", p, err)
 	}
 	if s := e.ledger.Summarize("session", 5); s.Calls != 1 || s.ByTool["generate_image"] != res.Cost.USD {
@@ -443,7 +443,7 @@ func TestMusicPromptAndFormat(t *testing.T) {
 
 func TestListModelsLiveAndEstimates(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{ConfirmAboveUSD: 1})
-	e.api.Listed = []*genai.Model{{Name: "models/gemini-3.1-flash-image"}, {Name: "models/veo-4.0-generate-preview"}, {Name: "models/gemini-9-pro"}}
+	e.api.Listed = []*genai.Model{{Name: "models/gemini-nano-banana-2.1"}, {Name: "models/veo-4.0-generate-preview"}, {Name: "models/gemini-9-pro"}}
 	res, err := e.svc.ListModels(context.Background(), ListModelsRequest{Live: true})
 	if err != nil {
 		t.Fatal(err)
@@ -454,7 +454,7 @@ func TestListModelsLiveAndEstimates(t *testing.T) {
 	var nb2, pro *ModelSummary
 	for i := range res.Models {
 		switch res.Models[i].ID {
-		case "gemini-3.1-flash-image":
+		case "gemini-nano-banana-2.1":
 			nb2 = &res.Models[i]
 		case "gemini-3-pro-image":
 			pro = &res.Models[i]
@@ -480,7 +480,7 @@ func TestListModelsLiveAndEstimates(t *testing.T) {
 		}
 	}
 	info := e.svc.Info("stdio")
-	if info.Defaults["image"] != "gemini-3.1-flash-image" || info.AuthMode != string(config.AuthAPIKey) {
+	if info.Defaults["image"] != "gemini-nano-banana-2.1" || info.AuthMode != string(config.AuthAPIKey) {
 		t.Fatalf("info = %+v", info)
 	}
 	u, err := e.svc.Usage(context.Background(), UsageRequest{})
@@ -553,7 +553,7 @@ func TestBilledOutputThatCannotBeSavedIsStillCharged(t *testing.T) {
 		t.Fatalf("want a billed-but-unsaved error, got %v", err)
 	}
 	s := e.ledger.Summarize("all", 1)
-	if s.Totals.All < 0.06 || s.Recent[0].Status != spend.StatusOK || s.Recent[0].Error == "" {
+	if s.Totals.All < 0.0336 || s.Recent[0].Status != spend.StatusOK || s.Recent[0].Error == "" {
 		t.Fatalf("the billed call must be recorded as spent: %+v", s)
 	}
 }

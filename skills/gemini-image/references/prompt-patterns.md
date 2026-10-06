@@ -78,7 +78,7 @@ Bold, clean outlines, [cel / flat / soft gradient] shading, [palette].
 The background must be plain white.
 ```
 
-Parameters: `aspectRatio: "1:1"`, `imageSize: "512"` or `"1K"`. For an icon set, generate the first icon, then pass it as a reference for the rest: "Same style, stroke weight and palette as image 1, now showing [next subject]".
+Parameters: `aspectRatio: "1:1"`, `imageSize: "1K"`. For an icon set, generate the first icon, then pass it as a reference for the rest: "Same style, stroke weight and palette as image 1, now showing [next subject]".
 
 ### Storyboard or comic panels
 

@@ -124,9 +124,9 @@ Describe an artist's or studio's qualities (brushwork, palette, subject matter) 
 
 ## Aspect ratios and pixel sizes
 
-Output dimensions per `imageSize` (from Google's image generation docs). `nb2` and `pro` produce the same dimensions for the shared ratios; `pro` has no `512` size and no extreme ratios; `nb2-lite` is 1K only (same 1K dimensions as `nb2`).
+Output dimensions per `imageSize` (from Google's image generation docs). `nb2` and `pro` produce the same dimensions for the shared ratios; `pro` has no extreme ratios; `nb2-lite` is 1K only (same 1K dimensions as `nb2`). The `512` column applies only to the deprecated `gemini-3.1-flash-image` (Nano Banana 2, shuts down 2026-10-29); Nano Banana 2.1 starts at 1K.
 
-| Ratio | 512 (nb2) | 1K | 2K | 4K | Typical use |
+| Ratio | 512 (NB2 only) | 1K | 2K | 4K | Typical use |
 |-------|-----------|----|----|----|-------------|
 | 1:1 | 512x512 | 1024x1024 | 2048x2048 | 4096x4096 | Social post, avatar, icon, sticker |
 | 4:5 | 464x576 | 928x1152 | 1856x2304 | 3712x4608 | Instagram portrait, feed ad |

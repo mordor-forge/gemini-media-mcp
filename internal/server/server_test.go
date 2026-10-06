@@ -141,7 +141,7 @@ func TestGenerateImageToolResult(t *testing.T) {
 		t.Fatalf("text = %q", text)
 	}
 	structured, _ := json.Marshal(res.StructuredContent)
-	if !strings.Contains(string(structured), `"model":"gemini-3.1-flash-image"`) || strings.Contains(string(structured), "Previews") {
+	if !strings.Contains(string(structured), `"model":"gemini-nano-banana-2.1"`) || strings.Contains(string(structured), "Previews") {
 		t.Fatalf("structured = %s", structured)
 	}
 	if len(fake.ContentCalls) != 1 {

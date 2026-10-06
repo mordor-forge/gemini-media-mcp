@@ -23,9 +23,9 @@ const MaxImagesPerCall = 4
 // ImageRequest is the input of generate_image.
 type ImageRequest struct {
 	Prompt          string   `json:"prompt" jsonschema:"What to create. Describe subject, setting, composition, lighting and style in full sentences. Put any exact text to render in quotes."`
-	Model           string   `json:"model,omitempty" jsonschema:"Model ID or alias. nb2 (default, fast), pro (best text rendering and detail), nb2-lite (cheapest). See list_models."`
+	Model           string   `json:"model,omitempty" jsonschema:"Model ID or alias. nb2 (default: Nano Banana 2.1, fast and cheap), pro (Nano Banana Pro, highest fidelity for dense scenes), nb2-lite (cheapest inputs). See list_models."`
 	AspectRatio     string   `json:"aspectRatio,omitempty" jsonschema:"e.g. 1:1, 3:2, 2:3, 4:3, 3:4, 4:5, 16:9, 9:16, 21:9 (nb2 also 1:4, 4:1, 1:8, 8:1). Defaults to 1:1 or the first reference image's ratio."`
-	ImageSize       string   `json:"imageSize,omitempty" jsonschema:"Output size: 512 (nb2 only), 1K (default), 2K or 4K. Larger costs more."`
+	ImageSize       string   `json:"imageSize,omitempty" jsonschema:"Output size: 1K (default), 2K or 4K. Larger costs more. 512 only on the deprecated gemini-3.1-flash-image."`
 	ReferenceImages []string `json:"referenceImages,omitempty" jsonschema:"Optional images to guide the result (subjects, products, characters, style): file paths, gemini-media:// URIs from earlier results, or data: URIs. Up to 14 for nb2/pro."`
 	Count           int      `json:"count,omitempty" jsonschema:"Number of variations to generate in parallel (1-4, default 1). Each is billed."`
 	GoogleSearch    bool     `json:"googleSearch,omitempty" jsonschema:"Ground the image in Google Search results (current events, real places, data for infographics)."`
@@ -40,7 +40,7 @@ type EditImageRequest struct {
 	ReferenceImages []string `json:"referenceImages,omitempty" jsonschema:"Optional extra images to pull elements or style from (e.g. 'put the logo from image 2 on the mug')."`
 	Model           string   `json:"model,omitempty" jsonschema:"Model ID or alias. Defaults to the model that created the source image, else nb2."`
 	AspectRatio     string   `json:"aspectRatio,omitempty" jsonschema:"Change the aspect ratio (outpainting). Omit to keep the source ratio."`
-	ImageSize       string   `json:"imageSize,omitempty" jsonschema:"Output size: 512 (nb2 only), 1K, 2K or 4K."`
+	ImageSize       string   `json:"imageSize,omitempty" jsonschema:"Output size: 1K, 2K or 4K (512 only on the deprecated gemini-3.1-flash-image)."`
 	OutputName      string   `json:"outputName,omitempty" jsonschema:"Optional base file name for the saved file."`
 	ApprovedCostUSD float64  `json:"approvedCostUsd,omitempty" jsonschema:"Only needed above the confirmation threshold: the cost in USD the user approved."`
 }
