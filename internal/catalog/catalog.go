@@ -134,6 +134,9 @@ type Pricing struct {
 	ImageOutputTokens map[string]int `yaml:"imageOutputTokens" json:"imageOutputTokens,omitempty"`
 	// InputImageTokens is the token cost of one input/reference image.
 	InputImageTokens int `yaml:"inputImageTokens" json:"inputImageTokens,omitempty"`
+	// TextOutputTokens is the typical text/thinking output per image request,
+	// used for estimates (default 400). Models that think by default need more.
+	TextOutputTokens int `yaml:"textOutputTokens" json:"textOutputTokens,omitempty"`
 	// PerSecond maps a video resolution to USD per generated second (with audio).
 	PerSecond map[string]float64 `yaml:"perSecond" json:"perSecond,omitempty"`
 	// PerSecondNoAudio is used when audio generation is disabled (Vertex only).

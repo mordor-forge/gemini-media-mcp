@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -24,7 +25,7 @@ const MaxImagesPerCall = 4
 type ImageRequest struct {
 	Prompt          string   `json:"prompt" jsonschema:"What to create. Describe subject, setting, composition, lighting and style in full sentences. Put any exact text to render in quotes."`
 	Model           string   `json:"model,omitempty" jsonschema:"Model ID or alias. nb2 (default: Nano Banana 2.1, fast and cheap), pro (Nano Banana Pro, highest fidelity for dense scenes), nb2-lite (cheapest inputs). See list_models."`
-	AspectRatio     string   `json:"aspectRatio,omitempty" jsonschema:"e.g. 1:1, 3:2, 2:3, 4:3, 3:4, 4:5, 16:9, 9:16, 21:9 (nb2 also 1:4, 4:1, 1:8, 8:1). Defaults to 1:1 or the first reference image's ratio."`
+	AspectRatio     string   `json:"aspectRatio,omitempty" jsonschema:"e.g. 1:1, 3:2, 2:3, 4:3, 3:4, 4:5, 16:9, 9:16, 21:9 (nb2 also 1:4, 4:1, 1:8, 8:1). Defaults to 1:1 when there are no reference images; with them the model usually follows the first image's ratio."`
 	ImageSize       string   `json:"imageSize,omitempty" jsonschema:"Output size: 1K (default), 2K or 4K. Larger costs more. 512 only on the deprecated gemini-3.1-flash-image."`
 	ReferenceImages []string `json:"referenceImages,omitempty" jsonschema:"Optional images to guide the result (subjects, products, characters, style): file paths, gemini-media:// URIs from earlier results, or data: URIs. Up to 14 for nb2/pro."`
 	Count           int      `json:"count,omitempty" jsonschema:"Number of variations to generate in parallel (1-4, default 1). Each is billed."`
@@ -41,19 +42,28 @@ type EditImageRequest struct {
 	Model           string   `json:"model,omitempty" jsonschema:"Model ID or alias. Defaults to the model that created the source image, else nb2."`
 	AspectRatio     string   `json:"aspectRatio,omitempty" jsonschema:"Change the aspect ratio (outpainting). Omit to keep the source ratio."`
 	ImageSize       string   `json:"imageSize,omitempty" jsonschema:"Output size: 1K, 2K or 4K (512 only on the deprecated gemini-3.1-flash-image)."`
-	OutputName      string   `json:"outputName,omitempty" jsonschema:"Optional base file name for the saved file."`
+	OutputName      string   `json:"outputName,omitempty" jsonschema:"Optional base file name for the saved file. Defaults to the source name plus -edit."`
 	ApprovedCostUSD float64  `json:"approvedCostUsd,omitempty" jsonschema:"Only needed above the confirmation threshold: the cost in USD the user approved."`
 }
 
 // ImageResult is the output of generate_image and edit_image.
 type ImageResult struct {
-	Files    []store.Asset `json:"files"`
-	Model    string        `json:"model"`
-	Text     string        `json:"text,omitempty" jsonschema:"Commentary the model returned alongside the image(s)"`
-	Cost     Cost          `json:"cost"`
-	Warnings []string      `json:"warnings,omitempty"`
+	Files []store.Asset `json:"files"`
+	Model string        `json:"model"`
+	Text  string        `json:"text,omitempty" jsonschema:"Commentary the model returned alongside the image(s)"`
+	Cost  Cost          `json:"cost"`
+	// Grounding lists the Google Search queries and sources behind the
+	// image when googleSearch was used.
+	Grounding *Grounding `json:"grounding,omitempty" jsonschema:"Google Search queries the model ran and the pages it used (googleSearch only)"`
+	Warnings  []string   `json:"warnings,omitempty"`
 	// previews are downscaled JPEGs for inline display (not serialized).
 	Previews [][]byte `json:"-"`
+}
+
+// Grounding reports Google Search grounding.
+type Grounding struct {
+	Queries []string        `json:"queries,omitempty"`
+	Sources []google.Source `json:"sources,omitempty"`
 }
 
 // GenerateImage creates images from text and optional references.
@@ -81,7 +91,27 @@ func (s *Service) EditImage(ctx context.Context, req EditImageRequest) (*ImageRe
 			}
 		}
 	}
-	return s.runImage(ctx, "edit_image", model, req.Prompt, req.Image, req.ReferenceImages, req.AspectRatio, req.ImageSize, 1, false, req.OutputName, req.ApprovedCostUSD)
+	outName := req.OutputName
+	if outName == "" {
+		outName = editName(req.Image)
+	}
+	return s.runImage(ctx, "edit_image", model, req.Prompt, req.Image, req.ReferenceImages, req.AspectRatio, req.ImageSize, 1, false, outName, req.ApprovedCostUSD)
+}
+
+var editSuffix = regexp.MustCompile(`-edit(-\d+)?$`)
+
+// editName names an edit after its source ("portrait.jpg" -> "portrait-edit")
+// so edit chains stay readable; the store adds -2, -3... on collision.
+func editName(source string) string {
+	if strings.HasPrefix(source, "data:") {
+		return ""
+	}
+	base := filepath.Base(strings.TrimPrefix(source, store.URIScheme))
+	base = editSuffix.ReplaceAllString(strings.TrimSuffix(base, filepath.Ext(base)), "")
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return base + "-edit"
 }
 
 func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source string, refs []string, aspect, size string, count int, search bool, outName string, approved float64) (*ImageResult, error) {
@@ -125,6 +155,10 @@ func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source 
 		}
 	}
 	inputs = append(inputs, refInputs...)
+	if aspect == "" && len(inputs) == 0 {
+		// Models pick their own default otherwise (Nano Banana 2.1 picks 16:9).
+		aspect = "1:1"
+	}
 
 	dropped, err := m.Validate(catalog.Params{
 		"aspectRatio":     aspect,
@@ -190,6 +224,7 @@ func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source 
 	// blocked by safety filters, which are not charged.
 	var usage, billable google.Usage
 	var texts []string
+	var grounding Grounding
 	var firstErr, saveErr error
 	succeeded := 0
 	for _, o := range outcomes {
@@ -199,6 +234,8 @@ func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source 
 				billable = addUsage(billable, o.res.Usage)
 			}
 			result.Warnings = append(result.Warnings, modelNotices(o.res)...)
+			grounding.Queries = append(grounding.Queries, o.res.SearchQueries...)
+			grounding.Sources = append(grounding.Sources, o.res.Sources...)
 		}
 		if o.err != nil {
 			if firstErr == nil {
@@ -228,6 +265,16 @@ func (s *Service) runImage(ctx context.Context, tool, modelName, prompt, source 
 		}
 	}
 	result.Text = strings.Join(dedupe(texts), "\n")
+	if search {
+		grounding.Queries = dedupe(grounding.Queries)
+		grounding.Sources = uniqueSources(grounding.Sources)
+		if len(grounding.Queries) > 0 || len(grounding.Sources) > 0 {
+			result.Grounding = &grounding
+			result.Warnings = append(result.Warnings, fmt.Sprintf("the model ran %d Google Search queries; any search grounding fee Google charges is not included in the cost", len(grounding.Queries)))
+		} else {
+			result.Warnings = append(result.Warnings, "googleSearch was on but the response carried no search details, so the model may not have searched; check facts in the image")
+		}
+	}
 	result.Warnings = dedupe(result.Warnings)
 
 	if succeeded == 0 {
@@ -294,6 +341,18 @@ func assetPaths(a []store.Asset) []string {
 	out := make([]string, len(a))
 	for i, x := range a {
 		out[i] = x.Path
+	}
+	return out
+}
+
+func uniqueSources(xs []google.Source) []google.Source {
+	seen := map[string]bool{}
+	var out []google.Source
+	for _, x := range xs {
+		if !seen[x.URI] {
+			seen[x.URI] = true
+			out = append(out, x)
+		}
 	}
 	return out
 }

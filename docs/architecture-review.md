@@ -187,7 +187,7 @@ Google returns no cost with any response, and Veo operations carry no usage at a
 
 1. **Prices.** They live in the catalog (`pricing:` per model):
    - per-modality token rates;
-   - image tokens per output size (NB2 747/1120/1680/2520 for 512/1K/2K/4K);
+   - image tokens per output size (NB2 747/1120/1680/2520 for 512/1K/2K/4K; NB 2.1 1120/1680/3780 for 1K/2K/4K, measured from live billing) and the typical thinking tokens per image (`textOutputTokens`);
    - Veo per-second rates by resolution, with and without audio (silent is Vertex-only);
    - Lyria per-request prices;
    - TTS audio tokens per second.

@@ -206,3 +206,64 @@ func PCMDuration(n int, f PCMFormat) float64 {
 	}
 	return float64(n) / float64(bps)
 }
+
+// MP3Duration returns the duration in seconds of MPEG audio Layer III data by
+// counting frames (exact for constant and variable bitrate), or 0 when the
+// data is not MP3.
+func MP3Duration(b []byte) float64 {
+	i := 0
+	// Skip an ID3v2 tag: "ID3", version, flags, then a 28-bit syncsafe size.
+	if len(b) >= 10 && string(b[:3]) == "ID3" {
+		i = 10 + (int(b[6]&0x7f)<<21 | int(b[7]&0x7f)<<14 | int(b[8]&0x7f)<<7 | int(b[9]&0x7f))
+		if b[5]&0x10 != 0 {
+			i += 10 // footer
+		}
+	}
+	var samples, rate, frames int
+	for i+4 <= len(b) {
+		n, spf, sr := mp3Frame(b[i:])
+		if n == 0 {
+			if frames > 0 && i+128 >= len(b) {
+				break // trailing ID3v1 tag or padding
+			}
+			i++ // resync
+			continue
+		}
+		frame := b[i:min(i+n, len(b))]
+		// The first frame of most files is a silent Xing/Info header.
+		if frames > 0 || !bytes.Contains(frame, []byte("Xing")) && !bytes.Contains(frame, []byte("Info")) {
+			samples += spf
+		}
+		rate = sr
+		frames++
+		i += n
+	}
+	if rate == 0 {
+		return 0
+	}
+	return float64(samples) / float64(rate)
+}
+
+// mp3Frame parses a Layer III frame header, returning the frame length in
+// bytes, samples per frame and sample rate (all 0 when h is not a header).
+func mp3Frame(h []byte) (length, samples, rate int) {
+	if len(h) < 4 || h[0] != 0xff || h[1]&0xe0 != 0xe0 {
+		return 0, 0, 0
+	}
+	version := (h[1] >> 3) & 3 // 3 = MPEG-1, 2 = MPEG-2, 0 = MPEG-2.5
+	layer := (h[1] >> 1) & 3   // 1 = Layer III
+	brIdx := int(h[2] >> 4)
+	srIdx := int(h[2]>>2) & 3
+	pad := int(h[2]>>1) & 1
+	if version == 1 || layer != 1 || brIdx == 0 || brIdx == 15 || srIdx == 3 {
+		return 0, 0, 0
+	}
+	mpeg1 := [15]int{0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320}
+	mpeg2 := [15]int{0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160}
+	rates := map[byte][3]int{3: {44100, 48000, 32000}, 2: {22050, 24000, 16000}, 0: {11025, 12000, 8000}}
+	rate = rates[version][srIdx]
+	if version == 3 {
+		return 144*mpeg1[brIdx]*1000/rate + pad, 1152, rate
+	}
+	return 72*mpeg2[brIdx]*1000/rate + pad, 576, rate
+}

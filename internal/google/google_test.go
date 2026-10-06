@@ -86,6 +86,33 @@ func TestParseResponseSkipsThoughtsAndCollectsText(t *testing.T) {
 	if r.Text != "Here is your image." || r.Usage.OutputByModality["image"] != 1120 {
 		t.Fatalf("unexpected result %+v", r)
 	}
+	if len(r.SearchQueries) != 0 || len(r.Sources) != 0 {
+		t.Fatalf("ungrounded response reports grounding: %+v", r)
+	}
+}
+
+func TestParseResponseReportsGrounding(t *testing.T) {
+	resp := &genai.GenerateContentResponse{Candidates: []*genai.Candidate{{
+		Content: &genai.Content{Parts: []*genai.Part{{InlineData: &genai.Blob{Data: []byte("img"), MIMEType: "image/png"}}}},
+		GroundingMetadata: &genai.GroundingMetadata{
+			WebSearchQueries: []string{"rome weather tomorrow"},
+			GroundingChunks: []*genai.GroundingChunk{
+				{Web: &genai.GroundingChunkWeb{Title: "Forecast", URI: "https://example.com/rome"}},
+				{Web: &genai.GroundingChunkWeb{Title: "no link"}},
+				nil,
+			},
+		},
+	}}}
+	r, err := ParseResponse(resp, "image/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.SearchQueries) != 1 || r.SearchQueries[0] != "rome weather tomorrow" {
+		t.Fatalf("queries = %v", r.SearchQueries)
+	}
+	if len(r.Sources) != 1 || r.Sources[0].URI != "https://example.com/rome" || r.Sources[0].Title != "Forecast" {
+		t.Fatalf("sources = %+v", r.Sources)
+	}
 }
 
 func TestParseResponseExplainsSafetyBlocks(t *testing.T) {

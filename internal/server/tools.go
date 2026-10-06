@@ -26,7 +26,7 @@ func (s *Server) registerTools() {
 		Name:  "generate_image",
 		Title: "Generate image",
 		Description: "Create images from a text prompt, optionally guided by up to 14 reference images (subjects, products, style). " +
-			"Default model nb2 (Nano Banana 2.1, ~$0.04 per 1K image); pro for the densest scenes and final renders (~$0.13); nb2-lite for bulk drafts. " +
+			"Default model nb2 (Nano Banana 2.1, ~$0.04 per 1K image); pro for the densest scenes and final renders (~$0.15); nb2-lite for bulk drafts. " +
 			"Returns saved files with URIs you can pass to edit_image, generate_video (image) or other tools.",
 		Annotations: withTitle(generative, "Generate image"),
 	}, s.handleGenerateImage)
@@ -257,6 +257,7 @@ func (s *Server) handleEstimateCost(ctx context.Context, _ *mcp.CallToolRequest,
 	for k, v := range res.Budget {
 		lines = append(lines, fmt.Sprintf("Budget remaining (%s): $%.2f", k, v))
 	}
+	lines = append(lines, warningLines(res.Warnings)...)
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: joinLines(lines)}}}, res, nil
 }
 
@@ -296,6 +297,9 @@ func (s *Server) handleGetConfig(_ context.Context, _ *mcp.CallToolRequest, _ st
 	if info.Project != "" {
 		lines = append(lines, fmt.Sprintf("Project: %s, location: %s", info.Project, info.Location))
 	}
+	if info.HTTPAddr != "" {
+		lines = append(lines, "Listening on: "+info.HTTPAddr)
+	}
 	lines = append(lines, warningLines(info.Warnings)...)
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: joinLines(lines)}}}, info, nil
 }
@@ -310,6 +314,14 @@ func imageToolResult(verb string, res *media.ImageResult) *mcp.CallToolResult {
 	lines = append(lines, fmt.Sprintf("Model %s.", res.Model), costLine(res.Cost))
 	if res.Text != "" {
 		lines = append(lines, "Model note: "+res.Text)
+	}
+	if g := res.Grounding; g != nil {
+		if len(g.Queries) > 0 {
+			lines = append(lines, "Searched: "+strings.Join(g.Queries, "; "))
+		}
+		for _, src := range g.Sources {
+			lines = append(lines, fmt.Sprintf("Source: %s %s", src.Title, src.URI))
+		}
 	}
 	lines = append(lines, warningLines(res.Warnings)...)
 	content := []mcp.Content{&mcp.TextContent{Text: joinLines(lines)}}

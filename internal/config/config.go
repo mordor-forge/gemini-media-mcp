@@ -411,7 +411,7 @@ func (c *Config) validate() error {
 		}
 	}
 	if c.Transport == TransportHTTP && c.HTTP.AuthToken == "" && !isLoopbackAddr(c.HTTP.Addr) {
-		errs = append(errs, fmt.Errorf("refusing to serve HTTP on non-loopback address %s without an auth token; set GEMINI_MEDIA_HTTP_TOKEN", c.HTTP.Addr))
+		errs = append(errs, fmt.Errorf("refusing to serve HTTP on non-loopback address %s without an auth token; set GEMINI_MEDIA_HTTP_TOKEN, or bind to 127.0.0.1 (GEMINI_MEDIA_HTTP_ADDR=127.0.0.1:8765) for local-only use", c.HTTP.Addr))
 	}
 	return errors.Join(errs...)
 }

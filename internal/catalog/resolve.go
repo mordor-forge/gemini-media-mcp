@@ -106,6 +106,8 @@ func (c *Catalog) resolveUnknown(name, mediaType, backend string) (*Resolved, er
 // InferFamily guesses the adapter family and media type from a model ID.
 func InferFamily(id string) (family, mediaType string) {
 	switch {
+	case strings.Contains(id, "realtime"):
+		return "", "" // streaming (Live API) models; this server cannot call them
 	case strings.HasPrefix(id, "veo-"):
 		return FamilyVeo, Video
 	case strings.HasPrefix(id, "lyria-"):
@@ -197,7 +199,7 @@ func (m *Model) Validate(p Params, backend string) (dropped []string, err error)
 		problems = append(problems, fmt.Sprintf("%s does not support negativePrompt", m.ID))
 	}
 	if p["googleSearch"] == "true" && !cp.SearchGrounding {
-		problems = append(problems, fmt.Sprintf("%s does not support Google Search grounding", m.ID))
+		problems = append(problems, fmt.Sprintf("%s does not support Google Search grounding: drop googleSearch, or pick a model whose capabilities include searchGrounding (list_models with detail: true)", m.ID))
 	}
 	if v := p["speakers"]; v != "" && cp.MaxSpeakers > 0 {
 		if n, _ := strconv.Atoi(v); n > cp.MaxSpeakers {

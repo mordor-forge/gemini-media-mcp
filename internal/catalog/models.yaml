@@ -7,7 +7,7 @@
 #
 # Prices are USD list prices (paid tier, standard/on-demand) and are used for
 # estimates only. Authoritative spend lives in AI Studio / Cloud Billing.
-version: "2026-10-06"
+version: "2026-10-06.2"
 sources:
   - https://ai.google.dev/gemini-api/docs/models
   - https://ai.google.dev/gemini-api/docs/models/gemini-nano-banana-2.1
@@ -36,7 +36,7 @@ models:
     mediaType: image
     status: ga
     released: "2026-10-06"
-    summary: Best default. Update to Nano Banana 2 with better visual quality, prompt adherence, text rendering and multi-turn consistency, at half its per-image price. 1K to 4K, extreme aspect ratios, up to 14 reference images.
+    summary: Best default. Update to Nano Banana 2 with better visual quality, prompt adherence, text rendering and multi-turn consistency, at half its per-image price at 1K and 2K (three quarters at 4K). 1K to 4K, extreme aspect ratios, up to 14 reference images.
     backends: [gemini-api, vertex]
     vertexLocations: [global]
     capabilities:
@@ -51,14 +51,15 @@ models:
       source: https://ai.google.dev/gemini-api/docs/pricing
       inputPer1M: {text: 1.50, image: 1.50}
       outputPer1M: {text: 7.50, image: 30.00}
-      imageOutputTokens: {"1K": 1120, "2K": 1680, "4K": 2520}
+      imageOutputTokens: {"1K": 1120, "2K": 1680, "4K": 3780}
       inputImageTokens: 1120
+      textOutputTokens: 900
       vertexRegionalMultiplier: 1.1
       batchDiscount: 0.5
     notes:
-      - No 512px output (minimum 1K). Thinking level defaults to medium; thinking tokens bill at the text output rate.
+      - No 512px output (minimum 1K). Thinking level defaults to medium; thinking tokens bill at the text output rate (700-2200 per image in live calls, typically about 900, so about $0.007 per image).
       - Grounding with Google Web and Image Search on the Gemini API. Vertex AI search grounding and regional availability are unconfirmed, so googleSearch is dropped there as for Nano Banana 2.
-      - Prices from launch-day listings (Google's pricing page was not reachable to verify); reconciled costs use the usage the API reports.
+      - Token rates from launch-day listings. Image tokens per size were measured from live billing on 2026-10-06 (1K 1120, 2K 1680, 4K 3780; listings said 2520 for 4K). Reconciled costs use the usage the API reports.
 
   - id: gemini-3.1-flash-image
     aliases: [nano-banana-2]
@@ -69,7 +70,7 @@ models:
     released: "2026-05-28"
     shutdown: "2026-10-29"
     replacement: gemini-nano-banana-2.1
-    summary: Previous default, replaced by Nano Banana 2.1 (better and half the per-image price). Shuts down on the Gemini API on 2026-10-29. The only model with 512px drafts.
+    summary: Previous default, replaced by Nano Banana 2.1 (better and cheaper). Shuts down on the Gemini API on 2026-10-29. The only model with 512px drafts.
     backends: [gemini-api, vertex]
     vertexLocations: [global]
     capabilities:
@@ -99,7 +100,7 @@ models:
     mediaType: image
     status: ga
     released: "2026-05-28"
-    summary: Highest fidelity for dense infographics, complex multi-subject scenes and final renders. Slower and about 4x the per-image price of Nano Banana 2.1; try nb2 first.
+    summary: Highest fidelity for dense infographics, complex multi-subject scenes and final renders. Slower and about 3-4x the price of Nano Banana 2.1 at 1K; try nb2 first.
     backends: [gemini-api, vertex]
     vertexLocations: [global]
     capabilities:
@@ -115,6 +116,7 @@ models:
       outputPer1M: {text: 12.00, image: 120.00}
       imageOutputTokens: {"1K": 1120, "2K": 1120, "4K": 2000}
       inputImageTokens: 560
+      textOutputTokens: 900
       batchDiscount: 0.5
     notes:
       - Reference images - up to 6 objects, 5 characters and 3 style references.

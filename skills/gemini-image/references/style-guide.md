@@ -145,4 +145,6 @@ Output dimensions per `imageSize` (from Google's image generation docs). `nb2` a
 
 Note: Google's table lists 21:9 at 512 as 792x168, which does not match the ratio; check the returned `width`/`height` if you use it.
 
+Nano Banana 2.1 does not always match these sizes for the extreme ratios: in a live test 8:1 at 2K came back 5856x704 rather than 6144x768. The shared ratios matched (4:5 and 3:4 at 1K, 21:9 at 4K). Read the returned `width`/`height` when exact pixels matter.
+
 Veo video only accepts 16:9 and 9:16, so generate video keyframes at one of those two ratios.

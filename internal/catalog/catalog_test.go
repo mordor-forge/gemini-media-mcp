@@ -150,6 +150,10 @@ func TestNanoBanana21ReplacesNanoBanana2(t *testing.T) {
 	if fam, mt := InferFamily("gemini-nano-banana-2.2"); fam != FamilyGeminiImage || mt != Image {
 		t.Errorf("InferFamily(gemini-nano-banana-2.2) = %s %s", fam, mt)
 	}
+	// Streaming models are not callable here, so live checks do not flag them.
+	if fam, _ := InferFamily("lyria-realtime-exp"); fam != "" {
+		t.Errorf("InferFamily(lyria-realtime-exp) = %s, want none", fam)
+	}
 }
 
 func TestResolveUnknownAndMismatch(t *testing.T) {
@@ -229,12 +233,24 @@ func TestEstimates(t *testing.T) {
 	c := Default()
 	nb2, _ := c.Lookup("nb2")
 	e := nb2.EstimateImage("1K", 1, 400, 0, "gemini-api", "")
-	// 1120 image tokens x $30/M + 400 text tokens x $7.50/M + 400 prompt tokens x $1.50/M
-	if e.USD < 0.0336 || e.USD > 0.04 || e.Basis != BasisTokens {
+	// 1120 image tokens x $30/M + 900 thinking tokens x $7.50/M + 100 prompt tokens x $1.50/M
+	if e.USD < 0.0403 || e.USD > 0.0406 || e.Basis != BasisTokens {
 		t.Fatalf("NB 2.1 1K estimate = %+v", e)
 	}
-	if v := nb2.EstimateImage("4K", 2, 0, 0, "vertex", "us-central1").USD; v < 2*0.0756*1.1 {
-		t.Fatalf("regional multiplier not applied: %v", v)
+	// The breakdown names every part of the figure, so it adds up.
+	for _, part := range []string{"1120 image tokens", "($0.0336)", "~900 text/thinking tokens", "($0.0067)", "input ($0.0001"} {
+		if !strings.Contains(e.Breakdown, part) {
+			t.Errorf("breakdown %q lacks %q", e.Breakdown, part)
+		}
+	}
+	// 4K bills 3780 image tokens ($0.1134), as measured from live usage.
+	if v := nb2.EstimateImage("4K", 2, 0, 0, "vertex", "us-central1").USD; v < 2*0.1134*1.1 {
+		t.Fatalf("NB 2.1 4K estimate or regional multiplier wrong: %v", v)
+	}
+	// Models without textOutputTokens keep the 400-token default.
+	nbLite, _ := c.Lookup("nb2-lite")
+	if nbLite.Pricing.TextOutputTokens != 0 || !strings.Contains(nbLite.EstimateImage("1K", 1, 0, 0, "gemini-api", "").Breakdown, "~400 text/thinking") {
+		t.Error("default text allowance not applied to Lite")
 	}
 	old, _ := c.Lookup("gemini-3.1-flash-image")
 	if e := old.EstimateImage("1K", 1, 400, 0, "gemini-api", ""); e.USD < 0.067 || e.USD > 0.07 {

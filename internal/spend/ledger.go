@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -91,10 +92,10 @@ func (e Entry) bookkeeping() bool {
 
 // Budget caps in USD; zero disables a cap.
 type Budget struct {
-	SessionUSD      float64
-	DailyUSD        float64
-	MonthlyUSD      float64
-	ConfirmAboveUSD float64
+	SessionUSD      float64 `json:"sessionUsd"`
+	DailyUSD        float64 `json:"dailyUsd"`
+	MonthlyUSD      float64 `json:"monthlyUsd"`
+	ConfirmAboveUSD float64 `json:"confirmAboveUsd"`
 }
 
 // Ledger is safe for concurrent use and shares its file with other server
@@ -291,22 +292,7 @@ func (l *Ledger) Reserve(est, approvedUSD float64) (*Reservation, error) {
 	defer l.mu.Unlock()
 	var r *Reservation
 	err := l.lockedLocked(func() error {
-		tot := l.totalsLocked()
-		check := func(name string, cap, spent, held float64) error {
-			if cap <= 0 || spent+held+est <= cap+1e-9 {
-				return nil
-			}
-			return &apperr.Error{
-				Kind:    apperr.Budget,
-				Message: fmt.Sprintf("%s budget exceeded: spent $%.2f + in-flight $%.2f + this call $%.2f > cap $%.2f", name, spent, held, est, cap),
-				Hint:    "Ask the user to raise the budget (GEMINI_MEDIA_BUDGET_* settings) or pick a cheaper option. Call get_usage for a breakdown.",
-			}
-		}
-		if err := errors.Join(
-			check("session", l.budget.SessionUSD, tot.Session, tot.inFlightSession),
-			check("daily", l.budget.DailyUSD, tot.Today, tot.InFlight),
-			check("monthly", l.budget.MonthlyUSD, tot.Month, tot.InFlight),
-		); err != nil {
+		if err := l.overBudgetLocked(est); err != nil {
 			return err
 		}
 		now := l.now().UTC()
@@ -330,6 +316,40 @@ func (l *Ledger) Reserve(est, approvedUSD float64) (*Reservation, error) {
 		}
 	}
 	return r, nil
+}
+
+// overBudgetLocked returns the [budget] error Reserve would give a call
+// estimated at est, or nil. The caller holds l.mu with entries refreshed.
+func (l *Ledger) overBudgetLocked(est float64) error {
+	tot := l.totalsLocked()
+	check := func(name string, cap, spent, held float64) error {
+		if cap <= 0 || spent+held+est <= cap+1e-9 {
+			return nil
+		}
+		return &apperr.Error{
+			Kind:    apperr.Budget,
+			Message: fmt.Sprintf("%s budget exceeded: spent $%.2f + in-flight $%.2f + this call $%.2f > cap $%.2f", name, spent, held, est, cap),
+			Hint:    "Ask the user to raise the budget (GEMINI_MEDIA_BUDGET_* settings) or pick a cheaper option. Call get_usage for a breakdown.",
+		}
+	}
+	return errors.Join(
+		check("session", l.budget.SessionUSD, tot.Session, tot.inFlightSession),
+		check("daily", l.budget.DailyUSD, tot.Today, tot.InFlight),
+		check("monthly", l.budget.MonthlyUSD, tot.Month, tot.InFlight),
+	)
+}
+
+// Check reports, without reserving anything, why a call estimated at est
+// would be refused by a budget right now ("" when it would be admitted).
+func (l *Ledger) Check(est float64) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_ = l.refreshLocked()
+	err := l.overBudgetLocked(est)
+	if ce, ok := apperr.As(err); ok {
+		return ce.Message
+	}
+	return ""
 }
 
 // Settle records the final entry for a reservation, which also releases it.
@@ -493,8 +513,20 @@ func (l *Ledger) Summarize(period string, recent int) Summary {
 	if b := l.budget.MonthlyUSD; b > 0 {
 		s.Remaining["monthly"] = b - s.Totals.Month
 	}
+	// Money is reported to 4 decimals; sums of float costs otherwise show
+	// noise such as 0.24070000000000003.
+	for _, f := range []*float64{&s.Totals.Session, &s.Totals.Today, &s.Totals.Month, &s.Totals.All, &s.Totals.Pending, &s.Totals.InFlight} {
+		*f = round4(*f)
+	}
+	for _, m := range []map[string]float64{s.ByModel, s.ByTool, s.Remaining} {
+		for k, v := range m {
+			m[k] = round4(v)
+		}
+	}
 	return s
 }
+
+func round4(v float64) float64 { return math.Round(v*10000) / 10000 }
 
 func roundUp(v float64) float64 {
 	return float64(int64(v*100+0.999999)) / 100

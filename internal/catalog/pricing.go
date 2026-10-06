@@ -14,9 +14,17 @@ const (
 	BasisUnpriced = "unpriced"
 )
 
-// textOutputAllowance is the text/thinking output assumed per image request
-// when estimating (the model often adds a short caption).
-const textOutputAllowance = 400
+// defaultTextOutputTokens is the text/thinking output assumed per image
+// request when the catalog gives no textOutputTokens (the model often adds a
+// short caption).
+const defaultTextOutputTokens = 400
+
+func (p Pricing) textOutputTokens() int {
+	if p.TextOutputTokens > 0 {
+		return p.TextOutputTokens
+	}
+	return defaultTextOutputTokens
+}
 
 // Estimate is a cost figure with an explanation.
 type Estimate struct {
@@ -69,14 +77,17 @@ func (m *Model) EstimateImage(imageSize string, count, promptChars, inputImages 
 	if !ok {
 		outTok = maxTokens(p.ImageOutputTokens)
 	}
-	perImage := float64(outTok)*p.OutputPer1M["image"]/1e6 + textOutputAllowance*p.OutputPer1M["text"]/1e6
+	textTok := p.textOutputTokens()
+	imageUSD := float64(outTok) * p.OutputPer1M["image"] / 1e6
+	textUSD := float64(textTok) * p.OutputPer1M["text"] / 1e6
 	input := float64(promptChars/4)*p.InputPer1M["text"]/1e6 + float64(inputImages*p.InputImageTokens)*rate(p.InputPer1M, "image", "text")/1e6
 	mult := m.multiplier(backend, location)
-	total := (perImage + input) * float64(count) * mult
+	total := (imageUSD + textUSD + input) * float64(count) * mult
 	return Estimate{
-		USD:       round4(total),
-		Basis:     BasisTokens,
-		Breakdown: fmt.Sprintf("%d x %s image (%d output tokens @ $%.2f/M)%s%s", count, imageSize, outTok, p.OutputPer1M["image"], inputNote(inputImages), multNote(mult)),
+		USD:   round4(total),
+		Basis: BasisTokens,
+		Breakdown: fmt.Sprintf("%d x %s image: %d image tokens @ $%.2f/M ($%.4f) + ~%d text/thinking tokens @ $%.2f/M ($%.4f) + input ($%.4f%s)%s",
+			count, imageSize, outTok, p.OutputPer1M["image"], imageUSD, textTok, p.OutputPer1M["text"], textUSD, input, inputNote(inputImages), multNote(mult)),
 		PriceAsOf: p.AsOf,
 	}
 }
@@ -221,7 +232,7 @@ func (m *Model) PriceSummary() string {
 				parts = append(parts, fmt.Sprintf("%s $%.3f", size, float64(tok)*p.OutputPer1M["image"]/1e6))
 			}
 		}
-		return "per image: " + strings.Join(parts, ", ")
+		return "per image: " + strings.Join(parts, ", ") + " (image tokens only; prompt and thinking tokens add a little, see estimate_cost)"
 	case p.OutputPer1M["audio"] > 0:
 		perMin := 60 * float64(max(p.AudioTokensPerSecond, 25)) * p.OutputPer1M["audio"] / 1e6
 		s := fmt.Sprintf("~$%.3f per minute of audio ($%.2f/M audio tokens)", perMin, p.OutputPer1M["audio"])
@@ -272,7 +283,7 @@ func inputNote(n int) string {
 	if n == 0 {
 		return ""
 	}
-	return fmt.Sprintf(" + %d input image(s)", n)
+	return fmt.Sprintf(", incl. %d input image(s)", n)
 }
 
 func multNote(mult float64) string {

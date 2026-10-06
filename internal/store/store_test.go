@@ -51,6 +51,16 @@ func TestSaveUniqueNamesAndProvenance(t *testing.T) {
 	if err != nil || p.Prompt != "p" || p.CreatedAt.IsZero() {
 		t.Fatalf("provenance = %+v, %v", p, err)
 	}
+	for in, want := range map[string]string{
+		"poster.PNG":                      "poster.png",
+		"shootout-gemini-3.1-flash-image": "shootout-gemini-3.1-flash-image.png",
+		"v1.2 draft.jpeg":                 "v1.2-draft.png",
+	} {
+		a, err := s.Save("image", in, "png", data, "image/png", nil)
+		if err != nil || a.Name != want {
+			t.Errorf("Save(%q) = %v, %v; want %s", in, a, err, want)
+		}
+	}
 	a3, err := s.Save("video", "", "mp4", []byte("x"), "video/mp4", nil)
 	if err != nil || !strings.HasPrefix(a3.Name, "video-") || !strings.HasSuffix(a3.Name, ".mp4") {
 		t.Fatalf("generated name = %+v, %v", a3, err)

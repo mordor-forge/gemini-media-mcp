@@ -217,7 +217,11 @@ var slugRe = regexp.MustCompile(`[^a-z0-9._-]+`)
 
 func slugify(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
-	s = strings.TrimSuffix(s, filepath.Ext(s))
+	// Drop a media extension the caller added ("hero.png"), but keep dots
+	// that belong to the name ("shootout-gemini-3.1-flash-image").
+	if MIMEFromExt(s) != "application/octet-stream" {
+		s = strings.TrimSuffix(s, filepath.Ext(s))
+	}
 	s = slugRe.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-._")
 	if len(s) > 80 {

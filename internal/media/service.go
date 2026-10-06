@@ -165,7 +165,12 @@ func (s *Service) loadInputs(refs []string, what string) ([]*store.Input, error)
 	for i, ref := range refs {
 		in, err := s.store.LoadInput(ref, s.inputPolicy())
 		if err != nil {
-			return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s %d: %v", what, i+1, err), Cause: err}
+			return nil, &apperr.Error{
+				Kind:    apperr.Invalid,
+				Message: fmt.Sprintf("%s %d: %v", what, i+1, err),
+				Hint:    "Pass a local file path, a gemini-media:// URI from an earlier result, or a data: URI; get_config shows which directories may be read.",
+				Cause:   err,
+			}
 		}
 		out = append(out, in)
 	}

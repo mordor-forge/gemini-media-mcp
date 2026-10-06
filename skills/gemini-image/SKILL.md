@@ -38,7 +38,7 @@ Results carry `files[]` (each with `path` on the server's disk, a `gemini-media:
 | Alias | Choose it for | Limits |
 |-------|---------------|--------|
 | `nb2` (default, Nano Banana 2.1) | Almost everything, drafts through finals, including most text in images | 1K to 4K; extra ratios 1:4, 4:1, 1:8, 8:1; `googleSearch` on the Gemini API only |
-| `pro` | Dense infographics, complex multi-subject scenes, final renders when nb2 falls short | 1K to 4K; about four times the per-image price of nb2; slower |
+| `pro` | Dense infographics, complex multi-subject scenes, final renders when nb2 falls short | 1K to 4K; about three to four times the price of nb2 at 1K; slower |
 | `nb2-lite` | Bulk drafts and thumbnails at scale | 1K only; same per-image price as nb2 but cheaper input; no `googleSearch`; weaker with multiple references |
 
 Prices and capabilities change: call `gemini-media:list_models` (`mediaType: "image"`) for the current list and `gemini-media:estimate_cost` for a specific request. Never quote prices from memory.
@@ -47,12 +47,12 @@ Prices and capabilities change: call `gemini-media:list_models` (`mediaType: "im
 
 | Parameter | Guidance |
 |-----------|----------|
-| `aspectRatio` | Match the destination (table below). Defaults to 1:1, or to the first reference image's ratio. |
+| `aspectRatio` | Match the destination (table below). Defaults to 1:1 without reference images; with them the model usually follows the first image's ratio. |
 | `imageSize` | `1K` default (also the smallest size), `2K` for most finals, `4K` only when print or large display needs it. |
 | `referenceImages` | Subjects, products, characters or style to carry over. Refer to them by order in the prompt ("the mug in image 1"). |
 | `count` | 1-4 parallel variations, each billed. Use it instead of asking for "four versions" in the prompt; the model does not reliably honor counts written in text. |
 | `googleSearch` | Ground in live information (scores, weather, recent events, real landmarks, data for an infographic). Pair with `pro` for text-heavy results. |
-| `outputName` | Readable base file name, e.g. `hero-mug-v2`. |
+| `outputName` | Readable base file name, e.g. `hero-mug-v2`. Edits default to the source name plus `-edit`. |
 | `edit_image.aspectRatio` | Set a new ratio to outpaint (extend the canvas); omit to keep the source ratio. |
 | `edit_image.model` | Omit: the server keeps editing with the model that made the source. |
 

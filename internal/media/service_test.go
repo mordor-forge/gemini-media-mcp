@@ -188,21 +188,68 @@ func TestRetiredModelRedirectAndConfirmation(t *testing.T) {
 	}
 }
 
+func TestGroundedImageReportsSearches(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	data := pngData(t)
+	grounded := true
+	e.api.ContentFn = func(googletest.ContentCall) (*genai.GenerateContentResponse, error) {
+		resp := googletest.ImageResponse(data)
+		if grounded {
+			resp.Candidates[0].GroundingMetadata = &genai.GroundingMetadata{
+				WebSearchQueries: []string{"rome forecast"},
+				GroundingChunks:  []*genai.GroundingChunk{{Web: &genai.GroundingChunkWeb{Title: "Meteo", URI: "https://example.com"}}},
+			}
+		}
+		return resp, nil
+	}
+	res, err := e.svc.GenerateImage(context.Background(), ImageRequest{Prompt: "forecast card", GoogleSearch: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Grounding == nil || res.Grounding.Queries[0] != "rome forecast" || res.Grounding.Sources[0].URI != "https://example.com" {
+		t.Fatalf("grounding = %+v", res.Grounding)
+	}
+	if !strings.Contains(strings.Join(res.Warnings, "\n"), "search grounding fee") {
+		t.Errorf("no note that the search fee is not counted: %v", res.Warnings)
+	}
+	grounded = false
+	res, err = e.svc.GenerateImage(context.Background(), ImageRequest{Prompt: "forecast card", GoogleSearch: true})
+	if err != nil || res.Grounding != nil || !strings.Contains(strings.Join(res.Warnings, "\n"), "carried no search details") {
+		t.Fatalf("ungrounded result = %+v %v", res, err)
+	}
+}
+
 func TestEditImageDefaultsToSourceModelAndRestrictsInputs(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	data := pngData(t)
 	e.api.ContentFn = func(googletest.ContentCall) (*genai.GenerateContentResponse, error) {
 		return googletest.ImageResponse(data), nil
 	}
-	first, err := e.svc.GenerateImage(context.Background(), ImageRequest{Prompt: "x", Model: "pro"})
+	first, err := e.svc.GenerateImage(context.Background(), ImageRequest{Prompt: "x", Model: "pro", OutputName: "portrait"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.EditImage(context.Background(), EditImageRequest{Image: first.Files[0].URI, Prompt: "make it blue"}); err != nil {
+	// No aspect ratio and no input images: ask for the documented 1:1.
+	if ic := e.api.ContentCalls[0].Config.ImageConfig; ic == nil || ic.AspectRatio != "1:1" {
+		t.Fatalf("default aspect ratio = %+v", ic)
+	}
+	edit1, err := e.svc.EditImage(context.Background(), EditImageRequest{Image: first.Files[0].URI, Prompt: "make it blue"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if got := e.api.ContentCalls[1].Model; got != "gemini-3-pro-image" {
 		t.Fatalf("edit should reuse the source model, got %s", got)
+	}
+	// Edits keep the source's ratio unless asked, and are named after it.
+	if ic := e.api.ContentCalls[1].Config.ImageConfig; ic != nil && ic.AspectRatio != "" {
+		t.Fatalf("edit must not force an aspect ratio: %+v", ic)
+	}
+	edit2, err := e.svc.EditImage(context.Background(), EditImageRequest{Image: edit1.Files[0].URI, Prompt: "add rain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edit1.Files[0].Name != "portrait-edit.png" || edit2.Files[0].Name != "portrait-edit-2.png" {
+		t.Fatalf("edit names = %s, %s", edit1.Files[0].Name, edit2.Files[0].Name)
 	}
 
 	// HTTP-style restricted input policy.
@@ -512,6 +559,25 @@ func TestUnconfiguredModeExplainsSetup(t *testing.T) {
 	}
 	if len(e.api.ContentCalls)+len(e.api.VideoCalls) != 0 || e.ledger.Summarize("all", 5).Calls != 0 {
 		t.Fatal("no API calls or ledger entries without credentials")
+	}
+}
+
+func TestEstimateWarnsAboutLifecycleAndBudget(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{DailyUSD: 0.01})
+	est, err := e.svc.EstimateCost(context.Background(), EstimateRequest{MediaType: "image", Model: "nano-banana-2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(est.Warnings, "\n")
+	if !strings.Contains(joined, "2026-10-29") || !strings.Contains(joined, "gemini-nano-banana-2.1") {
+		t.Errorf("no deprecation warning: %q", joined)
+	}
+	if !est.OverBudget || !strings.Contains(joined, "daily budget exceeded") {
+		t.Errorf("a $%.4f estimate under a $0.01 cap must be flagged: %+v", est.Estimate.USD, est)
+	}
+	ok, err := newEnv(t, nil, spend.Budget{DailyUSD: 1}).svc.EstimateCost(context.Background(), EstimateRequest{MediaType: "image"})
+	if err != nil || ok.OverBudget || len(ok.Warnings) != 0 {
+		t.Fatalf("default model within budget needs no warning: %+v %v", ok, err)
 	}
 }
 

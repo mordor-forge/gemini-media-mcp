@@ -3,6 +3,7 @@ package media
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"google.golang.org/genai"
@@ -30,11 +31,12 @@ type MusicRequest struct {
 
 // MusicResult is the output of generate_music.
 type MusicResult struct {
-	File     store.Asset `json:"file"`
-	Model    string      `json:"model"`
-	Lyrics   string      `json:"lyrics,omitempty" jsonschema:"Lyrics or song structure returned by the model"`
-	Cost     Cost        `json:"cost"`
-	Warnings []string    `json:"warnings,omitempty"`
+	File            store.Asset `json:"file"`
+	Model           string      `json:"model"`
+	DurationSeconds float64     `json:"durationSeconds,omitempty"`
+	Lyrics          string      `json:"lyrics,omitempty" jsonschema:"Lyrics or song structure returned by the model"`
+	Cost            Cost        `json:"cost"`
+	Warnings        []string    `json:"warnings,omitempty"`
 }
 
 // GenerateMusic creates a music track.
@@ -113,8 +115,13 @@ func (s *Service) GenerateMusic(ctx context.Context, req MusicRequest) (*MusicRe
 	entry.Usage = parsed.Usage
 	entry.Outputs = []string{asset.Path}
 	cost := s.settle(res, entry, est, nil)
+	duration := store.MP3Duration(blob.Data)
+	if strings.Contains(mime, "wav") {
+		duration = wavDuration(blob.Data)
+	}
+	asset.DurationSeconds = math.Round(duration*100) / 100
 	return &MusicResult{
-		File: *asset, Model: m.ID, Lyrics: parsed.Text, Cost: cost,
+		File: *asset, Model: m.ID, DurationSeconds: asset.DurationSeconds, Lyrics: parsed.Text, Cost: cost,
 		Warnings: dedupe(append(warnings, modelNotices(parsed)...)),
 	}, nil
 }

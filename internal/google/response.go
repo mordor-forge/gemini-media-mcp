@@ -30,6 +30,15 @@ type Result struct {
 	ModelStage     string
 	ModelRetiresAt *time.Time
 	ModelNotice    string
+	// SearchQueries and Sources report Google Search grounding, when used.
+	SearchQueries []string
+	Sources       []Source
+}
+
+// Source is a web page a grounded response drew on.
+type Source struct {
+	Title string `json:"title,omitempty"`
+	URI   string `json:"uri"`
 }
 
 // Usage mirrors usageMetadata with per-modality token counts.
@@ -72,6 +81,15 @@ func ParseResponse(resp *genai.GenerateContentResponse, wantMIMEPrefix string) (
 		}
 		if cand.FinishMessage != "" {
 			finishMessages = append(finishMessages, cand.FinishMessage)
+		}
+		if gm := cand.GroundingMetadata; gm != nil {
+			r.SearchQueries = append(r.SearchQueries, gm.WebSearchQueries...)
+			r.SearchQueries = append(r.SearchQueries, gm.ImageSearchQueries...)
+			for _, ch := range gm.GroundingChunks {
+				if ch != nil && ch.Web != nil && ch.Web.URI != "" {
+					r.Sources = append(r.Sources, Source{Title: ch.Web.Title, URI: ch.Web.URI})
+				}
+			}
 		}
 		if cand.Content == nil {
 			continue

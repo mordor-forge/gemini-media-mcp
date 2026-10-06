@@ -1,8 +1,10 @@
 package spend
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +26,13 @@ func TestReserveSettleAndTotals(t *testing.T) {
 	if _, err := l.Reserve(0.7, 0); apperr.KindOf(err) != apperr.Budget {
 		t.Fatalf("expected budget error while 0.4 is reserved, got %v", err)
 	}
+	// Check predicts the same outcome without reserving.
+	if msg := l.Check(0.7); !strings.Contains(msg, "daily budget exceeded") || !strings.Contains(msg, "in-flight $0.40") {
+		t.Fatalf("Check(0.7) = %q", msg)
+	}
+	if msg := l.Check(0.5); msg != "" {
+		t.Fatalf("Check(0.5) = %q, want admitted", msg)
+	}
 	e, err := r.Settle(Entry{Tool: "generate_image", Model: "m", Status: StatusOK, CostUSD: 0.35, Basis: BasisUsage})
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +53,26 @@ func TestReserveSettleAndTotals(t *testing.T) {
 	_, _ = r2.Settle(Entry{Tool: "t", Model: "m", Status: StatusFailed, Error: "boom"})
 	if l.Summarize("all", 0).Totals.All != 0.35 {
 		t.Fatal("failed entries must not count toward spend")
+	}
+}
+
+func TestSummaryRoundsMoneyAndBudgetUsesCamelCase(t *testing.T) {
+	l, err := Open(filepath.Join(t.TempDir(), "usage.jsonl"), Budget{DailyUSD: 0.6})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 0.0407 + 0.2 sums to 0.24070000000000003 in float64.
+	for _, c := range []float64{0.0407, 0.2} {
+		r, _ := l.Reserve(c, 0)
+		_, _ = r.Settle(Entry{Tool: "t", Model: "m", Status: StatusOK, CostUSD: c})
+	}
+	s := l.Summarize("all", 0)
+	if s.Totals.All != 0.2407 || s.ByModel["m"] != 0.2407 || s.Remaining["daily"] != 0.3593 {
+		t.Fatalf("summary not rounded: %+v", s)
+	}
+	b, _ := json.Marshal(l.Budget())
+	if string(b) != `{"sessionUsd":0,"dailyUsd":0.6,"monthlyUsd":0,"confirmAboveUsd":0}` {
+		t.Fatalf("budget JSON = %s", b)
 	}
 }
 

@@ -140,6 +140,8 @@ type EstimateResult struct {
 	Alternatives []ModelEstimate    `json:"alternatives,omitempty"`
 	Budget       map[string]float64 `json:"budgetRemaining,omitempty"`
 	NeedsConfirm bool               `json:"needsApproval" jsonschema:"True when the call would exceed the confirmation threshold and needs approvedCostUsd"`
+	OverBudget   bool               `json:"wouldExceedBudget,omitempty" jsonschema:"True when a budget would refuse this call right now (see warnings)"`
+	Warnings     []string           `json:"warnings,omitempty" jsonschema:"Lifecycle notices (deprecation, shutdown, replacement) and budget problems"`
 	Note         string             `json:"note"`
 }
 
@@ -161,7 +163,7 @@ func (s *Service) EstimateCost(_ context.Context, req EstimateRequest) (*Estimat
 	default:
 		return nil, apperr.Invalidf("mediaType must be image, video, speech or music")
 	}
-	r, location, _, err := s.resolve(req.Model, mt)
+	r, location, warnings, err := s.resolve(req.Model, mt)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +190,7 @@ func (s *Service) EstimateCost(_ context.Context, req EstimateRequest) (*Estimat
 		}
 	}
 	est, _ := estimate(r.Model)
-	out := &EstimateResult{Model: r.Model.ID, Estimate: est}
+	out := &EstimateResult{Model: r.Model.ID, Estimate: est, Warnings: warnings}
 	if mt == catalog.Speech && req.Text == "" {
 		out.Estimate.Breakdown += " (assumed one minute of speech; pass text for a precise figure)"
 	}
@@ -207,6 +209,10 @@ func (s *Service) EstimateCost(_ context.Context, req EstimateRequest) (*Estimat
 	out.Budget = sum.Remaining
 	if t := s.ledger.Budget().ConfirmAboveUSD; t > 0 && est.USD > t {
 		out.NeedsConfirm = true
+	}
+	if msg := s.ledger.Check(est.USD); msg != "" {
+		out.OverBudget = true
+		out.Warnings = append(out.Warnings, msg+": this call would be refused. Ask the user to raise the budget (GEMINI_MEDIA_BUDGET_* settings) or pick a cheaper option.")
 	}
 	out.Note = "List-price estimate from the model catalog; actual billing may differ (free tier, batch/flex tiers, regional pricing). Authoritative spend: Google AI Studio or Cloud Billing."
 	return out, nil
@@ -266,6 +272,7 @@ type InfoResult struct {
 	Project        string            `json:"project,omitempty"`
 	Location       string            `json:"location,omitempty"`
 	Transport      string            `json:"transport"`
+	HTTPAddr       string            `json:"httpAddr,omitempty" jsonschema:"Address the HTTP transport listens on"`
 	OutputDir      string            `json:"outputDir"`
 	StateDir       string            `json:"stateDir"`
 	ConfigFile     string            `json:"configFile,omitempty"`
@@ -303,6 +310,9 @@ func (s *Service) Info(transport string) *InfoResult {
 		ConfigFile: s.cfg.ConfigFile, CatalogVersion: c.Version, CatalogFile: s.cfg.CatalogFile, Defaults: defaults,
 		Budget: s.ledger.Budget(), InputPolicy: policy, InlinePreviews: s.cfg.InlinePreviewsEnabled(),
 		Sources: s.cfg.Sources, Warnings: append([]string(nil), s.cfg.Warnings...),
+	}
+	if transport == config.TransportHTTP {
+		info.HTTPAddr = s.cfg.HTTP.Addr
 	}
 	if s.auth.Mode == config.AuthVertexADC {
 		info.Location = s.auth.Location + " (per-model locations from the catalog take precedence)"
