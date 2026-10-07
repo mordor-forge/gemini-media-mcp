@@ -23,7 +23,7 @@ A cosmetic update would have fixed the IDs and broken again at the next launch.
 
 **Recommendation, now implemented:** a structural refactor, not a rewrite. Go, the official MCP Go SDK and the official `google.golang.org/genai` SDK remain the right stack:
 
-- A single static binary is the easiest artifact to distribute to every agent harness (npx wrapper, MCPB, Docker, Homebrew).
+- A single static binary is the easiest artifact to distribute to every agent harness (release archives, MCPB, Docker, `go install`).
 - The Go MCP SDK is Tier-1 and shipped MCP 2026-07-28 support on release day.
 
 The internals were rebuilt around four ideas:
@@ -225,7 +225,7 @@ Google returns no cost with any response, and Veo operations carry no usage at a
 
 ### 2.8 Packaging for agent harnesses
 
-One repository serves every harness from a single canonical `skills/` directory. There are no symlinks and no duplicated skill content. Every harness launches the server with `npx -y gemini-media-mcp`: a small npm wrapper that pulls a per-platform Go binary through `optionalDependencies`, the pattern esbuild and kubernetes-mcp-server use.
+One repository serves every harness from a single canonical `skills/` directory. There are no symlinks and no duplicated skill content. Plugin manifests launch `gemini-media-mcp` from `PATH`; users install the binary once from the release archives or with `go install`. The Gemini CLI release archives and the Claude Desktop bundle ship the binary themselves, and the Docker image needs no install. There is no npm package: it would mean seven packages and a publishing token to maintain.
 
 | Harness | Manifest |
 |---|---|
@@ -233,10 +233,10 @@ One repository serves every harness from a single canonical `skills/` directory.
 | Claude Code, claude.ai, Cowork | `.claude-plugin/plugin.json` (with a keychain-stored `userConfig` API key), plus `.claude-plugin/marketplace.json` (also read by Codex, VS Code and `npx skills`) |
 | Gemini CLI | `gemini-extension.json` with `settings`, since the CLI strips `*KEY*` variables. Release archives are named for the CLI's asset matcher |
 | Claude Desktop | `mcpb/` bundle (manifest 0.3, universal macOS binary, Linux architecture launcher) |
-| MCP Registry | `server.json` (schema 2025-12-11) with npm, OCI and MCPB packages; published through GitHub OIDC |
+| MCP Registry | `server.json` (schema 2025-12-11) with OCI and MCPB packages; published through GitHub OIDC |
 | Docker | distroless non-root image on GHCR, `/output` and `/state` volumes, carrying the registry label |
 
-A release is one tag. `scripts/sync-version.sh` stamps the version into every manifest, and `scripts/validate-packaging.sh` (also run in CI) checks versions, schemas and layout, calling `claude plugin validate`, `mcpb validate` and `mcp-publisher validate` when those tools are installed. `release.yml` then runs GoReleaser, the MCPB bundle, npm publishing (skipped unless a token or trusted publishing is configured), the GHCR image and the registry publish. Per-client install snippets are in [`packaging/INSTALL-SNIPPETS.md`](../packaging/INSTALL-SNIPPETS.md).
+A release is one tag. `scripts/sync-version.sh` stamps the version into every manifest, and `scripts/validate-packaging.sh` (also run in CI) checks versions, schemas and layout, calling `claude plugin validate`, `mcpb validate` and `mcp-publisher validate` when those tools are installed. `release.yml` then runs GoReleaser, the MCPB bundle, the GHCR image and the registry publish. Per-client install snippets are in [`packaging/INSTALL-SNIPPETS.md`](../packaging/INSTALL-SNIPPETS.md).
 
 ---
 

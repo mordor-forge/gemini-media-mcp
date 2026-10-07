@@ -20,7 +20,6 @@ go run ./cmd/gemini-media-mcp models --all    # print the catalog
 npx @modelcontextprotocol/inspector go run ./cmd/gemini-media-mcp   # poke the tools interactively
 
 scripts/validate-packaging.sh  # after touching any manifest, script or skill
-node --test npm/test/*.test.js # npm launcher tests
 ```
 
 Run build, vet, tests and lint before you say a change is done.
@@ -37,7 +36,7 @@ Run build, vet, tests and lint before you say a change is done.
   written to stdout that is not protocol traffic breaks the client. Log with the
   injected `*slog.Logger` (it writes to stderr); never `fmt.Print*` or
   `log.Print*` to stdout from server code. The same holds for
-  `npm/gemini-media-mcp/bin/gemini-media-mcp.js` and `mcpb/launch.sh`. Only
+  `mcpb/launch.sh`. Only
   the one-shot subcommands (`doctor`, `models`, `usage`, `version`,
   `configure`) print to stdout.
 - **Never log, echo or return credentials.** Config files holding keys are
@@ -94,10 +93,13 @@ The repository root is the plugin root for every harness:
 | `gemini-extension.json`, `packaging/gemini/GEMINI-EXTENSION.md` | Gemini CLI extension |
 | `server.json` | MCP Registry |
 | `mcpb/` | Claude Desktop bundle (`.mcpb`) |
-| `npm/` | `npx gemini-media-mcp` launcher + per-platform binary packages |
 | `Dockerfile` | `ghcr.io/mordor-forge/gemini-media-mcp` |
 | `skills/` | Agent Skills, discovered by every harness above |
 
+- Plugin manifests start `gemini-media-mcp` from `PATH` with no arguments.
+  There is no npm package; users install the binary from the release archives
+  or with `go install`. The Gemini CLI release archives (written by
+  `scripts/gemini-release-manifest.sh`) and the MCPB bundle ship the binary.
 - `skills/` is the **only** copy of the skills: no symlinks, no duplicates in
   `.claude/`, `.agents/` or elsewhere. Each skill's `name` equals its
   directory name.
@@ -110,18 +112,18 @@ The repository root is the plugin root for every harness:
 - Names: MCP server key `gemini-media` everywhere; plugin `gemini-media`;
   Gemini extension `gemini-media-mcp` (= its install directory and the release
   archive suffix); registry name `io.github.mordor-forge/gemini-media-mcp`
-  (must match `mcpName` in the npm package and the Docker label).
+  (must match the Docker label).
 - **Versions:** never edit version strings by hand. Run
-  `scripts/sync-version.sh X.Y.Z` (stamps every manifest, the pinned
-  `gemini-media-mcp@X.Y.Z` npx arguments, npm dependencies, `server.json`
+  `scripts/sync-version.sh X.Y.Z` (stamps every manifest, `server.json`
   and the skills' `metadata.version`), then `scripts/validate-packaging.sh`,
   commit, and push tag `vX.Y.Z`. The release workflow rejects a tag whose
   manifests disagree.
 - A new user-facing setting or env var usually needs: `internal/config`,
   the README, `.claude-plugin/plugin.json` `userConfig`,
   `gemini-extension.json` `settings`, `mcpb/manifest.json` `user_config`
-  (optional fields need `"default": ""`), `server.json`
-  `environmentVariables` and `.codex-plugin/plugin.json` `env_vars`.
+  (optional fields need `"default": ""`), the OCI package's `-e` runtime
+  arguments in `server.json` (when Docker users need it) and
+  `.codex-plugin/plugin.json` `env_vars`.
 - A new or renamed tool: also update the `tools` list in
   `mcpb/manifest.json` (release builds regenerate it from the binary) and the
   skills that mention it.

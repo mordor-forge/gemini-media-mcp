@@ -18,45 +18,54 @@ An MCP server for Google's generative media models: **images** (Nano Banana 2.1 
 1. **Get credentials.** Either:
    - an API key from [Google AI Studio](https://aistudio.google.com/apikey) (`GEMINI_API_KEY`), or
    - a Google Cloud project with Vertex AI enabled (`GOOGLE_CLOUD_PROJECT` plus `gcloud auth application-default login`).
-2. **Add the server to your agent.** The launcher is `npx -y gemini-media-mcp`, which downloads the right binary for your platform.
+2. **Install the binary.** On macOS or Linux:
+   ```bash
+   mkdir -p ~/.local/bin   # must be on your PATH
+   os=$(uname -s | tr '[:upper:]' '[:lower:]'); arch=$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')
+   curl -fsSL "https://github.com/mordor-forge/gemini-media-mcp/releases/latest/download/$os.$arch.gemini-media-mcp.tar.gz" \
+     | tar -xz -C ~/.local/bin gemini-media-mcp
+   gemini-media-mcp version
+   ```
+   On Windows, download the `windows` zip from the [latest release](https://github.com/mordor-forge/gemini-media-mcp/releases/latest) and put `gemini-media-mcp.exe` on your PATH. With Go 1.26+: `go install github.com/mordor-forge/gemini-media-mcp/cmd/gemini-media-mcp@latest`.
+
+   The Gemini CLI extension, the Claude Desktop bundle and the Docker image include the binary, so they skip this step.
+3. **Add the server to your agent.** Every config below runs `gemini-media-mcp` from your PATH.
 
    **Claude Code** (plugin: server plus skills):
    ```
    /plugin marketplace add mordor-forge/gemini-media-mcp
    /plugin install gemini-media@mordor-forge
    ```
-   or just the server: `claude mcp add gemini-media -e GEMINI_API_KEY=... -- npx -y gemini-media-mcp`
+   or just the server: `claude mcp add gemini-media -e GEMINI_API_KEY=... -- gemini-media-mcp`
 
    **Codex** (`~/.codex/config.toml`):
    ```toml
    [mcp_servers.gemini-media]
-   command = "npx"
-   args = ["-y", "gemini-media-mcp"]
+   command = "gemini-media-mcp"
    env_vars = ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"]
    tool_timeout_sec = 120
    ```
 
    **Gemini CLI:** `gemini extensions install https://github.com/mordor-forge/gemini-media-mcp`
 
-   **VS Code / Copilot:** `code --add-mcp '{"name":"gemini-media","command":"npx","args":["-y","gemini-media-mcp"]}'`
+   **Claude Desktop:** download `gemini-media-mcp-<version>.mcpb` from the [latest release](https://github.com/mordor-forge/gemini-media-mcp/releases/latest) and open it.
 
-   **Any other client** (Cursor, Windsurf, Zed, OpenCode, Goose, Claude Desktop…):
+   **VS Code / Copilot:** `code --add-mcp '{"name":"gemini-media","command":"gemini-media-mcp"}'`
+
+   **Any other client** (Cursor, Windsurf, Zed, OpenCode, Goose…):
    ```json
-   { "mcpServers": { "gemini-media": { "command": "npx", "args": ["-y", "gemini-media-mcp"], "env": { "GEMINI_API_KEY": "..." } } } }
+   { "mcpServers": { "gemini-media": { "command": "gemini-media-mcp", "env": { "GEMINI_API_KEY": "..." } } } }
    ```
 
-   Every client, plus Docker, MCPB (Claude Desktop) and the skills installer, is covered in [packaging/INSTALL-SNIPPETS.md](packaging/INSTALL-SNIPPETS.md).
-3. **If your agent doesn't forward environment variables** (plugins often don't), store the key once:
+   If a desktop app reports that `gemini-media-mcp` was not found, it doesn't see your shell's PATH: use the full path from `command -v gemini-media-mcp`. Every client, plus Docker and the skills installer, is covered in [packaging/INSTALL-SNIPPETS.md](packaging/INSTALL-SNIPPETS.md).
+4. **If your agent doesn't forward environment variables** (plugins often don't), store the key once:
    ```bash
-   echo "$GEMINI_API_KEY" | npx -y gemini-media-mcp configure --api-key-stdin
-   npx -y gemini-media-mcp doctor   # checks credentials, backend and model availability
+   echo "$GEMINI_API_KEY" | gemini-media-mcp configure --api-key-stdin
+   gemini-media-mcp doctor   # checks credentials, backend and model availability
    ```
 
-Other ways to install:
-- `go install github.com/mordor-forge/gemini-media-mcp/cmd/gemini-media-mcp@latest` (Go 1.26+)
-- release binaries on the [Releases](https://github.com/mordor-forge/gemini-media-mcp/releases) page
-- `docker run -i --rm -e GEMINI_API_KEY -v "$PWD/media:/output" -v gemini-media-state:/state ghcr.io/mordor-forge/gemini-media-mcp`
-  (the named `/state` volume keeps spend accounting and video jobs between runs)
+To run it in Docker instead: `docker run -i --rm -e GEMINI_API_KEY -v "$PWD/media:/output" -v gemini-media-state:/state ghcr.io/mordor-forge/gemini-media-mcp`
+(the named `/state` volume keeps spend accounting and video jobs between runs).
 
 ## Tools
 

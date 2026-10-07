@@ -15,4 +15,4 @@ detailed prompting guides; activate the matching one before generating.
 - Chain outputs by passing a previous result's `uri` or path as an input image.
 - If calls fail with auth errors, call `get_config`, then tell the user to set
   the extension's API key (`gemini extensions config gemini-media-mcp`) or run
-  `npx -y gemini-media-mcp configure --api-key-stdin`.
+  `~/.gemini/extensions/gemini-media-mcp/gemini-media-mcp configure --api-key-stdin`.

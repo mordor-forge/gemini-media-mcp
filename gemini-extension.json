@@ -12,7 +12,7 @@
   "settings": [
     {
       "name": "Gemini API key",
-      "description": "Key from https://aistudio.google.com/apikey (stored in your keychain). Gemini CLI does not pass your shell's GEMINI_API_KEY to extensions, so set it here - or leave empty and use Vertex AI or `gemini-media-mcp configure --api-key-stdin`.",
+      "description": "Key from https://aistudio.google.com/apikey (stored in your keychain). Gemini CLI does not pass your shell's GEMINI_API_KEY to extensions, so set it here - or leave empty and use Vertex AI or run `gemini-media-mcp configure --api-key-stdin` from the extension directory.",
       "envVar": "GEMINI_API_KEY",
       "sensitive": true
     },
