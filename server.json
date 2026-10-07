@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.mordor-forge/gemini-media-mcp",
   "title": "Gemini Media",
-  "description": "Generate images (Nano Banana), video (Veo), speech and music (Lyria) with Google's Gemini models",
+  "description": "Generate images (Nano Banana), video (Veo, Gemini Omni), speech and music (Lyria) with Google models",
   "version": "1.0.0",
   "websiteUrl": "https://github.com/mordor-forge/gemini-media-mcp",
   "repository": {

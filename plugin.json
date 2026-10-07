@@ -26,7 +26,7 @@
       "interface": {
         "displayName": "Gemini Media",
         "shortDescription": "Create images, video, speech and music with Google's Gemini media models",
-        "longDescription": "Adds the gemini-media MCP server and skills for Nano Banana images, Veo and Gemini Omni video, Gemini text-to-speech and Lyria music. Every generation reports its estimated cost, and optional budgets stop runaway spend. Needs a Gemini API key or a Vertex AI project: run `npx -y gemini-media-mcp configure --api-key-stdin` once, or export GEMINI_API_KEY.",
+        "longDescription": "Adds the gemini-media MCP server and skills for Nano Banana images, Veo and Gemini Omni video, Gemini text-to-speech and Lyria music. Every generation reports its estimated cost, and optional budgets stop runaway spend. Needs the gemini-media-mcp binary on your PATH (see the README) and a Gemini API key or a Vertex AI project: run `gemini-media-mcp configure --api-key-stdin` once, or export GEMINI_API_KEY.",
         "developerName": "mordor-forge",
         "category": "Design",
         "capabilities": [
