@@ -11,48 +11,6 @@
   },
   "packages": [
     {
-      "registryType": "npm",
-      "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "gemini-media-mcp",
-      "version": "1.0.0",
-      "runtimeHint": "npx",
-      "transport": {
-        "type": "stdio"
-      },
-      "environmentVariables": [
-        {
-          "name": "GEMINI_API_KEY",
-          "description": "Gemini API key from https://aistudio.google.com/apikey. Optional when using Vertex AI or a key saved with `gemini-media-mcp configure --api-key-stdin`.",
-          "isRequired": false,
-          "isSecret": true
-        },
-        {
-          "name": "GOOGLE_CLOUD_PROJECT",
-          "description": "Vertex AI project ID (uses Application Default Credentials instead of an API key).",
-          "isRequired": false
-        },
-        {
-          "name": "GOOGLE_CLOUD_LOCATION",
-          "description": "Vertex AI region.",
-          "isRequired": false,
-          "default": "global"
-        },
-        {
-          "name": "MEDIA_OUTPUT_DIR",
-          "description": "Directory where generated media is saved.",
-          "isRequired": false,
-          "format": "filepath",
-          "default": "~/generated_media"
-        },
-        {
-          "name": "GEMINI_MEDIA_BUDGET_DAILY_USD",
-          "description": "Refuse new generations once today's estimated spend reaches this many US dollars (0 = no cap).",
-          "isRequired": false,
-          "format": "number"
-        }
-      ]
-    },
-    {
       "registryType": "oci",
       "identifier": "ghcr.io/mordor-forge/gemini-media-mcp:1.0.0",
       "runtimeHint": "docker",

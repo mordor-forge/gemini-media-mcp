@@ -2,10 +2,10 @@
 # Writes .build/gemini-extension/gemini-extension.json for the Gemini CLI
 # release archives (GoReleaser before hook).
 #
-# The repository's gemini-extension.json launches the server with npx, which
-# works for every install method (Gemini CLI always ships with Node.js). The
-# release archives bundle the binary next to the manifest, so their copy runs
-# it directly: faster start-up and no npm download.
+# The repository's gemini-extension.json runs gemini-media-mcp from PATH, for
+# installs from git (--ref). The release archives bundle the binary next to the
+# manifest, so their copy runs it from the extension directory and needs no
+# separate install.
 set -eu
 cd "$(dirname "$0")/.."
 

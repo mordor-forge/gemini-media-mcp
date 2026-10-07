@@ -43,11 +43,8 @@
   },
   "mcpServers": {
     "gemini-media": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "gemini-media-mcp@1.0.0"
-      ],
+      "command": "gemini-media-mcp",
+      "args": [],
       "env": {
         "GEMINI_MEDIA_API_KEY": "${user_config.gemini_api_key}",
         "GEMINI_MEDIA_OUTPUT_DIR": "${user_config.output_dir}",
