@@ -111,7 +111,7 @@ binary, so section 1 is not needed. `--ref main` installs from git and starts
 `gemini-media-mcp` from your `PATH`.
 Gemini CLI never passes your shell's `GEMINI_API_KEY` or `GOOGLE_CLOUD_PROJECT`
 to extensions, so set them with `gemini extensions config`, or run
-`gemini-media-mcp configure --api-key-stdin` from the extension directory
+`./gemini-media-mcp configure --api-key-stdin` in the extension directory
 (`~/.gemini/extensions/gemini-media-mcp/`).
 Stdio MCP servers only start in trusted folders.
 
