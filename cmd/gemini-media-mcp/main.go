@@ -50,6 +50,12 @@ Common flags:
   --backend NAME      auto (default), gemini-api or vertex
   --log-level LEVEL   debug, info (default), warn or error
 
+Command flags:
+  configure  --api-key-stdin --backend NAME --project ID --location REGION
+             --output-dir DIR --daily-budget-usd N --config PATH
+  models     --media-type image|video|speech|music --all (include retired) --json
+  usage      --period today|month (default)|all --config PATH
+
 Environment: GEMINI_API_KEY / GOOGLE_API_KEY, GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION,
 GOOGLE_GENAI_USE_VERTEXAI, MEDIA_OUTPUT_DIR and GEMINI_MEDIA_* (see README).
 `
