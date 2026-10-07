@@ -4,8 +4,8 @@
   "name": "gemini-media-mcp",
   "display_name": "Gemini Media",
   "version": "1.0.0",
-  "description": "Generate images (Nano Banana), video (Veo), speech (Gemini TTS) and music (Lyria) with Google's generative media models.",
-  "long_description": "Create and edit images with Nano Banana, generate and extend Veo video clips with native audio, turn text into single- or two-voice speech, and compose music with Lyria. Every call reports its estimated cost, `estimate_cost` compares options before you spend, and optional budgets stop runaway spend. Files are saved to your output directory.\n\nUse a Gemini API key from https://aistudio.google.com/apikey, or a Vertex AI project with gcloud application-default credentials.",
+  "description": "Generate images (Nano Banana), video (Veo, Gemini Omni), speech (Gemini TTS) and music (Lyria) with Google's generative media models.",
+  "long_description": "Create and edit images with Nano Banana, generate, edit and extend Veo and Gemini Omni video clips with native audio, turn text into single- or two-voice speech, and compose music with Lyria. Every call reports its estimated cost, `estimate_cost` compares options before you spend, and optional budgets stop runaway spend. Files are saved to your output directory.\n\nUse a Gemini API key from https://aistudio.google.com/apikey, or a Vertex AI project with gcloud application-default credentials.",
   "author": {
     "name": "mordor-forge",
     "url": "https://github.com/mordor-forge"
@@ -53,7 +53,7 @@
     },
     {
       "name": "generate_video",
-      "description": "Start a Veo video clip with native audio (asynchronous)"
+      "description": "Start a Veo or Gemini Omni video clip with native audio (asynchronous)"
     },
     {
       "name": "get_video",
@@ -61,7 +61,11 @@
     },
     {
       "name": "extend_video",
-      "description": "Continue a completed Veo clip by about 7 seconds"
+      "description": "Continue a completed clip (Omni up to 40 s, Veo about 7 s per call)"
+    },
+    {
+      "name": "edit_video",
+      "description": "Change an existing clip with an instruction (Gemini Omni)"
     },
     {
       "name": "generate_speech",

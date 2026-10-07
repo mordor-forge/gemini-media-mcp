@@ -5,7 +5,8 @@
 //
 //	GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=... go test -tags=e2e ./internal/media/ -run E2E -v -timeout 15m
 //
-// Set GEMINI_MEDIA_E2E_VIDEO=1 to include video, and
+// Set GEMINI_MEDIA_E2E_VIDEO=1 to include video, GEMINI_MEDIA_E2E_OMNI=1 to
+// include a Gemini Omni clip and an edit of it (about $0.30), and
 // GEMINI_MEDIA_E2E_OUTPUT_DIR=<dir> to keep the generated files for review
 // (otherwise they go to a temporary directory that is deleted). Vertex AI
 // works too (GOOGLE_CLOUD_PROJECT + ADC, or GOOGLE_GENAI_USE_VERTEXAI=true).
@@ -135,4 +136,44 @@ func TestE2E_Video(t *testing.T) {
 		t.Fatalf("video job ended as %+v", job)
 	}
 	t.Logf("video %s (%.1fs) cost %+v", job.Files[0].Path, job.Files[0].DurationSeconds, job.Cost)
+}
+
+func TestE2E_Omni(t *testing.T) {
+	s := liveService(t)
+	if os.Getenv("GEMINI_MEDIA_E2E_OMNI") != "1" {
+		t.Skip("set GEMINI_MEDIA_E2E_OMNI=1 to run the Omni test (~$0.30: two 4 s clips at 360p)")
+	}
+	wait := func(job *VideoJob) *VideoJob {
+		t.Helper()
+		deadline := time.Now().Add(15 * time.Minute)
+		for job.State == jobs.StateWorking && time.Now().Before(deadline) {
+			w := 45
+			var err error
+			if job, err = s.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: &w}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if job.State != jobs.StateCompleted || len(job.Files) == 0 {
+			t.Fatalf("Omni job ended as %+v", job)
+		}
+		return job
+	}
+	job, err := s.GenerateVideo(context.Background(), VideoRequest{
+		Prompt: "Continuous single shot: a paper boat drifting across a puddle on a rainy street, soft rain sounds. No dialogue.",
+		Model:  "omni", Resolution: "360p", DurationSeconds: 4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job = wait(job)
+	t.Logf("omni clip %s (%.1fs) cost %+v", job.Files[0].Path, job.Files[0].DurationSeconds, job.Cost)
+	if job.Cost.Basis != catalog.BasisUsage {
+		t.Errorf("cost was not reconciled from usage: %+v", job.Cost)
+	}
+	edit, err := s.EditVideo(context.Background(), EditVideoRequest{JobID: job.JobID, Prompt: "Make the boat bright red. Keep everything else the same."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edit = wait(edit)
+	t.Logf("omni edit %s (%.1fs) cost %+v", edit.Files[0].Path, edit.Files[0].DurationSeconds, edit.Cost)
 }

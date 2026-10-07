@@ -1,7 +1,7 @@
 {
   "name": "gemini-media-mcp",
   "version": "1.0.0",
-  "description": "Generate images (Nano Banana), video (Veo), speech (Gemini TTS) and music (Lyria) with Google's generative media models, with cost estimates and spend budgets.",
+  "description": "Generate images (Nano Banana), video (Veo, Gemini Omni), speech (Gemini TTS) and music (Lyria) with Google's generative media models, with cost estimates and spend budgets.",
   "mcpServers": {
     "gemini-media": {
       "command": "npx",

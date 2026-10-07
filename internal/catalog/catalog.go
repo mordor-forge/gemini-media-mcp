@@ -35,6 +35,7 @@ const (
 	FamilyVeo         = "veo"          // generateVideos long-running operation
 	FamilyGeminiTTS   = "gemini-tts"   // generateContent with AUDIO modality + speechConfig
 	FamilyLyria       = "lyria"        // generateContent with AUDIO modality
+	FamilyOmni        = "omni"         // Interactions API (synchronous video generation and editing)
 )
 
 // Lifecycle states.
@@ -93,16 +94,22 @@ type Capabilities struct {
 	LastFrame          bool     `yaml:"lastFrame" json:"lastFrame,omitempty"`
 	Extend             bool     `yaml:"extend" json:"extend,omitempty"`
 	ExtendSeconds      int      `yaml:"extendSeconds" json:"extendSeconds,omitempty"`
-	NegativePrompt     bool     `yaml:"negativePrompt" json:"negativePrompt,omitempty"`
-	Seed               bool     `yaml:"seed" json:"seed,omitempty"`
-	PersonGeneration   []string `yaml:"personGeneration" json:"personGeneration,omitempty"`
-	AudioToggle        []string `yaml:"audioToggle" json:"audioToggle,omitempty"`
-	MaxSpeakers        int      `yaml:"maxSpeakers" json:"maxSpeakers,omitempty"`
-	Voices             []string `yaml:"voices" json:"voices,omitempty"`
-	ImageInput         bool     `yaml:"imageInput" json:"imageInput,omitempty"`
-	OutputSeconds      int      `yaml:"outputSeconds" json:"outputSeconds,omitempty"`
-	MaxOutputSeconds   int      `yaml:"maxOutputSeconds" json:"maxOutputSeconds,omitempty"`
-	OutputFormats      []string `yaml:"outputFormats" json:"outputFormats,omitempty"`
+	// MaxTotalSeconds caps the length of a clip grown by repeated extension.
+	MaxTotalSeconds int `yaml:"maxTotalSeconds" json:"maxTotalSeconds,omitempty"`
+	// VideoEdit marks models that edit existing videos (edit_video).
+	VideoEdit bool `yaml:"videoEdit" json:"videoEdit,omitempty"`
+	// MaxInputVideoSeconds caps a video sent for editing or extension.
+	MaxInputVideoSeconds int      `yaml:"maxInputVideoSeconds" json:"maxInputVideoSeconds,omitempty"`
+	NegativePrompt       bool     `yaml:"negativePrompt" json:"negativePrompt,omitempty"`
+	Seed                 bool     `yaml:"seed" json:"seed,omitempty"`
+	PersonGeneration     []string `yaml:"personGeneration" json:"personGeneration,omitempty"`
+	AudioToggle          []string `yaml:"audioToggle" json:"audioToggle,omitempty"`
+	MaxSpeakers          int      `yaml:"maxSpeakers" json:"maxSpeakers,omitempty"`
+	Voices               []string `yaml:"voices" json:"voices,omitempty"`
+	ImageInput           bool     `yaml:"imageInput" json:"imageInput,omitempty"`
+	OutputSeconds        int      `yaml:"outputSeconds" json:"outputSeconds,omitempty"`
+	MaxOutputSeconds     int      `yaml:"maxOutputSeconds" json:"maxOutputSeconds,omitempty"`
+	OutputFormats        []string `yaml:"outputFormats" json:"outputFormats,omitempty"`
 	// SpeechStyle is "metadata" (style sent as speech_metadata, text read
 	// verbatim) or "prompt" (style written as directions inside the text).
 	SpeechStyle string `yaml:"speechStyle" json:"speechStyle,omitempty"`

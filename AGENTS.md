@@ -3,7 +3,7 @@
 Guide for coding agents working on **gemini-media-mcp**: a Go MCP server
 (module `github.com/mordor-forge/gemini-media-mcp`, binary `gemini-media-mcp`,
 MCP server name `gemini-media`) for Google's generative media models - Nano
-Banana images, Veo video, Gemini TTS and Lyria music - on the Gemini API or
+Banana images, Veo and Gemini Omni video, Gemini TTS and Lyria music - on the Gemini API or
 Vertex AI. Go 1.26+ (see `go.mod`).
 
 ## Commands
@@ -62,7 +62,7 @@ internal/config        layered config: defaults < config.yaml < env (GEMINI_MEDI
 internal/store         saving generated files (collision-free names), input-file access policy
 internal/spend         append-only usage ledger (usage.jsonl) and session/daily/monthly budgets
 internal/filelock      cross-process advisory file lock (flock / LockFileEx) guarding the ledger
-internal/jobs          persisted long-running jobs (Veo video operations)
+internal/jobs          persisted long-running jobs (Veo operations, Omni interactions)
 internal/apperr        classified, agent-actionable errors
 internal/version       Version/Commit/Date injected with -ldflags (see .goreleaser.yaml, Dockerfile)
 ```

@@ -6,8 +6,10 @@ package google
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"sync"
 	"time"
 
@@ -25,6 +27,8 @@ type API interface {
 	GenerateVideos(ctx context.Context, location, model string, src *genai.GenerateVideosSource, cfg *genai.GenerateVideosConfig) (*genai.GenerateVideosOperation, error)
 	GetVideosOperation(ctx context.Context, location string, op *genai.GenerateVideosOperation) (*genai.GenerateVideosOperation, error)
 	DownloadVideo(ctx context.Context, location string, v *genai.Video) ([]byte, error)
+	// CreateInteraction runs a Gemini Omni video interaction (Gemini API only).
+	CreateInteraction(ctx context.Context, req *InteractionRequest, timeout time.Duration) (*InteractionResult, error)
 	ListModels(ctx context.Context) ([]*genai.Model, error)
 	Backend() config.Backend
 }
@@ -168,8 +172,49 @@ func (p *Pool) DownloadVideo(ctx context.Context, location string, v *genai.Vide
 	if err != nil {
 		return nil, err
 	}
+	if err := waitForFile(ctx, c, v.URI); err != nil {
+		return nil, err
+	}
 	return c.Files.Download(ctx, genai.NewDownloadURIFromVideo(v), nil)
 }
+
+// fileNameRe matches the file name the SDK downloads (lowercase alphanumeric).
+var fileNameRe = regexp.MustCompile(`files/[a-z0-9]+`)
+
+// waitForFile waits until a Files API file is ACTIVE. Omni output is
+// returned while still PROCESSING; Veo output is ready at once (one check).
+// A failed status check is not fatal: the download reports the real error.
+func waitForFile(ctx context.Context, c *genai.Client, uri string) error {
+	name := fileNameRe.FindString(uri)
+	if name == "" {
+		return nil
+	}
+	for {
+		f, err := c.Files.Get(ctx, name, nil)
+		if err != nil || f == nil {
+			return nil
+		}
+		switch f.State {
+		case genai.FileStateFailed:
+			msg := "the generated video file failed processing"
+			if f.Error != nil && f.Error.Message != "" {
+				msg += ": " + f.Error.Message
+			}
+			return errors.New(msg)
+		case genai.FileStateProcessing:
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(fileWait):
+			}
+		default:
+			return nil
+		}
+	}
+}
+
+// fileWait is the pause between file status checks (shortened in tests).
+var fileWait = 3 * time.Second
 
 // ListModels lists models visible to the credentials (Gemini API: all base
 // models; Vertex: publisher models are not enumerable this way, so an
@@ -220,6 +265,11 @@ func (Unconfigured) GetVideosOperation(context.Context, string, *genai.GenerateV
 
 // DownloadVideo implements API.
 func (Unconfigured) DownloadVideo(context.Context, string, *genai.Video) ([]byte, error) {
+	return nil, errUnconfigured
+}
+
+// CreateInteraction implements API.
+func (Unconfigured) CreateInteraction(context.Context, *InteractionRequest, time.Duration) (*InteractionResult, error) {
 	return nil, errUnconfigured
 }
 

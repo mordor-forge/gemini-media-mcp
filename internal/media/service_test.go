@@ -518,12 +518,15 @@ func TestListModelsLiveAndEstimates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if est.Estimate.USD != 4.8 || !est.NeedsConfirm || len(est.Alternatives) != 2 {
+	if est.Estimate.USD != 4.8 || !est.NeedsConfirm || len(est.Alternatives) != 3 {
 		t.Fatalf("estimate = %+v", est)
 	}
 	for _, a := range est.Alternatives {
 		if a.Model == "veo-3.1-lite-generate-preview" && a.Supports {
 			t.Fatal("lite does not support 4k")
+		}
+		if a.Model == "gemini-omni-1.1-flash" && (!a.Supports || a.USD < 2.43 || a.USD > 2.44) {
+			t.Fatalf("omni 4k 8s should be about $2.43: %+v", a)
 		}
 	}
 	info := e.svc.Info("stdio")

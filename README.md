@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![gemini-media-mcp MCP server](https://glama.ai/mcp/servers/mordor-forge/gemini-media-mcp/badges/score.svg)](https://glama.ai/mcp/servers/mordor-forge/gemini-media-mcp)
 
-An MCP server for Google's generative media models: **images** (Nano Banana 2.1 / Pro), **video** (Veo 3.1), **speech** (Gemini 3.8 TTS) and **music** (Lyria 3.5). It ships as a single Go binary, speaks **stdio and Streamable HTTP** (MCP 2026-07-28), works with the **Gemini API or Vertex AI**, and comes with **agent skills** and plugin packaging for Claude Code, Codex, Gemini CLI, VS Code/Copilot, Cursor and more.
+An MCP server for Google's generative media models: **images** (Nano Banana 2.1 / Pro), **video** (Veo 3.1 and Gemini Omni Flash), **speech** (Gemini 3.8 TTS) and **music** (Lyria 3.5). It ships as a single Go binary, speaks **stdio and Streamable HTTP** (MCP 2026-07-28), works with the **Gemini API or Vertex AI**, and comes with **agent skills** and plugin packaging for Claude Code, Codex, Gemini CLI, VS Code/Copilot, Cursor and more.
 
 - **Current models, updated without a release.** A built-in catalog records IDs, aliases, lifecycle, parameters and prices. Retired models redirect to their replacement, and new model IDs work before the catalog knows them. You can override or extend the catalog with a hot-reloaded YAML file.
 - **Cost-aware.** Every result reports its estimated cost, and `estimate_cost` compares options before you spend. Spend is recorded in a ledger, capped by session, daily and monthly budgets, and calls above a threshold need explicit approval.
@@ -65,9 +65,10 @@ Other ways to install:
 |---|---|
 | `generate_image` | Text-to-image with up to 14 reference images, 1K–4K, many aspect ratios, 1–4 variations, optional Google Search grounding |
 | `edit_image` | Change an existing image (add/remove/restyle/relight/outpaint) while keeping the rest |
-| `generate_video` | Veo clip (4–8 s, native audio) from text, a first frame, first+last frames, or up to 3 reference images. Returns a `jobId` |
+| `generate_video` | Clip with native audio from text, a first frame, first+last frames, or reference images: Veo (4–8 s, up to 3 references) or Gemini Omni Flash (`omni`: 3–10 s, 360p drafts to 4K, up to 10 references). Returns a `jobId` |
 | `get_video` | Wait for a job (long-poll, default 45 s); downloads the video when done. Safe to repeat |
-| `extend_video` | Continue a finished clip by about 7 s (up to 148 s total) |
+| `extend_video` | Continue a finished clip: Omni adds up to 10 s (40 s total), Veo about 7 s (up to 148 s total) |
+| `edit_video` | Change a finished clip or a video file of up to 10 s with an instruction (Gemini Omni) |
 | `generate_speech` | Text-to-speech (WAV): one voice, or a two-speaker dialogue, with per-line style control and 30 voices |
 | `generate_music` | 30-second clips or full songs with lyrics, structure tags, tempo, instrumental mode and image inspiration |
 | `list_models` | Current models, aliases, status, prices; `detail` for supported parameters, `live` to check what your key can use |
@@ -84,7 +85,7 @@ Use an alias or a full model ID. Run `gemini-media-mcp models` or call `list_mod
 | Media | Aliases (default first) |
 |---|---|
 | Image | `nb2` (Nano Banana 2.1, default), `pro` (Nano Banana Pro: highest fidelity), `nb2-lite` (cheapest inputs) |
-| Video | `lite` (cheapest), `fast` (best value: 4K, references, extension), `standard` (highest quality) |
+| Video | `lite` (cheapest), `omni` (Gemini Omni Flash: prompt adherence, editing, extension to 40 s; Gemini API only), `fast` (Veo 4K, references, extension), `standard` (highest Veo quality) |
 | Speech | `tts` (Gemini 3.8 Flash TTS), `tts-lite`, `tts-2.5`, `tts-pro` |
 | Music | `clip` (30 s), `full` (Lyria 3.5 songs) |
 
@@ -163,7 +164,7 @@ The [`skills/`](skills) directory contains [Agent Skills](https://agentskills.io
 | Skill | For |
 |---|---|
 | `gemini-image` | Images: generation, editing, multi-reference composition, text rendering |
-| `gemini-video` | Video: text/image-to-video, frame interpolation, reference ingredients, extension, async jobs |
+| `gemini-video` | Video: text/image-to-video, frame interpolation, reference ingredients, Omni editing, extension, async jobs |
 | `gemini-speech` | Voiceovers, narration, two-speaker dialogue, voice and style selection |
 | `gemini-music` | Clips and full songs with structure, lyrics and tempo |
 | `gemini-media-production` | Multi-asset projects (storyboard → keyframes → video → voiceover → music → ffmpeg assembly) with a budget plan |
@@ -182,7 +183,8 @@ go test -race ./...
 golangci-lint run
 python3 scripts/validate-skills.py skills
 GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=... go test -tags=e2e ./internal/media/ -run E2E -v   # live, costs cents
-# add GEMINI_MEDIA_E2E_VIDEO=1 for the video test (~$0.20), GEMINI_MEDIA_E2E_OUTPUT_DIR=./e2e-out to keep the files
+# add GEMINI_MEDIA_E2E_VIDEO=1 for the video test (~$0.20), GEMINI_MEDIA_E2E_OMNI=1 for the Omni clip + edit (~$0.30),
+# GEMINI_MEDIA_E2E_OUTPUT_DIR=./e2e-out to keep the files
 ```
 
 - [AGENTS.md](AGENTS.md): guide for coding agents and contributors.

@@ -188,24 +188,31 @@ func (m *Model) CostFromUsage(u TokenUsage, backend, location string) (Estimate,
 
 	imageTok := u.OutputByModality["image"]
 	audioTok := u.OutputByModality["audio"]
-	textTok := max(u.OutputTokens-imageTok-audioTok, 0) + u.ThoughtsTokens
-	if imageTok == 0 && audioTok == 0 && len(u.OutputByModality) == 0 {
+	videoTok := u.OutputByModality["video"]
+	textTok := max(u.OutputTokens-imageTok-audioTok-videoTok, 0) + u.ThoughtsTokens
+	if imageTok == 0 && audioTok == 0 && videoTok == 0 && len(u.OutputByModality) == 0 {
 		// No modality breakdown: attribute output to the model's primary modality.
 		switch m.MediaType {
 		case Image:
 			imageTok, textTok = u.OutputTokens, u.ThoughtsTokens
 		case Speech:
 			audioTok, textTok = u.OutputTokens, u.ThoughtsTokens
+		case Video:
+			videoTok, textTok = u.OutputTokens, u.ThoughtsTokens
 		}
 	}
 	usd += float64(imageTok) * p.OutputPer1M["image"] / 1e6
 	usd += float64(audioTok) * p.OutputPer1M["audio"] / 1e6
+	usd += float64(videoTok) * p.OutputPer1M["video"] / 1e6
 	usd += float64(textTok) * rate(p.OutputPer1M, "text", "") / 1e6
 	if imageTok > 0 {
 		parts = append(parts, fmt.Sprintf("%d image tokens", imageTok))
 	}
 	if audioTok > 0 {
 		parts = append(parts, fmt.Sprintf("%d audio tokens", audioTok))
+	}
+	if videoTok > 0 {
+		parts = append(parts, fmt.Sprintf("%d video tokens", videoTok))
 	}
 	if textTok > 0 {
 		parts = append(parts, fmt.Sprintf("%d text/thinking tokens", textTok))
@@ -224,7 +231,7 @@ func (m *Model) PriceSummary() string {
 	p := m.Pricing
 	switch {
 	case len(p.PerSecond) > 0:
-		return "per second: " + fmtRates(p.PerSecond, []string{"720p", "1080p", "4k"})
+		return "per second: " + fmtRates(p.PerSecond, []string{"360p", "720p", "1080p", "4k"})
 	case len(p.ImageOutputTokens) > 0 && p.OutputPer1M["image"] > 0:
 		var parts []string
 		for _, size := range []string{"512", "1K", "2K", "4K"} {

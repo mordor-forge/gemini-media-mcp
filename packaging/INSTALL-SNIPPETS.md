@@ -6,7 +6,7 @@ downloads the native binary for your platform on first use. Replace `@latest`
 with a version (for example `@1.0.0`) for a reproducible setup.
 
 The MCP server is called `gemini-media`; its tools are `generate_image`,
-`edit_image`, `generate_video`, `get_video`, `extend_video`, `generate_speech`,
+`edit_image`, `generate_video`, `get_video`, `extend_video`, `edit_video`, `generate_speech`,
 `generate_music`, `list_models`, `estimate_cost`, `get_usage` and `get_config`.
 
 ## 1. Credentials (once per machine)

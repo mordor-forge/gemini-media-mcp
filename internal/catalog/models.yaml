@@ -7,13 +7,14 @@
 #
 # Prices are USD list prices (paid tier, standard/on-demand) and are used for
 # estimates only. Authoritative spend lives in AI Studio / Cloud Billing.
-version: "2026-10-06.2"
+version: "2026-10-07"
 sources:
   - https://ai.google.dev/gemini-api/docs/models
   - https://ai.google.dev/gemini-api/docs/models/gemini-nano-banana-2.1
   - https://ai.google.dev/gemini-api/docs/deprecations
   - https://ai.google.dev/gemini-api/docs/pricing
   - https://ai.google.dev/gemini-api/docs/veo
+  - https://ai.google.dev/gemini-api/docs/omni
   - https://ai.google.dev/gemini-api/docs/generate-content/image-generation
   - https://ai.google.dev/gemini-api/docs/generate-content/speech-generation
   - https://ai.google.dev/gemini-api/docs/generate-content/music-generation
@@ -190,6 +191,44 @@ models:
     replacement: gemini-nano-banana-2.1
 
   # ---------------------------------------------------------------- video
+  - id: gemini-omni-1.1-flash
+    aliases: [omni, omni-flash, gemini-omni]
+    title: Gemini Omni 1.1 Flash
+    family: omni
+    mediaType: video
+    status: ga
+    released: "2026-08-27"
+    summary: Generates, edits and extends clips with native audio. 3-10 s, 360p drafts to 4K, first/last frames, up to 10 reference images, conversational edits of earlier clips, extension to 40 s. Strong prompt adherence and readable text in video. About Veo Fast's price at 720p.
+    backends: [gemini-api]
+    capabilities:
+      aspectRatios: ["16:9", "9:16"]
+      resolutions: ["360p", "720p", "1080p", "4k"]
+      durations: [3, 4, 5, 6, 7, 8, 9, 10]
+      defaultDuration: 8
+      maxReferenceImages: 10
+      imageToVideo: true
+      lastFrame: true
+      extend: true
+      extendSeconds: 10
+      maxTotalSeconds: 40
+      videoEdit: true
+      maxInputVideoSeconds: 10
+      rules:
+        - when: {lastFrame: ["*"]}
+          require: {image: ["*"]}
+          message: lastFrame requires a first-frame image
+    pricing:
+      asOf: "2026-10-07"
+      source: https://ai.google.dev/gemini-api/docs/pricing
+      perSecond: {360p: 0.034, 720p: 0.1014, 1080p: 0.152, 4k: 0.304}
+      inputPer1M: {text: 1.50, image: 1.50, video: 1.50, audio: 1.50}
+      outputPer1M: {text: 9.00, video: 17.50}
+    notes:
+      - Served only through the Interactions API, which answers synchronously after 1-5 minutes (4K and long extensions take longer). The server runs the call in the background and get_video reports it like a Veo job.
+      - 720p bills 5,792 video tokens per second ($0.10/s); 360p is about a third of that. The 1080p and 4K rates are third-party estimates (both are upscaled from 720p); costs are reconciled from the usage the API reports.
+      - Vertex AI offers it as gemini-omni-1.1-flash-preview (global, Preview); this server calls it on the Gemini API only.
+      - Editing or extending uploaded videos is unavailable in the EEA, Switzerland, the UK and some US states; input videos must be 10 seconds or shorter.
+
   - id: veo-3.1-lite-generate-preview
     vertexId: veo-3.1-lite-generate-001
     aliases: [lite, veo-lite]

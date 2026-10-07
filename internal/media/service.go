@@ -48,6 +48,9 @@ type Service struct {
 
 	jobLocks sync.Map // job ID -> chan struct{} (capacity 1): a lock that honors contexts
 	fetching sync.Map // job ID -> struct{}: outputs being downloaded in the background
+	// omniActive tracks Omni interactions this process is running:
+	// job ID -> chan struct{} closed when the job is settled.
+	omniActive sync.Map
 }
 
 // New builds a Service.

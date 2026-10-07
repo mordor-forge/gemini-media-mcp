@@ -42,8 +42,9 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:  "generate_video",
 		Title: "Generate video",
-		Description: "Start a Veo video clip (4-8s, with native audio) from a text prompt, optionally from a first frame, first+last frames, or up to 3 reference images. " +
-			"Asynchronous: returns a jobId; then call get_video. Costs $0.05-$0.60 per second depending on model and resolution (default lite 720p 8s = $0.40).",
+		Description: "Start a video clip with native audio from a text prompt, optionally from a first frame, first+last frames, or reference images. " +
+			"Default Veo lite (4-8s, $0.05/s at 720p); omni (Gemini Omni Flash: 3-10s, 360p drafts to 4K, up to 10 references, strongest prompt adherence, ~$0.10/s at 720p); fast/standard for Veo 4K and ingredients. " +
+			"Asynchronous: returns a jobId; then call get_video.",
 		Annotations: withTitle(generative, "Generate video"),
 	}, s.handleGenerateVideo)
 
@@ -57,10 +58,18 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:  "extend_video",
 		Title: "Extend video",
-		Description: "Continue a completed fast/standard Veo clip by about 7 seconds (720p, up to 148s total) from its last frame. " +
-			"Works on clips generated within the last 2 days. Asynchronous like generate_video.",
+		Description: "Continue a completed clip from its end: omni adds up to 10 s (40 s total, keeping characters and audio coherent); Veo fast/standard add about 7 s (720p, up to 148 s, within 2 days). " +
+			"Asynchronous like generate_video.",
 		Annotations: withTitle(generative, "Extend video"),
 	}, s.handleExtendVideo)
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:  "edit_video",
+		Title: "Edit video",
+		Description: "Change an existing clip with an instruction (add, remove or replace objects, restyle, relight, change the background) with Gemini Omni Flash, keeping everything else. " +
+			"Pass the jobId of a finished clip (Omni clips are edited in conversation) or a video file of at most 10 s. Asynchronous like generate_video; about $0.10 per second of video at 720p.",
+		Annotations: withTitle(generative, "Edit video"),
+	}, s.handleEditVideo)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:  "generate_speech",
@@ -150,6 +159,14 @@ func (s *Server) handleGetVideo(ctx context.Context, req *mcp.CallToolRequest, i
 
 func (s *Server) handleExtendVideo(ctx context.Context, req *mcp.CallToolRequest, in media.ExtendVideoRequest) (*mcp.CallToolResult, *media.VideoJob, error) {
 	res, err := s.svc.ExtendVideo(withProgress(ctx, req), in)
+	if err != nil {
+		return nil, nil, toolError(err)
+	}
+	return videoToolResult(res), res, nil
+}
+
+func (s *Server) handleEditVideo(ctx context.Context, req *mcp.CallToolRequest, in media.EditVideoRequest) (*mcp.CallToolResult, *media.VideoJob, error) {
+	res, err := s.svc.EditVideo(withProgress(ctx, req), in)
 	if err != nil {
 		return nil, nil, toolError(err)
 	}

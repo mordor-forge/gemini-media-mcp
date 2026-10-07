@@ -65,7 +65,7 @@ v0 defined five interfaces (`ImageGenerator`, `VideoGenerator`, …) with a sing
 The useful seams turned out to be:
 
 - **Catalog.** What models exist, and what they accept and cost.
-- **Family adapter.** How a family is called: generateContent+IMAGE, generateVideos, generateContent+speechConfig or generateContent+AUDIO.
+- **Family adapter.** How a family is called: generateContent+IMAGE, generateVideos, generateContent+speechConfig, generateContent+AUDIO, or an Interactions API call (Omni).
 - **`google.API`.** A narrow interface over the SDK, which also makes the service testable with a fake.
 
 ---
@@ -110,7 +110,7 @@ A request flows like this. An MCP tool call reaches `server`, which attaches pro
   - Deprecated models warn with their shutdown date.
   - Models missing on a backend fall back, e.g. 3.8 TTS falls back to 2.5 TTS on Vertex, and Lyria 3.5 to Lyria 3 Pro.
   - Retirement dates reported by the API (`modelStatus`) are surfaced as warnings.
-- **Unknown model IDs pass through.** The family is inferred from the ID (`veo-*`, `lyria-*`, `*tts*`, `gemini-*image*`), so a model launched tomorrow works by raw ID before the catalog knows it. It is unvalidated and unpriced, and says so.
+- **Unknown model IDs pass through.** The family is inferred from the ID (`veo-*`, `gemini-omni-*`, `lyria-*`, `*tts*`, `gemini-*image*`), so a model launched tomorrow works by raw ID before the catalog knows it. It is unvalidated and unpriced, and says so.
 - **Live discovery.** `list_models live:true` asks the API what the key can actually call. It flags catalog models that are unavailable, and lists media models the catalog doesn't know yet. `gemini-media-mcp doctor` runs the same check from a terminal.
 - **Configuration.** Loading is layered: defaults < `config.yaml` < env < flags. Unknown keys warn instead of failing, which gives forward compatibility. The Google SDK env names, the old env names and new `GEMINI_MEDIA_*` names are all honored. `get_config` reports the source of every setting.
 - **Transient failures.** SDK-level retries with backoff are enabled only for 429 and 503, the codes that mean "not processed". Generation calls are billed and not idempotent: after a 500, 504 or 408 the work may still finish server-side, so a retry could double-charge. Per-request timeouts are configurable.
@@ -126,15 +126,16 @@ A request flows like this. An MCP tool call reaches `server`, which attaches pro
 - **Locations are per model, from the catalog.** Veo uses `us-central1`; images, Lyria and TTS use `global`. An explicit location is honored where the model is offered and overridden with a warning where it is not. One genai client is pooled per location.
 - **Key migration warning.** `doctor` warns about standard `AIza…` Gemini API keys, which Google is migrating to `AQ.…` authorization keys. `configure --api-key-stdin` writes a `0600` config file for harnesses that don't forward environment variables (Gemini CLI redacts `*KEY*` variables; Agent Plugins forbids secrets in `env`).
 
-### 2.3 Tool surface: 11 workflow-shaped tools
+### 2.3 Tool surface: 12 workflow-shaped tools
 
-| v0 (12 tools) | v1 (11 tools) | Why |
+| v0 (12 tools) | v1 (12 tools) | Why |
 |---|---|---|
 | `generate_image`, `compose_images` | `generate_image` (+ `referenceImages` up to 14, `count` 1–4, `googleSearch`, `imageSize` 512–4K) | Composition is generation with references. Fewer overlapping tools improve selection accuracy (RAG-MCP, arXiv:2505.03275). |
 | `edit_image` | `edit_image` (+ references, aspect ratio / outpainting, size; defaults to the model that made the source) | Consistent quality across edit chains. |
 | `generate_video`, `animate_image` | `generate_video` (+ `image`, `lastFrame`, `referenceImages`, `negativePrompt`, `seed`, `personGeneration`, `generateAudio`, `waitSeconds`) | Image-to-video, first+last-frame interpolation and "ingredients" are all Veo parameters. |
 | `video_status`, `download_video` | `get_video` (long-poll up to `waitSeconds`, auto-download, idempotent) | One call per wait instead of several, with progress notifications. |
-| `extend_video` | `extend_video` (by job handle; works on both backends) | — |
+| `extend_video` | `extend_video` (by job handle; Veo on both backends, Omni on the Gemini API) | — |
+| — | `edit_video` (Gemini Omni: a finished clip by `jobId`, in conversation, or a video file of up to 10 s) | Instruction-based video editing, new with Omni. |
 | `generate_audio` | `generate_speech` (single voice or a 2-speaker `dialogue`, `style`, 30 voices, WAV) | "Audio" was ambiguous next to music. 3.8 TTS style is handled correctly. |
 | `generate_music` | `generate_music` (+ `lyrics`, `instrumental`, `bpm`, `durationSeconds`, inspiration `images`, WAV on Lyria 3.5) | Structured hints are folded into the prompt, since Lyria has no dedicated fields. |
 | `list_models` | `list_models` (`mediaType`, `detail`, `live`, `includeInactive`) | Discovery and availability checks. |
@@ -241,7 +242,7 @@ A release is one tag. `scripts/sync-version.sh` stamps the version into every ma
 
 ## 3. What I deliberately did not do (follow-ups)
 
-1. **Gemini Omni Flash** (`gemini-omni-1.1-flash`). Google now calls it the default video model. It is served only through the Interactions API, and the released go-genai v1.71.0 has no Interactions client (it exists only on `main`). Rather than hand-roll a REST client against an API that broke its schema in May 2026, the catalog rejects `gemini-omni-*` with a clear message. Add it as a `family: omni` adapter once go-genai releases `interactions`. The job-handle design already fits its background mode.
+1. **Gemini Omni Flash on Vertex AI.** Omni (`gemini-omni-1.1-flash`, `family: omni`) is supported on the Gemini API since go-genai v1.72.0 shipped an Interactions client. Each interaction is synchronous and takes minutes, so the server runs it in a background goroutine tracked as a job: the running session refreshes the job record, and a record whose session stopped is reported as interrupted (and possibly billed). Vertex AI serves it as `gemini-omni-1.1-flash-preview` through a preview Interactions API that the SDK does not yet support there. Omni's background mode and Files API uploads (for videos over 20 MB) are not used yet.
 2. **Multi-turn conversational image editing.** This means re-sending prior turns with thought signatures. Single-turn edits with the source image are robust today; conversational mode would improve consistency over long edit chains.
 3. **Extended Voice Library listing and voice design/replication.** `voice_…` IDs are passed through, but there is no listing or creation tool.
 4. **Batch API** for bulk images and TTS (50% off). It fits a future `batch: true` flag with a job handle.

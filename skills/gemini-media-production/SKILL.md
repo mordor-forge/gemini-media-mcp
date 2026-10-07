@@ -29,7 +29,7 @@ Orchestrates the four generation skills into one finished piece. Each asset type
 
 The tools live on the `gemini-media` MCP server. Harnesses name MCP tools differently (`mcp__gemini-media__generate_video`, `gemini-media.generate_video`, or plain `generate_video`); match on the part after the server name. This skill writes them as `gemini-media:<tool>`.
 
-Generation: `gemini-media:generate_image`, `gemini-media:edit_image`, `gemini-media:generate_video`, `gemini-media:get_video`, `gemini-media:extend_video`, `gemini-media:generate_speech`, `gemini-media:generate_music`. Planning and control: `gemini-media:estimate_cost`, `gemini-media:list_models`, `gemini-media:get_usage`, `gemini-media:get_config` (output directory, budgets). Every result includes a `path` and a `gemini-media://` `uri`; pass the `uri` of one asset as the input of the next (`image`, `lastFrame`, `referenceImages`, `images`).
+Generation: `gemini-media:generate_image`, `gemini-media:edit_image`, `gemini-media:generate_video`, `gemini-media:get_video`, `gemini-media:extend_video`, `gemini-media:edit_video`, `gemini-media:generate_speech`, `gemini-media:generate_music`. Planning and control: `gemini-media:estimate_cost`, `gemini-media:list_models`, `gemini-media:get_usage`, `gemini-media:get_config` (output directory, budgets). Every result includes a `path` and a `gemini-media://` `uri`; pass the `uri` of one asset as the input of the next (`image`, `lastFrame`, `referenceImages`, `images`).
 
 ## Plan template
 
@@ -70,7 +70,8 @@ Prices change; never hardcode them in the plan. Only the estimates from the tool
 - **Keyframes:** generate each shot's first frame with the sheet in `referenceImages`, then animate it with `image`. For controlled moves, also generate the last frame (edit the first frame) and pass both `image` and `lastFrame`.
 - **Ingredients:** on `fast`/`standard`, pass up to 3 references (character, product, prop) as `referenceImages` for 8 s shots with no keyframe.
 - **Style:** repeat the same lighting, palette and lens words in every image and video prompt; reuse an approved frame as a style reference.
-- **Continuity between shots:** extend a `fast`/`standard` clip with `gemini-media:extend_video`, or grab the last frame of a clip with ffmpeg and use it as the next shot's `image`.
+- **Continuity between shots:** extend an `omni` clip (up to 40 s, keeps characters and audio coherent) or a `fast`/`standard` clip with `gemini-media:extend_video`, or grab the last frame of a clip with ffmpeg and use it as the next shot's `image`.
+- **Fixes without reshooting:** change a finished clip with `gemini-media:edit_video` (Omni: "make the sky stormy, keep everything else the same") instead of regenerating the whole shot.
 
 ## Running the video jobs
 

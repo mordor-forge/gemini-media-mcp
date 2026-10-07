@@ -36,6 +36,12 @@
       "prompt": "Use these three product photos as references and make the video start exactly on first.png, 4 seconds, on lite to keep it cheap.",
       "expected_output": "Explains the conflicting constraints before spending: reference images require fast or standard, force 8 seconds and cannot be combined with a first frame. Proposes valid options (lite image-to-video from first.png at 4 s, or fast with referenceImages at 8 s) with estimate_cost figures, asks the user if present, or picks the cheap valid option and states the choice if autonomous.",
       "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "In the clip from job_0123456789abcdef01234567 the guy is holding a phone - can you make the phone disappear but keep everything else?",
+      "expected_output": "Calls gemini-media:edit_video with jobId set to the given job and a short prompt such as 'Make the phone invisible. Keep everything else the same.' (no model needed: edits use omni). States the estimated cost before or with the call. Polls gemini-media:get_video with the returned jobId until completed and reports the new file; does not regenerate the clip from scratch with generate_video.",
+      "files": []
     }
   ]
 }

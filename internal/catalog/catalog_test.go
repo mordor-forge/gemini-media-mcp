@@ -26,7 +26,7 @@ func TestEmbeddedCatalogIsConsistent(t *testing.T) {
 			t.Fatalf("default %s=%s is %s/%s", mt, name, m.MediaType, m.EffectiveStatus(now))
 		}
 	}
-	families := map[string]bool{FamilyGeminiImage: true, FamilyVeo: true, FamilyGeminiTTS: true, FamilyLyria: true}
+	families := map[string]bool{FamilyGeminiImage: true, FamilyVeo: true, FamilyGeminiTTS: true, FamilyLyria: true, FamilyOmni: true}
 	for _, m := range c.Models {
 		if !families[m.Family] {
 			t.Errorf("%s: unknown family %q", m.ID, m.Family)

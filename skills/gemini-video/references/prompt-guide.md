@@ -186,6 +186,31 @@ Use the product photo as `image` (starting frame) or as a reference ingredient o
 
 Use the same image as `image` and `lastFrame` and describe a cyclical motion ("the lantern gently sways and returns to rest"). Results vary; check the seam.
 
+## Gemini Omni (`omni`)
+
+Omni follows long, specific prompts closely and renders short text legibly. Differences from Veo:
+
+- **Shots:** by default it builds a small multi-shot sequence. For one shot write "Continuous, unbroken shot of ..."; for your own cuts time the beats: `[0-3s] A person is walking [3-6s] They stop and turn around [6-10s] They start running`.
+- **Roles of images:** the server adds `<FIRST_FRAME>` (and `<LAST_FRAME>`) when you pass `image`/`lastFrame`. Refer to reference images as `<IMAGE_REF_0>`, `<IMAGE_REF_1>`... in their order: `in the style of <IMAGE_REF_0> a woman <IMAGE_REF_1> is walking`.
+- **Audio:** it always scores the clip. Say what you want: "Sound design: gentle breeze, distant birds. No dialogue." or "upbeat acoustic guitar".
+- **Drafts:** iterate at `resolution: "360p"` (faster, about a third of the 720p price), then render the chosen prompt at 720p or above. 1080p and 4K are upscaled.
+
+### Editing with `edit_video`
+
+Short instructions beat descriptions. Name the change and protect the rest:
+
+```text
+Add a cat that jumps onto his lap, he begins to pet it. Keep everything else the same.
+Make the phone invisible. Keep everything else the same.
+Change the season to winter with light snowfall. Keep everything else the same.
+```
+
+Omni clips (`jobId` from `omni`) are edited in conversation, so chain small edits instead of one big rewrite. Input files must be 10 s or shorter; to regenerate the soundtrack from scratch, strip the audio from the file first (`ffmpeg -i in.mp4 -an -c:v copy silent.mp4`).
+
+### Extending with `extend_video`
+
+Prompt only what comes next: "The scene continues: the camera pans across the mountains as the music swells." Each call adds up to 10 s, up to 40 s in total. Reference images can introduce a newcomer: pass them to a new `generate_video` instead if the extension ignores them.
+
 ## Negative prompts
 
 `negativePrompt` takes plain nouns and short noun phrases, not instructions: `"text, subtitles, watermark, logos, blurry faces, extra limbs, background music"`. Do not write "no" or "don't" in it.

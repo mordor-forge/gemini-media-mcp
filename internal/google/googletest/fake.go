@@ -7,11 +7,15 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sync"
+	"time"
 
 	"google.golang.org/genai"
 
 	"github.com/mordor-forge/gemini-media-mcp/internal/config"
+	"github.com/mordor-forge/gemini-media-mcp/internal/google"
 )
+
+var _ google.API = (*Fake)(nil)
 
 // ContentCall records a GenerateContent call.
 type ContentCall struct {
@@ -51,6 +55,11 @@ type Fake struct {
 	// DownloadHook, when set, runs before each download; an error it returns
 	// is the download's error.
 	DownloadHook func(ctx context.Context) error
+	// InteractionCalls records CreateInteraction requests.
+	InteractionCalls []*google.InteractionRequest
+	// InteractionFn answers CreateInteraction; by default a completed
+	// interaction with a video URI and Omni-like usage is returned.
+	InteractionFn func(req *google.InteractionRequest) (*google.InteractionResult, error)
 }
 
 // Backend implements google.API.
@@ -118,6 +127,31 @@ func (f *Fake) DownloadVideo(ctx context.Context, _ string, _ *genai.Video) ([]b
 		return nil, f.DownloadErr
 	}
 	return MP4(8), nil
+}
+
+// CreateInteraction implements google.API.
+func (f *Fake) CreateInteraction(_ context.Context, req *google.InteractionRequest, _ time.Duration) (*google.InteractionResult, error) {
+	f.Mu.Lock()
+	f.InteractionCalls = append(f.InteractionCalls, req)
+	n := len(f.InteractionCalls)
+	fn := f.InteractionFn
+	f.Mu.Unlock()
+	if fn != nil {
+		return fn(req)
+	}
+	seconds := req.DurationSeconds
+	if seconds <= 0 {
+		seconds = 8
+	}
+	return &google.InteractionResult{
+		ID:     fmt.Sprintf("v1_interaction%d", n),
+		Status: "completed",
+		Video:  &genai.Video{URI: fmt.Sprintf("https://files/omni%d:download?alt=media", n), MIMEType: "video/mp4"},
+		Usage: google.Usage{
+			PromptTokens: 20, OutputTokens: 5792 * seconds, TotalTokens: 20 + 5792*seconds,
+			PromptByModality: map[string]int{"text": 20}, OutputByModality: map[string]int{"video": 5792 * seconds},
+		},
+	}, nil
 }
 
 // ListModels implements google.API.

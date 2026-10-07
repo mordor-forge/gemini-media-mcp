@@ -60,6 +60,18 @@ type Job struct {
 	// RemoteExpiresAt is when the provider deletes the generated output
 	// (Gemini API keeps videos for two days).
 	RemoteExpiresAt *time.Time `json:"remoteExpiresAt,omitempty"`
+
+	// Interaction is the Interactions API id of a finished Omni clip; edits
+	// and extensions continue it with previous_interaction_id.
+	Interaction string `json:"interaction,omitempty"`
+	// Worker is the server session running a synchronous (Omni) generation.
+	// That session refreshes UpdatedAt while it works; a stale record whose
+	// worker is gone is reported as interrupted.
+	Worker string `json:"worker,omitempty"`
+	// CostUSD and CostBasis hold the reconciled cost once known (Omni
+	// reports token usage); otherwise EstimateUSD stands.
+	CostUSD   float64 `json:"costUsd,omitempty"`
+	CostBasis string  `json:"costBasis,omitempty"`
 }
 
 // Done reports whether the job reached a terminal state.

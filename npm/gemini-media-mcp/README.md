@@ -1,7 +1,7 @@
 # gemini-media-mcp
 
 MCP server for Google's generative media models: **Nano Banana** images, **Veo**
-video, **Gemini TTS** speech and **Lyria** music, with cost estimates, spend
+and **Gemini Omni** video, **Gemini TTS** speech and **Lyria** music, with cost estimates, spend
 budgets and a model catalog that tracks Google's renames and retirements.
 
 This npm package is a thin launcher for the native Go binary. npm installs only

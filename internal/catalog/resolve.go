@@ -85,8 +85,6 @@ func (c *Catalog) resolveUnknown(name, mediaType, backend string) (*Resolved, er
 	switch {
 	case strings.HasPrefix(lower, "imagen"):
 		return nil, &apperr.Error{Kind: apperr.NotFound, Message: fmt.Sprintf("%s: Imagen models were shut down on the Gemini API (August 2026) and discontinued on Vertex AI", name), Hint: "Use gemini-nano-banana-2.1 (alias nb2) or gemini-3-pro-image (alias pro)."}
-	case strings.HasPrefix(lower, "gemini-omni"):
-		return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s is only served through the Gemini Interactions API, which this server does not support yet", name), Hint: "Use a Veo model (fast, standard or lite) for video generation."}
 	}
 	family, mt := InferFamily(lower)
 	if family == "" {
@@ -110,6 +108,8 @@ func InferFamily(id string) (family, mediaType string) {
 		return "", "" // streaming (Live API) models; this server cannot call them
 	case strings.HasPrefix(id, "veo-"):
 		return FamilyVeo, Video
+	case strings.HasPrefix(id, "gemini-omni"):
+		return FamilyOmni, Video
 	case strings.HasPrefix(id, "lyria-"):
 		return FamilyLyria, Music
 	case strings.Contains(id, "tts"):
