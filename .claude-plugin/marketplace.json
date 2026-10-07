@@ -4,7 +4,7 @@
     "name": "mordor-forge",
     "url": "https://github.com/mordor-forge"
   },
-  "description": "Plugins from mordor-forge: Google generative media (Nano Banana, Veo, Gemini TTS, Lyria) for coding agents.",
+  "description": "Plugins from mordor-forge: Google generative media (Nano Banana, Veo, Gemini Omni, Gemini TTS, Lyria) for coding agents.",
   "plugins": [
     {
       "name": "gemini-media",

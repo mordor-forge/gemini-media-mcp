@@ -14,7 +14,7 @@ dist/
 # Test output
 coverage.out
 
-# Release staging (scripts/gemini-release-manifest.sh, npm/mcpb builds)
+# Release staging (scripts/gemini-release-manifest.sh, mcpb builds)
 /.build/
 node_modules/
 *.mcpb

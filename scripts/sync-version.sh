@@ -7,10 +7,7 @@
 # Updates:
 #   plugin.json, .claude-plugin/plugin.json, .codex-plugin/plugin.json,
 #   gemini-extension.json, mcpb/manifest.json          "version"
-#   mcp.json, .claude-plugin/plugin.json, .codex-plugin/plugin.json,
-#   gemini-extension.json                              npx pin "gemini-media-mcp@<version>"
-#   npm/gemini-media-mcp/package.json                  "version" + optionalDependencies
-#   server.json                                        version, npm version, OCI tag, MCPB URL
+#   server.json                                        version, OCI tag, MCPB URL
 #   skills/*/SKILL.md                                  frontmatter metadata.version (if present)
 #
 # Then: scripts/validate-packaging.sh, commit, tag v<version>, push the tag.
@@ -18,7 +15,7 @@
 set -euo pipefail
 
 if [ $# -ne 1 ]; then
-  sed -n '2,16p' "$0" >&2
+  sed -n '2,13p' "$0" >&2
   exit 2
 fi
 version=${1#v}
@@ -54,21 +51,15 @@ stamp_json() {
   replace_if_changed "$file" "$tmp"
 }
 
-# Rewrites every "gemini-media-mcp@<anything>" string (npx arguments).
-pin='walk(if type == "string" and test("^gemini-media-mcp@") then "gemini-media-mcp@" + $v else . end)'
-
 stamp_json plugin.json '.version = $v'
-stamp_json mcp.json "$pin"
-stamp_json .claude-plugin/plugin.json ".version = \$v | $pin"
-stamp_json .codex-plugin/plugin.json ".version = \$v | $pin"
-stamp_json gemini-extension.json ".version = \$v | $pin"
+stamp_json .claude-plugin/plugin.json '.version = $v'
+stamp_json .codex-plugin/plugin.json '.version = $v'
+stamp_json gemini-extension.json '.version = $v'
 stamp_json mcpb/manifest.json '.version = $v'
-stamp_json npm/gemini-media-mcp/package.json '.version = $v | .optionalDependencies |= with_entries(.value = $v)'
 stamp_json server.json '
   .version = $v
   | .packages |= map(
-      if .registryType == "npm" then .version = $v
-      elif .registryType == "oci" then .identifier |= sub(":[^:/]+$"; ":" + $v)
+      if .registryType == "oci" then .identifier |= sub(":[^:/]+$"; ":" + $v)
       elif .registryType == "mcpb" then
         .identifier = "https://github.com/mordor-forge/gemini-media-mcp/releases/download/v\($v)/gemini-media-mcp-\($v).mcpb"
         | .version = $v

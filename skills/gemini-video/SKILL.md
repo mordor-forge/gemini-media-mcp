@@ -90,7 +90,7 @@ Recipes for each mode: [references/prompt-guide.md](references/prompt-guide.md).
 
 - Cover the elements Veo responds to: **subject, context, action, style, camera motion, composition, ambiance**.
 - Describe motion explicitly and in time order: "the camera slowly dollies in as she turns toward the window".
-- One shot, one main action. A clip is at most 8 s; split sequences into separate shots.
+- One shot, one main action. A Veo clip is at most 8 s, an Omni clip 10 s; split sequences into separate shots.
 - **Audio is generated from the prompt.** Put dialogue in quotes after the speaker, with delivery in parentheses: `Woman: (voice tight with fear) "Then what is it?"`. Describe sound effects ("snapping twigs, footsteps on damp earth"), ambience ("a lone bird chirps") and music ("soft solo piano"). About 8 s fits one or two short lines.
 - If you will add your own voiceover or music later, ask for "natural ambient sound only" and consider `negativePrompt: "music, speech"`.
 - Rendered text, logos and UI are unreliable in Veo: add them in post, or put them in the first frame image. Omni renders short text legibly; quote it exactly.

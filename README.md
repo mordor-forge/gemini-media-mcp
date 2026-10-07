@@ -3,7 +3,6 @@
 [![CI](https://github.com/mordor-forge/gemini-media-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/mordor-forge/gemini-media-mcp/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![gemini-media-mcp MCP server](https://glama.ai/mcp/servers/mordor-forge/gemini-media-mcp/badges/score.svg)](https://glama.ai/mcp/servers/mordor-forge/gemini-media-mcp)
 
 An MCP server for Google's generative media models: **images** (Nano Banana 2.1 / Pro), **video** (Veo 3.1 and Gemini Omni Flash), **speech** (Gemini 3.8 TTS) and **music** (Lyria 3.5). It ships as a single Go binary, speaks **stdio and Streamable HTTP** (MCP 2026-07-28), works with the **Gemini API or Vertex AI**, and comes with **agent skills** and plugin packaging for Claude Code, Codex, Gemini CLI, VS Code/Copilot, Cursor and more.
 
@@ -19,45 +18,54 @@ An MCP server for Google's generative media models: **images** (Nano Banana 2.1 
 1. **Get credentials.** Either:
    - an API key from [Google AI Studio](https://aistudio.google.com/apikey) (`GEMINI_API_KEY`), or
    - a Google Cloud project with Vertex AI enabled (`GOOGLE_CLOUD_PROJECT` plus `gcloud auth application-default login`).
-2. **Add the server to your agent.** The launcher is `npx -y gemini-media-mcp`, which downloads the right binary for your platform.
+2. **Install the binary.** On macOS or Linux:
+   ```bash
+   mkdir -p ~/.local/bin   # must be on your PATH
+   os=$(uname -s | tr '[:upper:]' '[:lower:]'); arch=$(uname -m | sed 's/x86_64/x64/; s/aarch64/arm64/')
+   curl -fsSL "https://github.com/mordor-forge/gemini-media-mcp/releases/latest/download/$os.$arch.gemini-media-mcp.tar.gz" \
+     | tar -xz -C ~/.local/bin gemini-media-mcp
+   gemini-media-mcp version
+   ```
+   On Windows, download the `windows` zip from the [latest release](https://github.com/mordor-forge/gemini-media-mcp/releases/latest) and put `gemini-media-mcp.exe` on your PATH. With Go 1.26+: `go install github.com/mordor-forge/gemini-media-mcp/cmd/gemini-media-mcp@latest`.
+
+   The Gemini CLI extension, the Claude Desktop bundle and the Docker image include the binary, so they skip this step.
+3. **Add the server to your agent.** Every config below runs `gemini-media-mcp` from your PATH.
 
    **Claude Code** (plugin: server plus skills):
    ```
    /plugin marketplace add mordor-forge/gemini-media-mcp
    /plugin install gemini-media@mordor-forge
    ```
-   or just the server: `claude mcp add gemini-media -e GEMINI_API_KEY=... -- npx -y gemini-media-mcp`
+   or just the server: `claude mcp add gemini-media -e GEMINI_API_KEY=... -- gemini-media-mcp`
 
    **Codex** (`~/.codex/config.toml`):
    ```toml
    [mcp_servers.gemini-media]
-   command = "npx"
-   args = ["-y", "gemini-media-mcp"]
+   command = "gemini-media-mcp"
    env_vars = ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"]
-   tool_timeout_sec = 120
+   tool_timeout_sec = 300   # 4K images and video polls can exceed the 60 s default
    ```
 
    **Gemini CLI:** `gemini extensions install https://github.com/mordor-forge/gemini-media-mcp`
 
-   **VS Code / Copilot:** `code --add-mcp '{"name":"gemini-media","command":"npx","args":["-y","gemini-media-mcp"]}'`
+   **Claude Desktop:** download `gemini-media-mcp-<version>.mcpb` from the [latest release](https://github.com/mordor-forge/gemini-media-mcp/releases/latest) and open it.
 
-   **Any other client** (Cursor, Windsurf, Zed, OpenCode, Goose, Claude Desktop…):
+   **VS Code / Copilot:** `code --add-mcp '{"name":"gemini-media","command":"gemini-media-mcp"}'`
+
+   **Cursor, Windsurf and other `mcpServers`-style clients** (Zed, OpenCode and Goose use their own formats, see below):
    ```json
-   { "mcpServers": { "gemini-media": { "command": "npx", "args": ["-y", "gemini-media-mcp"], "env": { "GEMINI_API_KEY": "..." } } } }
+   { "mcpServers": { "gemini-media": { "command": "gemini-media-mcp", "env": { "GEMINI_API_KEY": "..." } } } }
    ```
 
-   Every client, plus Docker, MCPB (Claude Desktop) and the skills installer, is covered in [packaging/INSTALL-SNIPPETS.md](packaging/INSTALL-SNIPPETS.md).
-3. **If your agent doesn't forward environment variables** (plugins often don't), store the key once:
+   If a desktop app reports that `gemini-media-mcp` was not found, it doesn't see your shell's PATH: use the full path from `command -v gemini-media-mcp`. Every client, plus Docker and the skills installer, is covered in [packaging/INSTALL-SNIPPETS.md](packaging/INSTALL-SNIPPETS.md).
+4. **If your agent doesn't forward environment variables** (plugins often don't), store the key once:
    ```bash
-   echo "$GEMINI_API_KEY" | npx -y gemini-media-mcp configure --api-key-stdin
-   npx -y gemini-media-mcp doctor   # checks credentials, backend and model availability
+   echo "$GEMINI_API_KEY" | gemini-media-mcp configure --api-key-stdin
+   gemini-media-mcp doctor   # checks credentials, backend and model availability
    ```
 
-Other ways to install:
-- `go install github.com/mordor-forge/gemini-media-mcp/cmd/gemini-media-mcp@latest` (Go 1.26+)
-- release binaries on the [Releases](https://github.com/mordor-forge/gemini-media-mcp/releases) page
-- `docker run -i --rm -e GEMINI_API_KEY -v "$PWD/media:/output" -v gemini-media-state:/state ghcr.io/mordor-forge/gemini-media-mcp`
-  (the named `/state` volume keeps spend accounting and video jobs between runs)
+To run it in Docker instead: `docker run -i --rm --user "$(id -u):$(id -g)" -e GEMINI_API_KEY -v "$PWD/media:/output" -v gemini-media-state:/state ghcr.io/mordor-forge/gemini-media-mcp`
+(`--user` makes the generated files yours on Linux; the named `/state` volume keeps spend accounting and video jobs between runs).
 
 ## Tools
 
@@ -80,12 +88,12 @@ Every result includes the saved file's path, a `gemini-media://files/<name>` URI
 
 ## Models
 
-Use an alias or a full model ID. Run `gemini-media-mcp models` or call `list_models` for the live table with prices.
+Use an alias or a full model ID. Run `gemini-media-mcp models` for the built-in catalog with prices, or call `list_models`, which also applies your override file and, with `live: true`, checks what your key can use.
 
 | Media | Aliases (default first) |
 |---|---|
 | Image | `nb2` (Nano Banana 2.1, default), `pro` (Nano Banana Pro: highest fidelity), `nb2-lite` (cheapest inputs) |
-| Video | `lite` (cheapest), `omni` (Gemini Omni Flash: prompt adherence, editing, extension to 40 s; Gemini API only), `fast` (Veo 4K, references, extension), `standard` (highest Veo quality) |
+| Video | `lite` (cheapest Veo), `omni` (Gemini Omni Flash: prompt adherence, editing, extension to 40 s; Gemini API only), `fast` (Veo 4K, references, extension), `standard` (highest Veo quality) |
 | Speech | `tts` (Gemini 3.8 Flash TTS), `tts-lite`, `tts-2.5`, `tts-pro` |
 | Music | `clip` (30 s), `full` (Lyria 3.5 songs) |
 
@@ -106,25 +114,33 @@ See [internal/catalog/models.yaml](internal/catalog/models.yaml) for the full sc
 
 ## Configuration
 
-Settings are layered: built-in defaults < config file < environment < flags. The config file lives at `~/.config/gemini-media-mcp/config.yaml` on Linux, `~/Library/Application Support/gemini-media-mcp/config.yaml` on macOS, or wherever `GEMINI_MEDIA_CONFIG` points. Unknown keys produce warnings instead of errors, and `get_config` shows where each setting came from.
+Settings are layered: built-in defaults < config file < environment < flags. The config file lives at `~/.config/gemini-media-mcp/config.yaml` on Linux, `~/Library/Application Support/gemini-media-mcp/config.yaml` on macOS, `%AppData%\gemini-media-mcp\config.yaml` on Windows, or wherever `GEMINI_MEDIA_CONFIG` points. Unknown keys produce warnings instead of errors, and `get_config` shows where each setting came from.
 
 | Environment variable | Config key | Default | Purpose |
 |---|---|---|---|
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GEMINI_MEDIA_API_KEY` | `apiKey` | – | Gemini API key (or Vertex express-mode key) |
-| `GOOGLE_CLOUD_PROJECT` | `project` | – | Vertex AI project (Application Default Credentials) |
-| `GOOGLE_CLOUD_LOCATION` / `GOOGLE_CLOUD_REGION` | `location` | per model | Vertex region; models not offered there use their catalog location |
-| `GOOGLE_GENAI_USE_VERTEXAI` / `GOOGLE_GENAI_USE_ENTERPRISE` | – | – | Force Vertex AI (same semantics as the Google SDKs) |
+| `GEMINI_MEDIA_PROJECT` / `GOOGLE_CLOUD_PROJECT` | `project` | – | Vertex AI project (Application Default Credentials) |
+| `GEMINI_MEDIA_LOCATION` / `GOOGLE_CLOUD_LOCATION` / `GOOGLE_CLOUD_REGION` | `location` | per model | Vertex region; models not offered there use their catalog location |
+| `GOOGLE_GENAI_USE_VERTEXAI` / `GOOGLE_GENAI_USE_ENTERPRISE` | – | – | `true` selects Vertex AI, `false` the Gemini API (same semantics as the Google SDKs) |
 | `GEMINI_MEDIA_BACKEND` | `backend` | `auto` | `auto`, `gemini-api` or `vertex` |
 | `MEDIA_OUTPUT_DIR` / `GEMINI_MEDIA_OUTPUT_DIR` | `outputDir` | `~/generated_media` | Where media is saved |
-| `GEMINI_MEDIA_STATE_DIR` | `stateDir` | `~/.local/state/gemini-media-mcp` | Spend ledger and video jobs |
+| `GEMINI_MEDIA_STATE_DIR` | `stateDir` | `$XDG_STATE_HOME/gemini-media-mcp`, else `~/.local/state/gemini-media-mcp` (Linux) or the config directory | Spend ledger and video jobs |
 | `GEMINI_MEDIA_BUDGET_SESSION_USD` / `_DAILY_USD` / `_MONTHLY_USD` | `budget.*Usd` | none | Spend caps (estimated) |
 | `GEMINI_MEDIA_CONFIRM_ABOVE_USD` | `budget.confirmAboveUsd` | none | Calls above this need `approvedCostUsd` |
 | `GEMINI_MEDIA_IMAGE_MODEL` / `_VIDEO_MODEL` / `_SPEECH_MODEL` / `_MUSIC_MODEL` / `GEMINI_MEDIA_VOICE` | `defaults.*` | catalog | Default models and voice |
 | `GEMINI_MEDIA_CATALOG` | `catalogFile` | – | Catalog override file (hot-reloaded) |
 | `GEMINI_MEDIA_INPUT_DIRS` | `inputDirs` | – | Extra directories inputs may be read from (HTTP mode) |
-| `GEMINI_MEDIA_INLINE_PREVIEWS` | `inlinePreviews` | `true` | Attach a downscaled preview to image results |
+| `GEMINI_MEDIA_ALLOW_ANY_INPUT_PATH` | `allowAnyInputPath` | `true` on stdio, `false` on HTTP | Read input files from anywhere on disk |
+| `GEMINI_MEDIA_INLINE_PREVIEWS` / `GEMINI_MEDIA_PREVIEW_MAX_PIXELS` | `inlinePreviews` / `previewMaxPixels` | `true` / `768` | Attach a downscaled preview to image results, and its longest side |
+| `GEMINI_MEDIA_REQUEST_TIMEOUT_SECONDS` | `requestTimeoutSeconds` | `600` | Timeout of each Google API request |
+| `GEMINI_MEDIA_MAX_VIDEO_WAIT_SECONDS` | `maxVideoWaitSeconds` | `600` | Upper limit for `waitSeconds` on video tools |
+| `GEMINI_MEDIA_RETRY_ATTEMPTS` | `retry.attempts` | `4` | Attempts for rate-limited (429) and unavailable (503) responses |
+| `GEMINI_MEDIA_LOG_LEVEL` | `logLevel` | `info` | `debug`, `info`, `warn` or `error` (logs go to stderr) |
 | `GEMINI_MEDIA_TRANSPORT` | `transport` | `stdio` | `stdio` or `http` |
 | `GEMINI_MEDIA_HTTP_ADDR` / `GEMINI_MEDIA_HTTP_TOKEN` | `http.addr` / `http.authToken` | `127.0.0.1:8765` / – | HTTP listen address and bearer token |
+| – | `http.path` | `/mcp` | HTTP endpoint path |
+| `GEMINI_MEDIA_HTTP_ALLOWED_ORIGINS` | `http.allowedOrigins` | – | Extra trusted browser origins, comma-separated |
+| `GEMINI_MEDIA_HTTP_STATEFUL` | `http.stateful` | `false` | Keep per-client sessions (only for legacy 2025-11-25 clients that need them) |
 
 How the backend is chosen:
 1. An explicit `backend` setting wins.
@@ -154,7 +170,7 @@ claude mcp add --transport http gemini-media http://127.0.0.1:8765/mcp --header 
 - HTTP mode is stateless Streamable HTTP, which MCP 2026-07-28 requires; older clients still work.
 - The server protects against DNS rebinding and cross-origin requests.
 - It refuses to listen on a non-loopback address without a token.
-- It only reads input files from the output directory or `GEMINI_MEDIA_INPUT_DIRS`.
+- It only reads input files from the output directory or `GEMINI_MEDIA_INPUT_DIRS` (unless `GEMINI_MEDIA_ALLOW_ANY_INPUT_PATH=true`).
 - `GET /healthz` reports status.
 
 ## Skills
@@ -182,7 +198,7 @@ go build ./...
 go test -race ./...
 golangci-lint run
 python3 scripts/validate-skills.py skills
-GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=... go test -tags=e2e ./internal/media/ -run E2E -v   # live, costs cents
+GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=... go test -tags=e2e ./internal/media/ -run E2E -v -timeout 30m   # live, costs cents
 # add GEMINI_MEDIA_E2E_VIDEO=1 for the video test (~$0.20), GEMINI_MEDIA_E2E_OMNI=1 for the Omni clip + edit (~$0.30),
 # GEMINI_MEDIA_E2E_OUTPUT_DIR=./e2e-out to keep the files
 ```

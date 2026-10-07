@@ -3,7 +3,7 @@
 // Live tests against Google's APIs. They cost real money (a few cents per
 // run; the video test about $0.20) and only run with:
 //
-//	GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=... go test -tags=e2e ./internal/media/ -run E2E -v -timeout 15m
+//	GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=... go test -tags=e2e ./internal/media/ -run E2E -v -timeout 30m
 //
 // Set GEMINI_MEDIA_E2E_VIDEO=1 to include video, GEMINI_MEDIA_E2E_OMNI=1 to
 // include a Gemini Omni clip and an edit of it (about $0.30), and

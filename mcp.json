@@ -3,11 +3,8 @@
   "mcpServers": {
     "gemini-media": {
       "type": "stdio",
-      "command": "npx",
-      "args": [
-        "-y",
-        "gemini-media-mcp@1.0.0"
-      ]
+      "command": "gemini-media-mcp",
+      "args": []
     }
   }
 }

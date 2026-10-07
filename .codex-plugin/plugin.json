@@ -4,11 +4,8 @@
   "description": "Codex overlay for the portable plugin in ../plugin.json: forwards the listed environment variables (Codex passes only a small allowlist to stdio MCP servers by default). The server itself is defined in ../mcp.json.",
   "mcpServers": {
     "gemini-media": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "gemini-media-mcp@1.0.0"
-      ],
+      "command": "gemini-media-mcp",
+      "args": [],
       "env_vars": [
         "GEMINI_MEDIA_API_KEY",
         "GOOGLE_API_KEY",

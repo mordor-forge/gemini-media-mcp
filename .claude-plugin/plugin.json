@@ -25,7 +25,7 @@
     "gemini_api_key": {
       "type": "string",
       "title": "Gemini API key",
-      "description": "Optional. Key from https://aistudio.google.com/apikey, stored in your system keychain. Leave empty to use GEMINI_API_KEY / GOOGLE_API_KEY from your environment, the key saved by `npx -y gemini-media-mcp configure --api-key-stdin`, or Vertex AI (GOOGLE_CLOUD_PROJECT + gcloud credentials).",
+      "description": "Optional. Key from https://aistudio.google.com/apikey, stored in your system keychain. Leave empty to use GEMINI_API_KEY / GOOGLE_API_KEY from your environment, the key saved by `gemini-media-mcp configure --api-key-stdin`, or Vertex AI (GOOGLE_CLOUD_PROJECT + gcloud credentials).",
       "sensitive": true
     },
     "output_dir": {
@@ -43,11 +43,8 @@
   },
   "mcpServers": {
     "gemini-media": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "gemini-media-mcp@1.0.0"
-      ],
+      "command": "gemini-media-mcp",
+      "args": [],
       "env": {
         "GEMINI_MEDIA_API_KEY": "${user_config.gemini_api_key}",
         "GEMINI_MEDIA_OUTPUT_DIR": "${user_config.output_dir}",

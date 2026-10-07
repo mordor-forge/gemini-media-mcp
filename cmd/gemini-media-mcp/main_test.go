@@ -40,6 +40,16 @@ func TestSimpleCommands(t *testing.T) {
 	if err := run([]string{"bogus"}, nil, &out, &out); err == nil {
 		t.Fatal("unknown command should fail")
 	}
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"serve", "--help"}, {"doctor", "-h"}, {"configure", "--help"}} {
+		out.Reset()
+		if err := run(args, nil, &out, &out); err != nil || !strings.Contains(out.String(), "Usage:") || !strings.Contains(out.String(), "--api-key-stdin") {
+			t.Errorf("%v: %v %q", args, err, out.String())
+		}
+	}
+	out.Reset()
+	if err := run([]string{"--version"}, nil, &out, &out); err != nil || !strings.HasPrefix(out.String(), "gemini-media-mcp ") {
+		t.Errorf("--version: %v %q", err, out.String())
+	}
 }
 
 func TestConfigureWritesPrivateFile(t *testing.T) {

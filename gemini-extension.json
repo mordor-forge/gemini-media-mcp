@@ -4,18 +4,15 @@
   "description": "Generate images (Nano Banana), video (Veo, Gemini Omni), speech (Gemini TTS) and music (Lyria) with Google's generative media models, with cost estimates and spend budgets.",
   "mcpServers": {
     "gemini-media": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "gemini-media-mcp@1.0.0"
-      ]
+      "command": "gemini-media-mcp",
+      "args": []
     }
   },
   "contextFileName": "packaging/gemini/GEMINI-EXTENSION.md",
   "settings": [
     {
       "name": "Gemini API key",
-      "description": "Key from https://aistudio.google.com/apikey (stored in your keychain). Gemini CLI does not pass your shell's GEMINI_API_KEY to extensions, so set it here - or leave empty and use Vertex AI or `npx -y gemini-media-mcp configure --api-key-stdin`.",
+      "description": "Key from https://aistudio.google.com/apikey (stored in your keychain). Gemini CLI does not pass your shell's GEMINI_API_KEY to extensions, so set it here - or leave empty and use Vertex AI or run `gemini-media-mcp configure --api-key-stdin` (`./gemini-media-mcp` in ~/.gemini/extensions/gemini-media-mcp for a release install).",
       "envVar": "GEMINI_API_KEY",
       "sensitive": true
     },

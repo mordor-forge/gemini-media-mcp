@@ -3,7 +3,6 @@
 # Release pipeline (see .github/workflows/release.yml):
 #   goreleaser release --clean   -> binaries, archives, Gemini CLI extension archives,
 #                                   checksums and the GitHub release
-#   scripts/build-npm-packages.sh -> npm wrapper + per-platform packages from dist/
 #   scripts/build-mcpb.sh         -> Claude Desktop bundle (.mcpb) from dist/
 #
 # Local dry run: goreleaser release --snapshot --clean  (or: goreleaser build --snapshot --clean --single-target)
@@ -14,7 +13,7 @@ project_name: gemini-media-mcp
 before:
   hooks:
     # The Gemini CLI archives below ship the binary, so their manifest runs it
-    # directly instead of the npx launcher used by git-clone installs.
+    # from the extension directory instead of from PATH (git-clone installs).
     - sh scripts/gemini-release-manifest.sh
 
 builds:
@@ -37,7 +36,7 @@ builds:
 
 # One macOS binary for both CPUs, used by the MCP Bundle (MCPB manifests cannot
 # select a binary per CPU architecture). replace: false keeps the per-arch darwin
-# binaries for the archives and the npm platform packages.
+# binaries for the archives.
 universal_binaries:
   - id: darwin-universal
     ids: [gemini-media-mcp]
@@ -128,7 +127,7 @@ release:
   footer: |
     **Install:** Claude Code `claude plugin marketplace add mordor-forge/gemini-media-mcp && claude plugin install gemini-media@mordor-forge` ·
     Gemini CLI `gemini extensions install https://github.com/mordor-forge/gemini-media-mcp` ·
-    any MCP client `npx -y gemini-media-mcp@{{ .Version }}` ·
+    any MCP client: put `gemini-media-mcp` from the archive for your platform on your PATH ·
     Claude Desktop: download `gemini-media-mcp-{{ .Version }}.mcpb` below.
     More clients: [packaging/INSTALL-SNIPPETS.md](https://github.com/mordor-forge/gemini-media-mcp/blob/v{{ .Version }}/packaging/INSTALL-SNIPPETS.md).
 

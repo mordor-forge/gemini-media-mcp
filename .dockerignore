@@ -1,5 +1,5 @@
 # Build context allowlist: the image only needs the Go sources and the license.
-# (npm/, mcpb/, skills/, docs/, packaging/, dist/, .git/ ... are excluded.)
+# (mcpb/, skills/, docs/, packaging/, dist/, .git/ ... are excluded.)
 *
 !go.mod
 !go.sum

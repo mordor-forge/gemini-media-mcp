@@ -1,6 +1,6 @@
 ---
 name: gemini-media-production
-description: Plans and produces multi-asset media projects with the gemini-media MCP server by chaining Nano Banana images, Veo video, Gemini TTS voiceover and Lyria music into one deliverable - product promos, social ads, short story or explainer videos, trailers, podcast intros. Covers shot lists, consistent characters across shots, an up-front budget with cost estimates and approval, parallel video jobs, and assembly with ffmpeg. Use when a request needs two or more media types or several shots combined, even if the user just says "make a promo video". For a single image, clip, voiceover or track, use gemini-image, gemini-video, gemini-speech or gemini-music instead.
+description: Plans and produces multi-asset media projects with the gemini-media MCP server by chaining Nano Banana images, Veo or Gemini Omni video, Gemini TTS voiceover and Lyria music into one deliverable - product promos, social ads, short story or explainer videos, trailers, podcast intros. Covers shot lists, consistent characters across shots, an up-front budget with cost estimates and approval, parallel video jobs, and assembly with ffmpeg. Use when a request needs two or more media types or several shots combined, even if the user just says "make a promo video". For a single image, clip, voiceover or track, use gemini-image, gemini-video, gemini-speech or gemini-music instead.
 license: Apache-2.0
 compatibility: Requires the gemini-media MCP server (https://github.com/mordor-forge/gemini-media-mcp) with a Gemini API key or Vertex AI project. Optional - a shell with ffmpeg for assembly.
 metadata:
@@ -11,7 +11,7 @@ metadata:
 
 # Gemini Media Production
 
-Orchestrates the four generation skills into one finished piece. Each asset type has its own skill with the detailed prompt craft; load it when you reach that stage: **gemini-image** (keyframes, characters, cards), **gemini-video** (Veo shots and job handling), **gemini-speech** (voiceover and dialogue), **gemini-music** (score and beds).
+Orchestrates the four generation skills into one finished piece. Each asset type has its own skill with the detailed prompt craft; load it when you reach that stage: **gemini-image** (keyframes, characters, cards), **gemini-video** (Veo and Omni shots, edits and job handling), **gemini-speech** (voiceover and dialogue), **gemini-music** (score and beds).
 
 ## Quick start
 
@@ -75,14 +75,14 @@ Prices change; never hardcode them in the plan. Only the estimates from the tool
 
 ## Running the video jobs
 
-- Start all approved shots with `gemini-media:generate_video` (each returns a `jobId` immediately), then loop over the jobs calling `gemini-media:get_video` with `waitSeconds: 45` until each is `completed`, `failed` or `filtered`. Veo usually takes 1-3 minutes per job.
+- Start all approved shots with `gemini-media:generate_video` (each returns a `jobId` immediately), then loop over the jobs calling `gemini-media:get_video` with `waitSeconds: 45` until each is `completed`, `failed` or `filtered`. Veo usually takes 1-3 minutes per job, Omni 1-5.
 - Draft first: animate with `lite` 720p to check motion and timing, then re-run only the approved shots on `fast`/`standard`.
 - Handle one failure at a time: fix the prompt of a filtered or failed shot and restart only that shot. Never resubmit a job that is still `working`.
 - `gemini-media:get_usage` lists running jobs if you lose track of a `jobId`.
 
 ## Audio strategy
 
-Veo adds a soundtrack to every clip. Decide per project:
+Veo and Omni add a soundtrack to every clip. Decide per project:
 
 - **Voiceover and music carry the piece** (most promos and explainers): prompt shots for "natural ambient sound only", then keep that ambience low under the mix or drop it.
 - **In-scene dialogue** (story videos): write short lines into the shot prompts (see **gemini-video**) and keep the clip audio up; add music softly.

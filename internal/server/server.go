@@ -18,11 +18,12 @@ import (
 
 // Instructions are sent to clients (initialize / server/discover) and are
 // often placed in the agent's system prompt, so they stay short.
-const Instructions = `Generates images (Nano Banana), video (Veo), speech (Gemini TTS) and music (Lyria) with Google models. Outputs are saved on the server; results include the file path and a gemini-media:// URI.
+const Instructions = `Generates images (Nano Banana), video (Veo and Gemini Omni), speech (Gemini TTS) and music (Lyria) with Google models. Outputs are saved on the server; results include the file path and a gemini-media:// URI.
 
 Workflow tips:
 - Chain outputs: pass a previous result's uri (or path) as image/referenceImages/images input.
-- Video is asynchronous: generate_video returns a jobId; call get_video (waitSeconds ~45) until state is completed. Veo takes 1-3 minutes.
+- Video is asynchronous: generate_video, extend_video and edit_video return a jobId; call get_video (waitSeconds ~45) until state is completed. Veo takes 1-3 minutes, Omni 1-5.
+- edit_video changes a finished clip or a short video file from an instruction (model omni).
 - Every call costs money. Results report cost; estimate_cost compares options before expensive calls (4K images, 1080p/4k or standard-tier video). If a call is rejected for confirmation, ask the user, then retry with approvedCostUsd.
 - list_models shows current models, aliases, supported parameters and prices; retired models are redirected automatically with a warning.`
 

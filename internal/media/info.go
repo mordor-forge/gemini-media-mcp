@@ -126,7 +126,7 @@ type EstimateRequest struct {
 	Count           int    `json:"count,omitempty" jsonschema:"Number of images/clips/songs (default 1)"`
 	ImageSize       string `json:"imageSize,omitempty" jsonschema:"Images: 512, 1K, 2K or 4K"`
 	InputImages     int    `json:"inputImages,omitempty" jsonschema:"Images: number of reference/source images"`
-	Resolution      string `json:"resolution,omitempty" jsonschema:"Video: 720p, 1080p or 4k"`
+	Resolution      string `json:"resolution,omitempty" jsonschema:"Video: 720p, 1080p or 4k (Omni also 360p)"`
 	DurationSeconds int    `json:"durationSeconds,omitempty" jsonschema:"Video: clip length (default 8)"`
 	GenerateAudio   *bool  `json:"generateAudio,omitempty" jsonschema:"Video on Vertex AI: false for the cheaper silent rate"`
 	Text            string `json:"text,omitempty" jsonschema:"Speech: the text to be spoken (length drives cost)"`

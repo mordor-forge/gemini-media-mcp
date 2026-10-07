@@ -1,5 +1,5 @@
 // Command gemini-media-mcp is an MCP server for Google's generative media
-// models (Nano Banana images, Veo video, Gemini TTS, Lyria music).
+// models (Nano Banana images, Veo and Gemini Omni video, Gemini TTS, Lyria music).
 package main
 
 import (
@@ -50,6 +50,12 @@ Common flags:
   --backend NAME      auto (default), gemini-api or vertex
   --log-level LEVEL   debug, info (default), warn or error
 
+Command flags:
+  configure  --api-key-stdin --backend NAME --project ID --location REGION
+             --output-dir DIR --daily-budget-usd N --config PATH
+  models     --media-type image|video|speech|music --all (include retired) --json
+  usage      --period today|month (default)|all --config PATH
+
 Environment: GEMINI_API_KEY / GOOGLE_API_KEY, GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION,
 GOOGLE_GENAI_USE_VERTEXAI, MEDIA_OUTPUT_DIR and GEMINI_MEDIA_* (see README).
 `
@@ -63,9 +69,19 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	cmd := "serve"
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+	// Leading flags belong to serve, except the global -h, --help and --version.
+	if len(args) > 0 && (!strings.HasPrefix(args[0], "-") || args[0] == "-h" || args[0] == "--help" || args[0] == "--version") {
 		cmd, args = args[0], args[1:]
 	}
+	err := runCommand(cmd, args, stdin, stdout, stderr)
+	if errors.Is(err, flag.ErrHelp) { // "<command> -h"
+		_, _ = fmt.Fprint(stdout, usageText)
+		return nil
+	}
+	return err
+}
+
+func runCommand(cmd string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	switch cmd {
 	case "serve":
 		return cmdServe(args, stderr)

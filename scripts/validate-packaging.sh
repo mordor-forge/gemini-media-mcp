@@ -56,17 +56,12 @@ json_files=(
   .claude-plugin/plugin.json .claude-plugin/marketplace.json
   .codex-plugin/plugin.json
   gemini-extension.json server.json mcpb/manifest.json
-  npm/gemini-media-mcp/package.json glama.json
+  glama.json
 )
 for f in "${json_files[@]}"; do
   if [ ! -f "$f" ]; then fail "$f is missing"; continue; fi
   if jq empty "$f" 2>/dev/null; then ok "$f parses"; else fail "$f is not valid JSON"; fi
 done
-if sed -e 's/@@[A-Z]*@@/x/g' npm/platform-package.json.tmpl | jq empty 2>/dev/null; then
-  ok "npm/platform-package.json.tmpl renders to valid JSON"
-else
-  fail "npm/platform-package.json.tmpl does not render to valid JSON"
-fi
 [ "$errors" -eq 0 ] || { echo "fix the JSON errors first"; exit 1; }
 
 echo "== Versions"
@@ -80,19 +75,10 @@ add .codex-plugin/plugin.json "$(jq -r .version .codex-plugin/plugin.json)"
 add gemini-extension.json "$(jq -r .version gemini-extension.json)"
 add mcpb/manifest.json "$(jq -r .version mcpb/manifest.json)"
 add server.json "$(jq -r .version server.json)"
-add "server.json npm package" "$(jq -r '.packages[] | select(.registryType == "npm") | .version' server.json)"
 add "server.json OCI tag" "$(jq -r '.packages[] | select(.registryType == "oci") | .identifier | sub("^.*:"; "")' server.json)"
 add "server.json MCPB version" "$(jq -r '.packages[] | select(.registryType == "mcpb") | .version' server.json)"
 add "server.json MCPB URL" "$(jq -r '.packages[] | select(.registryType == "mcpb") | .identifier
   | capture("/download/v(?<a>[^/]+)/gemini-media-mcp-(?<b>.+)\\.mcpb$") | if .a == .b then .a else "mismatch:\(.a)/\(.b)" end' server.json)"
-add npm/gemini-media-mcp/package.json "$(jq -r .version npm/gemini-media-mcp/package.json)"
-while read -r dep; do add "npm optionalDependency $dep" "$(jq -r --arg d "$dep" '.optionalDependencies[$d]' npm/gemini-media-mcp/package.json)"; done \
-  < <(jq -r '.optionalDependencies | keys[]' npm/gemini-media-mcp/package.json)
-for f in mcp.json .claude-plugin/plugin.json .codex-plugin/plugin.json gemini-extension.json; do
-  pins=$(jq -r '.. | strings | select(startswith("gemini-media-mcp@")) | sub("^gemini-media-mcp@"; "")' "$f")
-  [ -n "$pins" ] || fail "$f does not pin gemini-media-mcp@<version>"
-  for p in $pins; do add "$f npx pin" "$p"; done
-done
 for skill in skills/*/SKILL.md; do
   [ -f "$skill" ] || continue
   v=$(frontmatter "$skill" '^[[:space:]]+version:' | head -1 | sed -E 's/^[[:space:]]+version:[[:space:]]*"?([^"]*)"?[[:space:]]*$/\1/')
@@ -115,9 +101,11 @@ check "marketplace lists $plugin with source ./" "[.plugins[] | select(.name == 
 check "marketplace entry sets no version (plugin.json is authoritative)" '[.plugins[] | select(has("version"))] | length == 0' .claude-plugin/marketplace.json
 for f in mcp.json .claude-plugin/plugin.json .codex-plugin/plugin.json gemini-extension.json; do
   check "$f names the MCP server gemini-media" '.mcpServers | has("gemini-media")' "$f"
+  # No npm package: plugins run the release binary from PATH.
+  check "$f launches gemini-media-mcp from PATH" '.mcpServers["gemini-media"] | .command == "gemini-media-mcp" and (.args // []) == []' "$f"
 done
+check "server.json lists no npm package" '[.packages[] | select(.registryType == "npm")] | length == 0' server.json
 server_name=$(jq -r .name server.json)
-check "npm mcpName matches server.json ($server_name)" ".mcpName == \"$server_name\"" npm/gemini-media-mcp/package.json
 if grep -q "io.modelcontextprotocol.server.name=\"$server_name\"" Dockerfile; then
   ok "Dockerfile carries the MCP registry label"
 else
@@ -220,13 +208,6 @@ if have goreleaser; then
   if out=$(goreleaser check 2>&1); then ok "goreleaser check"; else fail "goreleaser check:"; printf '%s\n' "$out" | indent; fi
 else
   skip "goreleaser check (goreleaser not installed)"
-fi
-
-if have node; then
-  if node --check npm/gemini-media-mcp/bin/gemini-media-mcp.js; then ok "launcher syntax"; else fail "launcher syntax"; fi
-  if out=$(node --test npm/test/*.test.js 2>&1); then ok "launcher tests (node --test npm/test)"; else fail "launcher tests:"; printf '%s\n' "$out" | tail -20 | indent; fi
-else
-  skip "launcher tests (node not installed)"
 fi
 
 if have shellcheck; then

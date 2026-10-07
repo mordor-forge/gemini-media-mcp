@@ -1,6 +1,6 @@
-# Veo prompt guide
+# Video prompt guide (Veo and Omni)
 
-Vocabulary and recipes for `gemini-media:generate_video` and `gemini-media:extend_video`. Write prompts as a short, concrete paragraph; the terms below are building blocks, not keyword lists.
+Vocabulary and recipes for `gemini-media:generate_video`, `gemini-media:extend_video` and `gemini-media:edit_video`. Write prompts as a short, concrete paragraph; the terms below are building blocks, not keyword lists.
 
 ## Contents
 
@@ -12,6 +12,7 @@ Vocabulary and recipes for `gemini-media:generate_video` and `gemini-media:exten
 - [Styles](#styles)
 - [Audio cues](#audio-cues)
 - [Recipes](#recipes): text-to-video, animate a still, first and last frame, ingredients, extension, dialogue scene, product shot, loop
+- [Gemini Omni](#gemini-omni-omni): differences from Veo, editing, extension
 - [Negative prompts](#negative-prompts)
 - [Troubleshooting](#troubleshooting)
 
@@ -137,7 +138,7 @@ The ginger cat accelerates along the coastal road in the red convertible, swerve
 cliff edge and launches into the air. Engine roar, screeching tires, the cat's startled yowl.
 ```
 
-Works on `lite`, `fast` and `standard`. Transitions that are physically plausible (a camera move, an action, a time-of-day change) interpolate best.
+Works on `lite`, `fast`, `standard` and `omni`. Transitions that are physically plausible (a camera move, an action, a time-of-day change) interpolate best.
 
 ### Ingredients (reference images)
 
@@ -209,7 +210,7 @@ Omni clips (`jobId` from `omni`) are edited in conversation, so chain small edit
 
 ### Extending with `extend_video`
 
-Prompt only what comes next: "The scene continues: the camera pans across the mountains as the music swells." Each call adds up to 10 s, up to 40 s in total. Reference images can introduce a newcomer: pass them to a new `generate_video` instead if the extension ignores them.
+Prompt only what comes next: "The scene continues: the camera pans across the mountains as the music swells." Each call adds up to 10 s, up to 40 s in total. `extend_video` takes no reference images: to bring in a new character or object, start a new `generate_video` with `referenceImages` (and the clip's last frame as `image`).
 
 ## Negative prompts
 

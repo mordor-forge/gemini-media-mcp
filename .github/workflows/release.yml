@@ -3,16 +3,11 @@
 #   verify    tests + packaging validation (manifests must already carry the tag's
 #             version: run scripts/sync-version.sh X.Y.Z and commit before tagging)
 #   release   GoReleaser (binaries, archives, Gemini CLI extension archives, GitHub
-#             release) -> MCP Bundle -> npm packages -> stamped server.json
+#             release) -> MCP Bundle -> stamped server.json
 #   docker    multi-arch image on ghcr.io
-#   registry  publish server.json to the MCP Registry (after npm + image exist)
+#   registry  publish server.json to the MCP Registry (after the bundle and image exist)
 #
 # Optional configuration (the workflow succeeds without it):
-#   secrets.NPM_TOKEN               npm automation/granular token with publish rights on
-#                                   gemini-media-mcp and gemini-media-mcp-<os>-<cpu>
-#   vars.NPM_TRUSTED_PUBLISHING     "true" to publish with npm trusted publishing (OIDC)
-#                                   instead of a token; configure this workflow as the
-#                                   trusted publisher of all 7 packages on npmjs.com first
 #   vars.MCP_REGISTRY_PUBLISH       "false" to skip the MCP Registry
 name: Release
 
@@ -50,14 +45,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # GitHub release + assets
-      id-token: write # npm provenance / trusted publishing, build attestations
+      id-token: write # build attestations
       attestations: write
-    env:
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      NPM_TRUSTED_PUBLISHING: ${{ vars.NPM_TRUSTED_PUBLISHING }}
     outputs:
       version: ${{ steps.version.outputs.version }}
-      npm_published: ${{ steps.npm.outputs.published }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -68,8 +59,7 @@ jobs:
           cache: false # never feed a release build from a shared cache
       - uses: actions/setup-node@v7
         with:
-          node-version: 24 # npm >= 11.5 for trusted publishing
-          registry-url: https://registry.npmjs.org
+          node-version: 24 # scripts/build-mcpb.sh packs with npx @anthropic-ai/mcpb
 
       - id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >>"$GITHUB_OUTPUT"
@@ -105,46 +95,13 @@ jobs:
             dist/*.zip
             dist/*.mcpb
 
-      - name: Build npm packages
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: scripts/build-npm-packages.sh --version "$VERSION"
-
-      # Platform packages first, the launcher last, so `npx gemini-media-mcp@X`
-      # never resolves before its binaries exist. Re-runs skip published versions.
-      - name: Publish to npm
-        id: npm
-        if: env.NPM_TOKEN != '' || env.NPM_TRUSTED_PUBLISHING == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          tag=latest
-          case "$VERSION" in *-*) tag=next ;; esac
-          while read -r dir; do
-            name=$(jq -r .name "$dir/package.json")
-            if npm view "$name@$VERSION" version >/dev/null 2>&1; then
-              echo "$name@$VERSION is already published"
-              continue
-            fi
-            npm publish "$dir" --provenance --access public --tag "$tag"
-          done <dist/npm/publish-order.txt
-          echo "published=true" >>"$GITHUB_OUTPUT"
-
-      - name: Skip npm (no NPM_TOKEN)
-        if: env.NPM_TOKEN == '' && env.NPM_TRUSTED_PUBLISHING != 'true'
-        run: echo "::warning::npm publishing skipped - set secrets.NPM_TOKEN or vars.NPM_TRUSTED_PUBLISHING=true. server.json will omit the npm package."
-
       - name: Stamp server.json
         env:
           VERSION: ${{ steps.version.outputs.version }}
           SHA256: ${{ steps.mcpb.outputs.sha256 }}
-          NPM_PUBLISHED: ${{ steps.npm.outputs.published }}
         run: |
           scripts/sync-version.sh "$VERSION"
-          jq --arg sha "$SHA256" --arg npm "${NPM_PUBLISHED:-false}" '
-            (.packages[] | select(.registryType == "mcpb") | .fileSha256) = $sha
-            | if $npm == "true" then . else .packages |= map(select(.registryType != "npm")) end' \
+          jq --arg sha "$SHA256" '(.packages[] | select(.registryType == "mcpb") | .fileSha256) = $sha' \
             server.json >dist/server.json
           cat dist/server.json
 

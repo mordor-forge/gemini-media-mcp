@@ -1,6 +1,6 @@
 # Architecture review and v1 refactor
 
-*Reviewed 2026-09-28 against the Gemini API, Vertex AI (now "Gemini Enterprise Agent Platform"), MCP spec 2026-07-28, go-sdk v1.8.0 and go-genai v1.71.0.*
+*Reviewed 2026-09-28 against the Gemini API, Vertex AI (now "Gemini Enterprise Agent Platform"), MCP spec 2026-07-28, go-sdk v1.8.0 and go-genai v1.71.0. Updated 2026-10-07 for Nano Banana 2.1, Gemini Omni and go-genai v1.72.0.*
 
 ## Verdict
 
@@ -23,7 +23,7 @@ A cosmetic update would have fixed the IDs and broken again at the next launch.
 
 **Recommendation, now implemented:** a structural refactor, not a rewrite. Go, the official MCP Go SDK and the official `google.golang.org/genai` SDK remain the right stack:
 
-- A single static binary is the easiest artifact to distribute to every agent harness (npx wrapper, MCPB, Docker, Homebrew).
+- A single static binary is the easiest artifact to distribute to every agent harness (release archives, MCPB, Docker, `go install`).
 - The Go MCP SDK is Tier-1 and shipped MCP 2026-07-28 support on release day.
 
 The internals were rebuilt around four ideas:
@@ -110,7 +110,7 @@ A request flows like this. An MCP tool call reaches `server`, which attaches pro
   - Deprecated models warn with their shutdown date.
   - Models missing on a backend fall back, e.g. 3.8 TTS falls back to 2.5 TTS on Vertex, and Lyria 3.5 to Lyria 3 Pro.
   - Retirement dates reported by the API (`modelStatus`) are surfaced as warnings.
-- **Unknown model IDs pass through.** The family is inferred from the ID (`veo-*`, `gemini-omni-*`, `lyria-*`, `*tts*`, `gemini-*image*`), so a model launched tomorrow works by raw ID before the catalog knows it. It is unvalidated and unpriced, and says so.
+- **Unknown model IDs pass through.** The family is inferred from the ID (`veo-*`, `gemini-omni-*`, `lyria-*`, `*tts*`, `gemini-*image*`, `gemini-*banana*`), so a model launched tomorrow works by raw ID before the catalog knows it. It is unvalidated and unpriced, and says so.
 - **Live discovery.** `list_models live:true` asks the API what the key can actually call. It flags catalog models that are unavailable, and lists media models the catalog doesn't know yet. `gemini-media-mcp doctor` runs the same check from a terminal.
 - **Configuration.** Loading is layered: defaults < `config.yaml` < env < flags. Unknown keys warn instead of failing, which gives forward compatibility. The Google SDK env names, the old env names and new `GEMINI_MEDIA_*` names are all honored. `get_config` reports the source of every setting.
 - **Transient failures.** SDK-level retries with backoff are enabled only for 429 and 503, the codes that mean "not processed". Generation calls are billed and not idempotent: after a 500, 504 or 408 the work may still finish server-side, so a retry could double-charge. Per-request timeouts are configurable.
@@ -130,7 +130,7 @@ A request flows like this. An MCP tool call reaches `server`, which attaches pro
 
 | v0 (12 tools) | v1 (12 tools) | Why |
 |---|---|---|
-| `generate_image`, `compose_images` | `generate_image` (+ `referenceImages` up to 14, `count` 1–4, `googleSearch`, `imageSize` 512–4K) | Composition is generation with references. Fewer overlapping tools improve selection accuracy (RAG-MCP, arXiv:2505.03275). |
+| `generate_image`, `compose_images` | `generate_image` (+ `referenceImages` up to 14, `count` 1–4, `googleSearch`, `imageSize` 1K–4K, 512 only on Nano Banana 2) | Composition is generation with references. Fewer overlapping tools improve selection accuracy (RAG-MCP, arXiv:2505.03275). |
 | `edit_image` | `edit_image` (+ references, aspect ratio / outpainting, size; defaults to the model that made the source) | Consistent quality across edit chains. |
 | `generate_video`, `animate_image` | `generate_video` (+ `image`, `lastFrame`, `referenceImages`, `negativePrompt`, `seed`, `personGeneration`, `generateAudio`, `waitSeconds`) | Image-to-video, first+last-frame interpolation and "ingredients" are all Veo parameters. |
 | `video_status`, `download_video` | `get_video` (long-poll up to `waitSeconds`, auto-download, idempotent) | One call per wait instead of several, with progress notifications. |
@@ -204,8 +204,8 @@ Google returns no cost with any response, and Veo operations carry no usage at a
    - go-sdk's `Elicit` errors on 2026-07-28 sessions;
    - the MRTR alternative needs client support too.
 4. **Reconcile.** After the call:
-   - Token-priced models are priced from `usageMetadata` per modality. For images this matches Google's per-image prices exactly (1120 tokens × $60/M = $0.067).
-   - Veo is priced from parameters.
+   - Token-priced models are priced from `usageMetadata` per modality. For images this matches Google's per-image prices exactly (Nano Banana 2.1 at 1K: 1120 tokens × $30/M = $0.034).
+   - Veo is priced from parameters. Omni is priced from the video tokens the API reports (5,792 per second at 720p).
    - Failed and safety-filtered generations are recorded at $0.
    - A response that consumed tokens but returned no media (for example finish reason `MAX_TOKENS`) is recorded as spent at its token cost. Safety blocks keep their usage on the entry but stay at $0.
    - Outputs that Google generated (and billed) but the server could not save or download are recorded as spent, with the error attached. A video job in that state keeps reporting its cost.
@@ -219,13 +219,13 @@ Google returns no cost with any response, and Veo operations carry no usage at a
 | Area | Now supported |
 |---|---|
 | Images | GA Nano Banana 2.1 (default since 2026-10-06; Nano Banana 2 shuts down 2026-10-29) / Pro / 2 Lite; 1K–4K (512px on NB2 only); 14 aspect ratios (NB2/2.1); up to 14 references; Google Search grounding; 1–4 parallel variations; model commentary returned; thought images filtered |
-| Video | Veo 3.1 Lite/Fast/Standard with backend-specific IDs; first frame, first+last frame, reference "ingredients"; negative prompt; seed and silent video on Vertex; person generation; extension on both backends (720p sources, checked locally); MP4 duration read from the file; `raiMediaFilteredReasons` surfaced |
+| Video | Veo 3.1 Lite/Fast/Standard with backend-specific IDs; first frame, first+last frame, reference "ingredients"; negative prompt; seed and silent video on Vertex; person generation; extension on both backends (720p sources, checked locally); MP4 duration read from the file; `raiMediaFilteredReasons` surfaced. Gemini Omni 1.1 Flash (Gemini API) through the Interactions API: 3–10 s at 360p–4K, first and last frames, up to 10 references, instruction-based editing (`edit_video`) and extension to 40 s, run as background jobs |
 | Speech | Gemini 3.8 Flash / Flash-Lite TTS (verbatim text plus per-turn `speech_metadata` style, injected through the SDK's request hook until the SDK ships the field); legacy 2.5/3.1 models get in-text directions automatically; 2-speaker dialogue; all 30 voices; custom `voice_…` IDs; WAV output from both PCM and WAV responses |
 | Music | Lyria 3.5 (full songs, WAV, image inspiration), Lyria 3 Clip / Pro; lyrics and structure returned |
 
 ### 2.8 Packaging for agent harnesses
 
-One repository serves every harness from a single canonical `skills/` directory. There are no symlinks and no duplicated skill content. Every harness launches the server with `npx -y gemini-media-mcp`: a small npm wrapper that pulls a per-platform Go binary through `optionalDependencies`, the pattern esbuild and kubernetes-mcp-server use.
+One repository serves every harness from a single canonical `skills/` directory. There are no symlinks and no duplicated skill content. Plugin manifests launch `gemini-media-mcp` from `PATH`; users install the binary once from the release archives or with `go install`. The Gemini CLI release archives and the Claude Desktop bundle ship the binary themselves, and the Docker image needs no install. There is no npm package: it would mean seven packages and a publishing token to maintain.
 
 | Harness | Manifest |
 |---|---|
@@ -233,10 +233,10 @@ One repository serves every harness from a single canonical `skills/` directory.
 | Claude Code, claude.ai, Cowork | `.claude-plugin/plugin.json` (with a keychain-stored `userConfig` API key), plus `.claude-plugin/marketplace.json` (also read by Codex, VS Code and `npx skills`) |
 | Gemini CLI | `gemini-extension.json` with `settings`, since the CLI strips `*KEY*` variables. Release archives are named for the CLI's asset matcher |
 | Claude Desktop | `mcpb/` bundle (manifest 0.3, universal macOS binary, Linux architecture launcher) |
-| MCP Registry | `server.json` (schema 2025-12-11) with npm, OCI and MCPB packages; published through GitHub OIDC |
+| MCP Registry | `server.json` (schema 2025-12-11) with OCI and MCPB packages; published through GitHub OIDC |
 | Docker | distroless non-root image on GHCR, `/output` and `/state` volumes, carrying the registry label |
 
-A release is one tag. `scripts/sync-version.sh` stamps the version into every manifest, and `scripts/validate-packaging.sh` (also run in CI) checks versions, schemas and layout, calling `claude plugin validate`, `mcpb validate` and `mcp-publisher validate` when those tools are installed. `release.yml` then runs GoReleaser, the MCPB bundle, npm publishing (skipped unless a token or trusted publishing is configured), the GHCR image and the registry publish. Per-client install snippets are in [`packaging/INSTALL-SNIPPETS.md`](../packaging/INSTALL-SNIPPETS.md).
+A release is one tag. `scripts/sync-version.sh` stamps the version into every manifest, and `scripts/validate-packaging.sh` (also run in CI) checks versions, schemas and layout, calling `claude plugin validate`, `mcpb validate` and `mcp-publisher validate` when those tools are installed. `release.yml` then runs GoReleaser, the MCPB bundle, the GHCR image and the registry publish. Per-client install snippets are in [`packaging/INSTALL-SNIPPETS.md`](../packaging/INSTALL-SNIPPETS.md).
 
 ---
 
@@ -251,13 +251,13 @@ A release is one tag. `scripts/sync-version.sh` stamps the version into every ma
 7. **MCP Apps** (a `ui://` gallery and player) and the Skills-over-MCP extension, so skills can be served by the server itself.
 8. **OAuth and multi-tenant hosting.** Per-user job and budget isolation, and the RFC 9728 metadata endpoint. The static bearer token covers self-hosting today.
 9. **An OpenTelemetry exporter.** The ledger fields map onto `gen_ai.*` semantic conventions and can be exported later.
-10. **Live verification.** No API key was available while refactoring. Coverage instead comes from:
+10. **Live verification on Vertex AI.** The Gemini API has been tested live: the E2E suite (2026-09-29), a manual QA round of every tool (2026-10-06, which corrected Nano Banana 2.1's token counts and several naming and reporting issues) and the Omni clip-and-edit test (2026-10-07). Vertex AI has not been run live yet. Offline coverage:
     - unit and integration tests against an in-memory fake of the Google API;
-    - a test that drives the real genai SDK against a local fake HTTP server, checking serialization, the TTS body patch and 429 retries;
+    - tests that drive the real genai SDK against local fake HTTP servers, checking serialization, the TTS body patch, retries and the Interactions API;
     - end-to-end MCP tests over in-memory and HTTP transports;
     - stdio and HTTP smoke tests of the built binary.
 
-    Run the live suite once: `GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=… go test -tags=e2e ./internal/media/ -run E2E -v`.
+    Live tests run locally only: `GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=… go test -tags=e2e ./internal/media/ -run E2E -v -timeout 30m`, or with Vertex credentials (`GOOGLE_CLOUD_PROJECT` + ADC).
 
 ---
 
