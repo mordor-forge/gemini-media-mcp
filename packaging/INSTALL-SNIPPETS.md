@@ -82,8 +82,8 @@ claude mcp add --scope user gemini-media -- gemini-media-mcp
 
 ## Codex
 
-Plugin (MCP server + skills; forwards `GEMINI_API_KEY`, `GOOGLE_*` and
-`GEMINI_MEDIA_*` from Codex's environment):
+Plugin (MCP server + skills; forwards the credential, Vertex, output, state and
+budget variables listed in `.codex-plugin/plugin.json` from Codex's environment):
 
 ```sh
 codex plugin marketplace add mordor-forge/gemini-media-mcp
@@ -110,7 +110,9 @@ The extension installs from the latest GitHub release, which bundles the
 binary, so section 1 is not needed. `--ref main` installs from git and starts
 `gemini-media-mcp` from your `PATH`.
 Gemini CLI never passes your shell's `GEMINI_API_KEY` or `GOOGLE_CLOUD_PROJECT`
-to extensions, so set them with `gemini extensions config` or use `configure`.
+to extensions, so set them with `gemini extensions config`, or run
+`gemini-media-mcp configure --api-key-stdin` from the extension directory
+(`~/.gemini/extensions/gemini-media-mcp/`).
 Stdio MCP servers only start in trusted folders.
 
 ## VS Code (GitHub Copilot)
@@ -294,7 +296,8 @@ claude mcp add --transport http gemini-media http://localhost:8765/mcp \
 ```
 
 Over HTTP the server reads input files only from its output directory and the
-directories listed in `GEMINI_MEDIA_INPUT_DIRS` (inline data URIs always work).
+directories listed in `GEMINI_MEDIA_INPUT_DIRS`, unless
+`GEMINI_MEDIA_ALLOW_ANY_INPUT_PATH=true` (inline data URIs always work).
 
 ## Skills only
 

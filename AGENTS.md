@@ -28,8 +28,9 @@ Run build, vet, tests and lint before you say a change is done.
 
 - **E2E tests cost real money.** `internal/media/e2e_test.go` (build tag
   `e2e`) calls Google's paid APIs and needs `GEMINI_MEDIA_E2E=1` plus
-  `GEMINI_API_KEY` (or Vertex credentials); the video test alone costs about
-  $0.20. Never run them - or any command that generates media - unless the
+  `GEMINI_API_KEY` (or Vertex credentials); the Veo test
+  (`GEMINI_MEDIA_E2E_VIDEO=1`) costs about $0.20 and the Omni test
+  (`GEMINI_MEDIA_E2E_OMNI=1`) about $0.30. Never run them - or any command that generates media - unless the
   user explicitly asks. `go test ./...` without the tag is free. Live E2E
   runs are local-only; CI only compiles and vets the tagged tests.
 - **stdout is the MCP JSON-RPC channel.** In `serve` (stdio) mode any byte
@@ -93,6 +94,7 @@ The repository root is the plugin root for every harness:
 | `gemini-extension.json`, `packaging/gemini/GEMINI-EXTENSION.md` | Gemini CLI extension |
 | `server.json` | MCP Registry |
 | `mcpb/` | Claude Desktop bundle (`.mcpb`) |
+| `glama.json` | Glama MCP directory claim |
 | `Dockerfile` | `ghcr.io/mordor-forge/gemini-media-mcp` |
 | `skills/` | Agent Skills, discovered by every harness above |
 
