@@ -1,5 +1,5 @@
 // Command gemini-media-mcp is an MCP server for Google's generative media
-// models (Nano Banana images, Veo video, Gemini TTS, Lyria music).
+// models (Nano Banana images, Veo and Gemini Omni video, Gemini TTS, Lyria music).
 package main
 
 import (
@@ -63,9 +63,19 @@ func main() {
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	cmd := "serve"
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+	// Leading flags belong to serve, except the global -h, --help and --version.
+	if len(args) > 0 && (!strings.HasPrefix(args[0], "-") || args[0] == "-h" || args[0] == "--help" || args[0] == "--version") {
 		cmd, args = args[0], args[1:]
 	}
+	err := runCommand(cmd, args, stdin, stdout, stderr)
+	if errors.Is(err, flag.ErrHelp) { // "<command> -h"
+		_, _ = fmt.Fprint(stdout, usageText)
+		return nil
+	}
+	return err
+}
+
+func runCommand(cmd string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	switch cmd {
 	case "serve":
 		return cmdServe(args, stderr)
