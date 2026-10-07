@@ -1,0 +1,523 @@
+# gemini-media-mcp model catalog.
+#
+# Single source of truth for model IDs, aliases, lifecycle, capabilities,
+# constraints and list prices. Override or extend it without rebuilding by
+# pointing GEMINI_MEDIA_CATALOG (or `catalogFile:` in config.yaml) at a YAML
+# file with the same shape; entries are merged by `id` and hot-reloaded.
+#
+# Prices are USD list prices (paid tier, standard/on-demand) and are used for
+# estimates only. Authoritative spend lives in AI Studio / Cloud Billing.
+version: "2026-10-07"
+sources:
+  - https://ai.google.dev/gemini-api/docs/models
+  - https://ai.google.dev/gemini-api/docs/models/gemini-nano-banana-2.1
+  - https://ai.google.dev/gemini-api/docs/deprecations
+  - https://ai.google.dev/gemini-api/docs/pricing
+  - https://ai.google.dev/gemini-api/docs/veo
+  - https://ai.google.dev/gemini-api/docs/omni
+  - https://ai.google.dev/gemini-api/docs/generate-content/image-generation
+  - https://ai.google.dev/gemini-api/docs/generate-content/speech-generation
+  - https://ai.google.dev/gemini-api/docs/generate-content/music-generation
+  - https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/google-models
+  - https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/nano-banana-2-1
+  - https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing
+
+defaults:
+  image: gemini-nano-banana-2.1
+  video: veo-3.1-lite-generate-preview
+  speech: gemini-3.8-flash-tts
+  music: lyria-3-clip-preview
+
+models:
+  # ---------------------------------------------------------------- images
+  - id: gemini-nano-banana-2.1
+    aliases: [nb2, nb2.1, nano-banana-2.1, flash-image]
+    title: Nano Banana 2.1
+    family: gemini-image
+    mediaType: image
+    status: ga
+    released: "2026-10-06"
+    summary: Best default. Update to Nano Banana 2 with better visual quality, prompt adherence, text rendering and multi-turn consistency, at half its per-image price at 1K and 2K (three quarters at 4K). 1K to 4K, extreme aspect ratios, up to 14 reference images.
+    backends: [gemini-api, vertex]
+    vertexLocations: [global]
+    capabilities:
+      aspectRatios: ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"]
+      imageSizes: ["1K", "2K", "4K"]
+      maxReferenceImages: 14
+      edit: true
+      searchGrounding: true
+      geminiApiOnly: [googleSearch]
+    pricing:
+      asOf: "2026-10-06"
+      source: https://ai.google.dev/gemini-api/docs/pricing
+      inputPer1M: {text: 1.50, image: 1.50}
+      outputPer1M: {text: 7.50, image: 30.00}
+      imageOutputTokens: {"1K": 1120, "2K": 1680, "4K": 3780}
+      inputImageTokens: 1120
+      textOutputTokens: 900
+      vertexRegionalMultiplier: 1.1
+      batchDiscount: 0.5
+    notes:
+      - No 512px output (minimum 1K). Thinking level defaults to medium; thinking tokens bill at the text output rate (700-2200 per image in live calls, typically about 900, so about $0.007 per image).
+      - Grounding with Google Web and Image Search on the Gemini API. Vertex AI search grounding and regional availability are unconfirmed, so googleSearch is dropped there as for Nano Banana 2.
+      - Token rates from launch-day listings. Image tokens per size were measured from live billing on 2026-10-06 (1K 1120, 2K 1680, 4K 3780; listings said 2520 for 4K). Reconciled costs use the usage the API reports.
+
+  - id: gemini-3.1-flash-image
+    aliases: [nano-banana-2]
+    title: Nano Banana 2
+    family: gemini-image
+    mediaType: image
+    status: deprecated
+    released: "2026-05-28"
+    shutdown: "2026-10-29"
+    replacement: gemini-nano-banana-2.1
+    summary: Previous default, replaced by Nano Banana 2.1 (better and cheaper). Shuts down on the Gemini API on 2026-10-29. The only model with 512px drafts.
+    backends: [gemini-api, vertex]
+    vertexLocations: [global]
+    capabilities:
+      aspectRatios: ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"]
+      imageSizes: ["512", "1K", "2K", "4K"]
+      maxReferenceImages: 14
+      edit: true
+      searchGrounding: true
+      geminiApiOnly: [googleSearch]
+    pricing:
+      asOf: "2026-09-24"
+      source: https://ai.google.dev/gemini-api/docs/pricing
+      inputPer1M: {text: 0.50, image: 0.50}
+      outputPer1M: {text: 3.00, image: 60.00}
+      imageOutputTokens: {"512": 747, "1K": 1120, "2K": 1680, "4K": 2520}
+      inputImageTokens: 1120
+      vertexRegionalMultiplier: 1.1
+      batchDiscount: 0.5
+    notes:
+      - Reference images - up to 10 objects and 4 characters.
+      - Google Search grounding is not offered for this model on Vertex AI.
+
+  - id: gemini-3-pro-image
+    aliases: [pro, nano-banana-pro, pro-image]
+    title: Nano Banana Pro
+    family: gemini-image
+    mediaType: image
+    status: ga
+    released: "2026-05-28"
+    summary: Highest fidelity for dense infographics, complex multi-subject scenes and final renders. Slower and about 3-4x the price of Nano Banana 2.1 at 1K; try nb2 first.
+    backends: [gemini-api, vertex]
+    vertexLocations: [global]
+    capabilities:
+      aspectRatios: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
+      imageSizes: ["1K", "2K", "4K"]
+      maxReferenceImages: 14
+      edit: true
+      searchGrounding: true
+    pricing:
+      asOf: "2026-09-24"
+      source: https://ai.google.dev/gemini-api/docs/pricing
+      inputPer1M: {text: 2.00, image: 2.00}
+      outputPer1M: {text: 12.00, image: 120.00}
+      imageOutputTokens: {"1K": 1120, "2K": 1120, "4K": 2000}
+      inputImageTokens: 560
+      textOutputTokens: 900
+      batchDiscount: 0.5
+    notes:
+      - Reference images - up to 6 objects, 5 characters and 3 style references.
+
+  - id: gemini-3.1-flash-lite-image
+    aliases: [nb2-lite, nano-banana-2-lite, lite-image]
+    title: Nano Banana 2 Lite
+    family: gemini-image
+    mediaType: image
+    status: ga
+    released: "2026-06-30"
+    summary: Cheapest image model for bulk drafts and thumbnails. Same per-image price as Nano Banana 2.1 but cheaper input and text tokens; 1K only, no search grounding, weaker at multi-reference edits.
+    backends: [gemini-api, vertex]
+    vertexLocations: [global]
+    capabilities:
+      imageSizes: ["1K"]
+      maxReferenceImages: 14
+      edit: true
+    pricing:
+      asOf: "2026-09-24"
+      source: https://ai.google.dev/gemini-api/docs/pricing
+      inputPer1M: {text: 0.25, image: 0.25}
+      outputPer1M: {text: 1.50, image: 30.00}
+      imageOutputTokens: {"1K": 1120}
+      inputImageTokens: 1120
+      batchDiscount: 0.5
+
+  - id: gemini-2.5-flash-image
+    aliases: [nano-banana, nb1]
+    title: Nano Banana (legacy)
+    family: gemini-image
+    mediaType: image
+    status: deprecated
+    released: "2025-10-02"
+    shutdown: "2026-10-02"
+    replacement: gemini-nano-banana-2.1
+    summary: Legacy first-generation model. Shuts down on the Gemini API on 2026-10-02 (Vertex AI on 2027-03-15).
+    backends: [gemini-api, vertex]
+    vertexLocations: [global, us-central1]
+    capabilities:
+      aspectRatios: ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
+      maxReferenceImages: 3
+      edit: true
+    pricing:
+      asOf: "2026-09-24"
+      inputPer1M: {text: 0.30, image: 0.30}
+      outputPer1M: {text: 2.50, image: 30.00}
+      imageOutputTokens: {"1K": 1290}
+
+  - id: gemini-3.1-flash-image-preview
+    family: gemini-image
+    mediaType: image
+    status: retired
+    shutdown: "2026-06-25"
+    replacement: gemini-nano-banana-2.1
+    summary: Preview of Nano Banana 2; shut down 2026-06-25.
+
+  - id: gemini-3-pro-image-preview
+    family: gemini-image
+    mediaType: image
+    status: retired
+    shutdown: "2026-06-25"
+    replacement: gemini-3-pro-image
+    summary: Preview of Nano Banana Pro; shut down 2026-06-25.
+
+  - id: gemini-2.5-flash-image-preview
+    family: gemini-image
+    mediaType: image
+    status: retired
+    shutdown: "2026-01-15"
+    replacement: gemini-nano-banana-2.1
+
+  # ---------------------------------------------------------------- video
+  - id: gemini-omni-1.1-flash
+    aliases: [omni, omni-flash, gemini-omni]
+    title: Gemini Omni 1.1 Flash
+    family: omni
+    mediaType: video
+    status: ga
+    released: "2026-08-27"
+    summary: Generates, edits and extends clips with native audio. 3-10 s, 360p drafts to 4K, first/last frames, up to 10 reference images, conversational edits of earlier clips, extension to 40 s. Strong prompt adherence and readable text in video. About Veo Fast's price at 720p.
+    backends: [gemini-api]
+    capabilities:
+      aspectRatios: ["16:9", "9:16"]
+      resolutions: ["360p", "720p", "1080p", "4k"]
+      durations: [3, 4, 5, 6, 7, 8, 9, 10]
+      defaultDuration: 8
+      maxReferenceImages: 10
+      imageToVideo: true
+      lastFrame: true
+      extend: true
+      extendSeconds: 10
+      maxTotalSeconds: 40
+      videoEdit: true
+      maxInputVideoSeconds: 10
+      rules:
+        - when: {lastFrame: ["*"]}
+          require: {image: ["*"]}
+          message: lastFrame requires a first-frame image
+    pricing:
+      asOf: "2026-10-07"
+      source: https://ai.google.dev/gemini-api/docs/pricing
+      perSecond: {360p: 0.034, 720p: 0.1014, 1080p: 0.152, 4k: 0.304}
+      inputPer1M: {text: 1.50, image: 1.50, video: 1.50, audio: 1.50}
+      outputPer1M: {text: 9.00, video: 17.50}
+    notes:
+      - Served only through the Interactions API, which answers synchronously after 1-5 minutes (4K and long extensions take longer). The server runs the call in the background and get_video reports it like a Veo job.
+      - 720p bills 5,792 video tokens per second ($0.10/s); 360p is about a third of that. The 1080p and 4K rates are third-party estimates (both are upscaled from 720p); costs are reconciled from the usage the API reports.
+      - Vertex AI offers it as gemini-omni-1.1-flash-preview (global, Preview); this server calls it on the Gemini API only.
+      - Editing or extending uploaded videos is unavailable in the EEA, Switzerland, the UK and some US states; input videos must be 10 seconds or shorter.
+
+  - id: veo-3.1-lite-generate-preview
+    vertexId: veo-3.1-lite-generate-001
+    aliases: [lite, veo-lite]
+    title: Veo 3.1 Lite
+    family: veo
+    mediaType: video
+    status: preview
+    released: "2026-04-02"
+    summary: Cheapest Veo for drafts and social clips; 720p/1080p, native audio. No 4K, reference images or extension.
+    backends: [gemini-api, vertex]
+    vertexLocations: [us-central1]
+    capabilities: &veoLite
+      aspectRatios: ["16:9", "9:16"]
+      resolutions: ["720p", "1080p"]
+      durations: [4, 6, 8]
+      defaultDuration: 8
+      imageToVideo: true
+      lastFrame: true
+      negativePrompt: true
+      seed: true
+      personGeneration: [allow_all, allow_adult, dont_allow]
+      audioToggle: [vertex]
+      vertexOnly: [seed, generateAudio]
+      rules:
+        - when: {resolution: ["1080p"]}
+          require: {durationSeconds: ["8"]}
+          message: 1080p requires durationSeconds 8
+        - when: {lastFrame: ["*"]}
+          require: {image: ["*"]}
+          message: lastFrame requires a first-frame image
+    pricing:
+      asOf: "2026-09-24"
+      source: https://ai.google.dev/gemini-api/docs/pricing
+      perSecond: {720p: 0.05, 1080p: 0.08}
+      perSecondNoAudio: {720p: 0.03, 1080p: 0.05}
+    notes:
+      - seed and generateAudio are only accepted on Vertex AI.
+
+  - id: veo-3.1-fast-generate-preview
+    vertexId: veo-3.1-fast-generate-001
+    aliases: [fast, veo-fast]
+    title: Veo 3.1 Fast
+    family: veo
+    mediaType: video
+    status: preview
+    released: "2025-10-15"
+    summary: Best value for production clips; up to 4K, reference images ("ingredients"), first/last frame and extension.
+    backends: [gemini-api, vertex]
+    vertexLocations: [us-central1]
+    capabilities: &veoFull
+      aspectRatios: ["16:9", "9:16"]
+      resolutions: ["720p", "1080p", "4k"]
+      durations: [4, 6, 8]
+      defaultDuration: 8
+      maxReferenceImages: 3
+      imageToVideo: true
+      lastFrame: true
+      extend: true
+      extendSeconds: 7
+      negativePrompt: true
+      seed: true
+      personGeneration: [allow_all, allow_adult, dont_allow]
+      audioToggle: [vertex]
+      vertexOnly: [seed, generateAudio]
+      rules:
+        - when: {resolution: ["1080p", "4k"]}
+          require: {durationSeconds: ["8"]}
+          message: 1080p and 4k require durationSeconds 8
+        - when: {referenceImages: ["*"]}
+          require: {durationSeconds: ["8"]}
+          message: reference images require durationSeconds 8
+        - when: {referenceImages: ["*"]}
+          require: {image: [""], lastFrame: [""]}
+          message: reference images cannot be combined with a first or last frame
+        - when: {lastFrame: ["*"]}
+          require: {image: ["*"]}
+          message: lastFrame requires a first-frame image
+    pricing:
+      asOf: "2026-09-24"
+      source: https://ai.google.dev/gemini-api/docs/pricing
+      perSecond: {720p: 0.10, 1080p: 0.12, 4k: 0.30}
+      perSecondNoAudio: {720p: 0.08, 1080p: 0.10, 4k: 0.25}
+    notes:
+      - Extension adds 7s per step (up to 148s total), 720p only, and needs a Veo video generated in the last 2 days.
+      - seed and generateAudio are only accepted on Vertex AI.
+
+  - id: veo-3.1-generate-preview
+    vertexId: veo-3.1-generate-001
+    aliases: [standard, veo, veo-3.1]
+    title: Veo 3.1
+    family: veo
+    mediaType: video
+    status: preview
+    released: "2025-10-15"
+    summary: Highest-quality Veo for hero shots and final renders; same features as Fast at about 3-4x the price.
+    backends: [gemini-api, vertex]
+    vertexLocations: [us-central1]
+    capabilities: *veoFull
+    pricing:
+      asOf: "2026-09-24"
+      source: https://ai.google.dev/gemini-api/docs/pricing
+      perSecond: {720p: 0.40, 1080p: 0.40, 4k: 0.60}
+      perSecondNoAudio: {720p: 0.20, 1080p: 0.20, 4k: 0.40}
+
+  - id: veo-3.0-generate-001
+    family: veo
+    mediaType: video
+    status: retired
+    shutdown: "2026-06-30"
+    replacement: veo-3.1-generate-preview
+  - id: veo-3.0-fast-generate-001
+    family: veo
+    mediaType: video
+    status: retired
+    shutdown: "2026-06-30"
+    replacement: veo-3.1-fast-generate-preview
+  - id: veo-2.0-generate-001
+    family: veo
+    mediaType: video
+    status: retired
+    shutdown: "2026-06-30"
+    replacement: veo-3.1-lite-generate-preview
+
+  # ---------------------------------------------------------------- speech
+  - id: gemini-3.8-flash-tts
+    aliases: [tts, tts-flash, speech]
+    title: Gemini 3.8 Flash TTS
+    family: gemini-tts
+    mediaType: speech
+    status: ga
+    released: "2026-09-23"
+    summary: Newest, most expressive TTS; 130 languages, style control per turn, up to 2 speakers. Reads text verbatim.
+    backends: [gemini-api]
+    fallback: gemini-2.5-flash-preview-tts
+    capabilities: &tts38
+      maxSpeakers: 2
+      speechStyle: metadata
+      maxOutputSeconds: 655
+      voices: &voices [Zephyr, Puck, Charon, Kore, Fenrir, Leda, Orus, Aoede, Callirrhoe, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, Algenib, Rasalgethi, Laomedeia, Achernar, Alnilam, Schedar, Gacrux, Pulcherrima, Achird, Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat]
+    pricing:
+      asOf: "2026-09-24"
+      source: https://ai.google.dev/gemini-api/docs/pricing
+      inputPer1M: {text: 0.50}
+      outputPer1M: {audio: 9.00}
+      audioTokensPerSecond: 25
+      freeTier: true
+      batchDiscount: 0.5
+    notes:
+      - Introductory price until 2026-12-31; then $1.00 input / $18.00 audio output per 1M tokens.
+      - Not yet available on Vertex AI; the server falls back to gemini-2.5-flash-preview-tts there.
+
+  - id: gemini-3.8-flash-lite-tts
+    aliases: [tts-lite]
+    title: Gemini 3.8 Flash-Lite TTS
+    family: gemini-tts
+    mediaType: speech
+    status: ga
+    released: "2026-09-23"
+    summary: Cheaper 3.8 TTS (101 languages) for bulk narration; same API as 3.8 Flash TTS.
+    backends: [gemini-api]
+    fallback: gemini-2.5-flash-preview-tts
+    capabilities: *tts38
+    pricing:
+      asOf: "2026-09-24"
+      inputPer1M: {text: 0.50}
+      outputPer1M: {audio: 6.00}
+      audioTokensPerSecond: 25
+      freeTier: true
+      batchDiscount: 0.5
+    notes:
+      - Introductory price until 2026-12-31; then $1.00 input / $12.00 audio output per 1M tokens.
+
+  - id: gemini-3.1-flash-tts-preview
+    aliases: [tts-3.1]
+    title: Gemini 3.1 Flash TTS (preview)
+    family: gemini-tts
+    mediaType: speech
+    status: preview
+    released: "2026-04-15"
+    replacement: gemini-3.8-flash-lite-tts
+    summary: Previous-generation preview TTS; style is given as natural-language directions inside the text.
+    backends: [gemini-api, vertex]
+    vertexLocations: [global, us, eu]
+    capabilities: &ttsLegacy
+      maxSpeakers: 2
+      speechStyle: prompt
+      maxOutputSeconds: 655
+      voices: *voices
+    pricing:
+      asOf: "2026-09-24"
+      inputPer1M: {text: 1.00}
+      outputPer1M: {audio: 20.00}
+      audioTokensPerSecond: 25
+      freeTier: true
+
+  - id: gemini-2.5-flash-preview-tts
+    vertexId: gemini-2.5-flash-tts
+    aliases: [tts-2.5]
+    title: Gemini 2.5 Flash TTS
+    family: gemini-tts
+    mediaType: speech
+    status: preview
+    released: "2025-05-20"
+    replacement: gemini-3.8-flash-tts
+    summary: Legacy low-cost TTS; available on both backends (the default speech model on Vertex AI).
+    backends: [gemini-api, vertex]
+    vertexLocations: [global, us, eu]
+    capabilities: *ttsLegacy
+    pricing:
+      asOf: "2026-09-24"
+      inputPer1M: {text: 0.50}
+      outputPer1M: {audio: 10.00}
+      audioTokensPerSecond: 25
+      freeTier: true
+
+  - id: gemini-2.5-pro-preview-tts
+    vertexId: gemini-2.5-pro-tts
+    aliases: [tts-pro]
+    title: Gemini 2.5 Pro TTS
+    family: gemini-tts
+    mediaType: speech
+    status: preview
+    released: "2025-05-20"
+    replacement: gemini-3.8-flash-tts
+    summary: Legacy higher-quality TTS for long-form narration.
+    backends: [gemini-api, vertex]
+    vertexLocations: [global, us, eu]
+    capabilities: *ttsLegacy
+    pricing:
+      asOf: "2026-09-24"
+      inputPer1M: {text: 1.00}
+      outputPer1M: {audio: 20.00}
+      audioTokensPerSecond: 25
+
+  # ---------------------------------------------------------------- music
+  - id: lyria-3-clip-preview
+    aliases: [clip, lyria-clip]
+    title: Lyria 3 Clip
+    family: lyria
+    mediaType: music
+    status: preview
+    released: "2026-03-25"
+    summary: 30-second MP3 clips; cheapest way to explore a musical idea, jingles, stingers and loops.
+    backends: [gemini-api, vertex]
+    vertexLocations: [global]
+    capabilities:
+      outputSeconds: 30
+      outputFormats: [mp3]
+      imageInput: true
+      maxReferenceImages: 10
+    pricing:
+      asOf: "2026-09-24"
+      perRequest: 0.04
+
+  - id: lyria-3.5
+    aliases: [full, lyria, song, music-pro]
+    title: Lyria 3.5
+    family: lyria
+    mediaType: music
+    status: ga
+    released: "2026-09-03"
+    summary: Full songs (a couple of minutes) with vocals, lyrics and structure control; MP3 or WAV, 44.1 kHz stereo; accepts up to 10 inspiration images.
+    backends: [gemini-api]
+    fallback: lyria-3-pro-preview
+    capabilities:
+      maxOutputSeconds: 184
+      outputFormats: [mp3, wav]
+      imageInput: true
+      maxReferenceImages: 10
+    pricing:
+      asOf: "2026-09-24"
+      perRequest: 0.08
+
+  - id: lyria-3-pro-preview
+    aliases: [lyria-3-pro]
+    title: Lyria 3 Pro (legacy)
+    family: lyria
+    mediaType: music
+    status: preview
+    released: "2026-03-25"
+    replacement: lyria-3.5
+    summary: Previous full-song model; still the full-song option on Vertex AI (global only, up to 184s).
+    backends: [gemini-api, vertex]
+    vertexLocations: [global]
+    capabilities:
+      maxOutputSeconds: 184
+      outputFormats: [mp3]
+      imageInput: true
+      maxReferenceImages: 10
+    pricing:
+      asOf: "2026-09-24"
+      perRequest: 0.08

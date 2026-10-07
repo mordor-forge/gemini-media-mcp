@@ -1,245 +1,195 @@
 # gemini-media-mcp
 
-[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white)](https://go.dev)
+[![CI](https://github.com/mordor-forge/gemini-media-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/mordor-forge/gemini-media-mcp/actions/workflows/ci.yml)
+[![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![gemini-media-mcp MCP server](https://glama.ai/mcp/servers/mordor-forge/gemini-media-mcp/badges/score.svg)](https://glama.ai/mcp/servers/mordor-forge/gemini-media-mcp)
 
-Unified Go MCP server for AI media generation via Google Gemini API and Vertex AI.
+An MCP server for Google's generative media models: **images** (Nano Banana 2.1 / Pro), **video** (Veo 3.1 and Gemini Omni Flash), **speech** (Gemini 3.8 TTS) and **music** (Lyria 3.5). It ships as a single Go binary, speaks **stdio and Streamable HTTP** (MCP 2026-07-28), works with the **Gemini API or Vertex AI**, and comes with **agent skills** and plugin packaging for Claude Code, Codex, Gemini CLI, VS Code/Copilot, Cursor and more.
 
-[![gemini-media-mcp MCP server](https://glama.ai/mcp/servers/mordor-forge/gemini-media-mcp/badges/card.svg)](https://glama.ai/mcp/servers/mordor-forge/gemini-media-mcp)
+- **Current models, updated without a release.** A built-in catalog records IDs, aliases, lifecycle, parameters and prices. Retired models redirect to their replacement, and new model IDs work before the catalog knows them. You can override or extend the catalog with a hot-reloaded YAML file.
+- **Cost-aware.** Every result reports its estimated cost, and `estimate_cost` compares options before you spend. Spend is recorded in a ledger, capped by session, daily and monthly budgets, and calls above a threshold need explicit approval.
+- **Agent-friendly.** Each tool matches a workflow, and errors come back as `[kind] message + Hint`. Image results include inline previews, and outputs can be chained by URI. Video runs as async jobs with long-polling and progress notifications.
+- **Robust.** Backend and credentials are detected the way the Google SDKs do it. Vertex locations are chosen per model, retries and timeouts are built in, files are written atomically with provenance, and HTTP mode ships with security defaults.
 
-## Features
+> Upgrading from v0? The tools changed. See the [migration table](docs/architecture-review.md#4-migration-from-v0). The review also covers what was broken, why, and the design of v1.
 
-- **Image generation** -- text-to-image with configurable aspect ratios and resolutions (1K/2K/4K)
-- **Image editing** -- modify existing images with natural language prompts
-- **Multi-reference composition** -- combine up to 3 reference images with style/content guidance
-- **Video generation** -- text-to-video via Veo 3.1 Lite, Fast, and Standard tiers
-- **Image-to-video** -- animate still images into video clips
-- **Video extension** -- chain clips for longer content (Fast and Standard tiers)
-- **Text-to-speech** -- generate spoken audio with configurable voices and languages
-- **Music generation** -- AI music via Lyria 3 (30s clips or full songs with vocals, structure control)
-- **Single binary** -- no runtime dependencies, runs over stdio transport
-- **Provider abstraction** -- backend-agnostic interfaces for image, video, audio, and model operations
-- **Dual backend** -- supports both Gemini API (API key) and Vertex AI (project credentials)
+## Quick start
 
-## Quick Start
+1. **Get credentials.** Either:
+   - an API key from [Google AI Studio](https://aistudio.google.com/apikey) (`GEMINI_API_KEY`), or
+   - a Google Cloud project with Vertex AI enabled (`GOOGLE_CLOUD_PROJECT` plus `gcloud auth application-default login`).
+2. **Add the server to your agent.** The launcher is `npx -y gemini-media-mcp`, which downloads the right binary for your platform.
 
-```bash
-# Install
-go install github.com/mordor-forge/gemini-media-mcp/cmd/gemini-media-mcp@latest
+   **Claude Code** (plugin: server plus skills):
+   ```
+   /plugin marketplace add mordor-forge/gemini-media-mcp
+   /plugin install gemini-media@mordor-forge
+   ```
+   or just the server: `claude mcp add gemini-media -e GEMINI_API_KEY=... -- npx -y gemini-media-mcp`
 
-# Configure (Gemini API; either variable name works)
-export GEMINI_API_KEY="your-api-key"
-# export GOOGLE_API_KEY="your-api-key"
+   **Codex** (`~/.codex/config.toml`):
+   ```toml
+   [mcp_servers.gemini-media]
+   command = "npx"
+   args = ["-y", "gemini-media-mcp"]
+   env_vars = ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION"]
+   tool_timeout_sec = 120
+   ```
 
-# Or configure (Vertex AI)
-export GOOGLE_CLOUD_PROJECT="your-project-id"
-export GOOGLE_CLOUD_LOCATION="us-central1"
+   **Gemini CLI:** `gemini extensions install https://github.com/mordor-forge/gemini-media-mcp`
 
-# Run directly (stdio transport)
-gemini-media-mcp
+   **VS Code / Copilot:** `code --add-mcp '{"name":"gemini-media","command":"npx","args":["-y","gemini-media-mcp"]}'`
+
+   **Any other client** (Cursor, Windsurf, Zed, OpenCode, Goose, Claude Desktop…):
+   ```json
+   { "mcpServers": { "gemini-media": { "command": "npx", "args": ["-y", "gemini-media-mcp"], "env": { "GEMINI_API_KEY": "..." } } } }
+   ```
+
+   Every client, plus Docker, MCPB (Claude Desktop) and the skills installer, is covered in [packaging/INSTALL-SNIPPETS.md](packaging/INSTALL-SNIPPETS.md).
+3. **If your agent doesn't forward environment variables** (plugins often don't), store the key once:
+   ```bash
+   echo "$GEMINI_API_KEY" | npx -y gemini-media-mcp configure --api-key-stdin
+   npx -y gemini-media-mcp doctor   # checks credentials, backend and model availability
+   ```
+
+Other ways to install:
+- `go install github.com/mordor-forge/gemini-media-mcp/cmd/gemini-media-mcp@latest` (Go 1.26+)
+- release binaries on the [Releases](https://github.com/mordor-forge/gemini-media-mcp/releases) page
+- `docker run -i --rm -e GEMINI_API_KEY -v "$PWD/media:/output" -v gemini-media-state:/state ghcr.io/mordor-forge/gemini-media-mcp`
+  (the named `/state` volume keeps spend accounting and video jobs between runs)
+
+## Tools
+
+| Tool | What it does |
+|---|---|
+| `generate_image` | Text-to-image with up to 14 reference images, 1K–4K, many aspect ratios, 1–4 variations, optional Google Search grounding |
+| `edit_image` | Change an existing image (add/remove/restyle/relight/outpaint) while keeping the rest |
+| `generate_video` | Clip with native audio from text, a first frame, first+last frames, or reference images: Veo (4–8 s, up to 3 references) or Gemini Omni Flash (`omni`: 3–10 s, 360p drafts to 4K, up to 10 references). Returns a `jobId` |
+| `get_video` | Wait for a job (long-poll, default 45 s); downloads the video when done. Safe to repeat |
+| `extend_video` | Continue a finished clip: Omni adds up to 10 s (40 s total), Veo about 7 s (up to 148 s total) |
+| `edit_video` | Change a finished clip or a video file of up to 10 s with an instruction (Gemini Omni) |
+| `generate_speech` | Text-to-speech (WAV): one voice, or a two-speaker dialogue, with per-line style control and 30 voices |
+| `generate_music` | 30-second clips or full songs with lyrics, structure tags, tempo, instrumental mode and image inspiration |
+| `list_models` | Current models, aliases, status, prices; `detail` for supported parameters, `live` to check what your key can use |
+| `estimate_cost` | Price a request before running it and compare models |
+| `get_usage` | Estimated spend by period, model and tool; budgets remaining; running jobs |
+| `get_config` | Active backend and why it was chosen, output directory, defaults, warnings |
+
+Every result includes the saved file's path, a `gemini-media://files/<name>` URI and its cost. You can pass the URI as an input to another tool. Clients that can't read the server's disk (for example over HTTP) can fetch the file with `resources/read`.
+
+## Models
+
+Use an alias or a full model ID. Run `gemini-media-mcp models` or call `list_models` for the live table with prices.
+
+| Media | Aliases (default first) |
+|---|---|
+| Image | `nb2` (Nano Banana 2.1, default), `pro` (Nano Banana Pro: highest fidelity), `nb2-lite` (cheapest inputs) |
+| Video | `lite` (cheapest), `omni` (Gemini Omni Flash: prompt adherence, editing, extension to 40 s; Gemini API only), `fast` (Veo 4K, references, extension), `standard` (highest Veo quality) |
+| Speech | `tts` (Gemini 3.8 Flash TTS), `tts-lite`, `tts-2.5`, `tts-pro` |
+| Music | `clip` (30 s), `full` (Lyria 3.5 songs) |
+
+**Updating or adding a model without waiting for a release.** Create a YAML file and point `GEMINI_MEDIA_CATALOG` at it. The server merges it with the built-in catalog by `id` and reloads it automatically:
+
+```yaml
+defaults:
+  video: fast
+models:
+  - id: veo-3.1-fast-generate-preview
+    pricing: { perSecond: { 720p: 0.10, 1080p: 0.12, 4k: 0.30 } }
+  - id: veo-4.0-generate-preview        # a brand-new model
+    aliases: [veo4]
+    pricing: { perSecond: { 720p: 0.50 } }
 ```
 
-Then add it to your MCP client -- see [MCP Client Configuration](#mcp-client-configuration) below.
+See [internal/catalog/models.yaml](internal/catalog/models.yaml) for the full schema.
 
 ## Configuration
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `GOOGLE_API_KEY` | Yes* | -- | Gemini API key. `GEMINI_API_KEY` is also accepted |
-| `GOOGLE_CLOUD_PROJECT` | Yes* | -- | GCP project ID for Vertex AI backend |
-| `GOOGLE_CLOUD_LOCATION` | No | `us-central1` | GCP region for Vertex AI |
-| `MEDIA_OUTPUT_DIR` | No | `~/generated_media` | Directory for saved media files |
+Settings are layered: built-in defaults < config file < environment < flags. The config file lives at `~/.config/gemini-media-mcp/config.yaml` on Linux, `~/Library/Application Support/gemini-media-mcp/config.yaml` on macOS, or wherever `GEMINI_MEDIA_CONFIG` points. Unknown keys produce warnings instead of errors, and `get_config` shows where each setting came from.
 
-*One of `GOOGLE_API_KEY` or `GOOGLE_CLOUD_PROJECT` must be set. If both are set, API key takes precedence (avoids conflicts when `GOOGLE_CLOUD_PROJECT` is set in the shell for other tools).
+| Environment variable | Config key | Default | Purpose |
+|---|---|---|---|
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GEMINI_MEDIA_API_KEY` | `apiKey` | – | Gemini API key (or Vertex express-mode key) |
+| `GOOGLE_CLOUD_PROJECT` | `project` | – | Vertex AI project (Application Default Credentials) |
+| `GOOGLE_CLOUD_LOCATION` / `GOOGLE_CLOUD_REGION` | `location` | per model | Vertex region; models not offered there use their catalog location |
+| `GOOGLE_GENAI_USE_VERTEXAI` / `GOOGLE_GENAI_USE_ENTERPRISE` | – | – | Force Vertex AI (same semantics as the Google SDKs) |
+| `GEMINI_MEDIA_BACKEND` | `backend` | `auto` | `auto`, `gemini-api` or `vertex` |
+| `MEDIA_OUTPUT_DIR` / `GEMINI_MEDIA_OUTPUT_DIR` | `outputDir` | `~/generated_media` | Where media is saved |
+| `GEMINI_MEDIA_STATE_DIR` | `stateDir` | `~/.local/state/gemini-media-mcp` | Spend ledger and video jobs |
+| `GEMINI_MEDIA_BUDGET_SESSION_USD` / `_DAILY_USD` / `_MONTHLY_USD` | `budget.*Usd` | none | Spend caps (estimated) |
+| `GEMINI_MEDIA_CONFIRM_ABOVE_USD` | `budget.confirmAboveUsd` | none | Calls above this need `approvedCostUsd` |
+| `GEMINI_MEDIA_IMAGE_MODEL` / `_VIDEO_MODEL` / `_SPEECH_MODEL` / `_MUSIC_MODEL` / `GEMINI_MEDIA_VOICE` | `defaults.*` | catalog | Default models and voice |
+| `GEMINI_MEDIA_CATALOG` | `catalogFile` | – | Catalog override file (hot-reloaded) |
+| `GEMINI_MEDIA_INPUT_DIRS` | `inputDirs` | – | Extra directories inputs may be read from (HTTP mode) |
+| `GEMINI_MEDIA_INLINE_PREVIEWS` | `inlinePreviews` | `true` | Attach a downscaled preview to image results |
+| `GEMINI_MEDIA_TRANSPORT` | `transport` | `stdio` | `stdio` or `http` |
+| `GEMINI_MEDIA_HTTP_ADDR` / `GEMINI_MEDIA_HTTP_TOKEN` | `http.addr` / `http.authToken` | `127.0.0.1:8765` / – | HTTP listen address and bearer token |
 
-If you're unsure which backend is active, call `get_config` from your MCP client to confirm the selected backend and output directory.
+How the backend is chosen:
+1. An explicit `backend` setting wins.
+2. Otherwise the SDK switches `GOOGLE_GENAI_USE_ENTERPRISE` and `GOOGLE_GENAI_USE_VERTEXAI` decide.
+3. Otherwise an API key selects the Gemini API, even if `GOOGLE_CLOUD_PROJECT` is set in your shell for other tools.
+4. Otherwise a project selects Vertex AI.
 
-## Available Tools
+On Vertex, an API key without a project uses express mode, which does not support video.
 
-| Tool | Description | Type |
-|------|-------------|------|
-| `generate_image` | Generate image from text prompt | Sync |
-| `edit_image` | Edit existing image with text prompt | Sync |
-| `compose_images` | Multi-reference image composition (up to 3) | Sync |
-| `generate_video` | Generate video from text prompt (returns operation ID) | Async |
-| `animate_image` | Animate image into video (first frame) | Async |
-| `extend_video` | Chain video clips for longer content | Async |
-| `video_status` | Check video generation progress | Sync |
-| `download_video` | Download completed video | Sync |
-| `generate_audio` | Generate spoken audio from text (TTS) | Sync |
-| `generate_music` | Generate AI music from text description (Lyria) | Sync |
-| `list_models` | Show available models with capabilities and pricing | Sync |
-| `get_config` | Show current backend and configuration | Sync |
+## Spend and budgets
 
-Async tools return an operation ID immediately. Use `video_status` to poll for completion, then `download_video` to retrieve the file.
+Google doesn't return costs, so the server computes them from its price table and the token usage the API reports. Every call records an estimate before it runs and the reconciled cost afterwards. Failed and safety-blocked generations count as $0. A response that used tokens but returned no media (for example `MAX_TOKENS`) is charged for those tokens.
 
-## Model Tiers
+- Results include `cost {estimatedUsd, usd, basis}`. `get_usage` and `gemini-media-mcp usage` summarize spend. The ledger is a plain JSONL file in the state directory.
+- Budgets are enforced before each call, across concurrent calls and across several server processes sharing a state directory (in-flight calls hold their estimate under a file lock).
+- With `GEMINI_MEDIA_CONFIRM_ABOVE_USD=1`, an expensive call (for example a $3.20 Veo clip) comes back as a `[confirmation]` error. The agent asks you, then retries with `approvedCostUsd`.
+- These figures are estimates. For a hard stop, also set a spend cap in AI Studio or a budget in Cloud Billing.
 
-### Image
-
-| Tier | Model | Best For | Cost |
-|------|-------|----------|------|
-| nb2 (default) | `gemini-3.1-flash-image-preview` | Quick iterations, most tasks | ~$0.067/img |
-| pro | `gemini-3-pro-image-preview` | Final renders, complex scenes | ~$0.134/img |
-
-Both tiers support resolutions 1K, 2K, 4K and aspect ratios 1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9.
-
-### Video
-
-| Tier | Model | Best For | Cost |
-|------|-------|----------|------|
-| lite (default) | `veo-3.1-lite-generate-preview` | High-volume, drafts | $0.05/sec (720p), $0.08/sec (1080p) |
-| fast | `veo-3.1-fast-generate-preview` | Good quality iterations | $0.15/sec (720p/1080p), $0.35/sec (4k) |
-| standard | `veo-3.1-generate-preview` | Final renders, 4K | $0.40/sec (720p/1080p), $0.60/sec (4k) |
-
-Supported aspect ratios are `16:9` and `9:16`. Supported durations are `4`, `6`, and `8` seconds. Lite supports `720p` and `1080p`. Fast and Standard support `720p`, `1080p`, and `4K`. Video extension (`extend_video`) is only available on Fast and Standard tiers, and the extension tier must match the original generation.
-
-### Audio (TTS)
-
-| Tier | Model | Best For | Cost |
-|------|-------|----------|------|
-| tts | `gemini-2.5-flash-preview-tts` | Text-to-speech with natural voices | Standard Gemini token pricing |
-
-The `generate_audio` tool converts text to spoken audio. It supports:
-
-- **Voice selection** -- Choose from prebuilt voices like `Aoede`, `Kore`, `Puck`, and more. Default: `Aoede`
-- **Language** -- Set the language code (e.g., `en-US`, `it-IT`, `cs-CZ`, `de-DE`). Default: `en-US`
-- **Natural speech** -- Generates expressive, natural-sounding speech with appropriate pacing and intonation
-
-Output is saved as raw PCM audio (`audio/L16`, 24kHz sample rate). The file can be played with tools like `ffplay` or converted to other formats:
+## HTTP mode
 
 ```bash
-# Play directly
-ffplay -f s16le -ar 24000 -ac 1 ~/generated_media/audio-2026-04-02T12-20-12-0603.pcm
-
-# Convert to WAV
-ffmpeg -f s16le -ar 24000 -ac 1 -i audio.pcm audio.wav
-
-# Convert to MP3
-ffmpeg -f s16le -ar 24000 -ac 1 -i audio.pcm audio.mp3
+GEMINI_API_KEY=... gemini-media-mcp serve --transport http                 # http://127.0.0.1:8765/mcp
+GEMINI_MEDIA_HTTP_TOKEN=secret gemini-media-mcp serve --transport http --http-addr 0.0.0.0:8765
+claude mcp add --transport http gemini-media http://127.0.0.1:8765/mcp --header "Authorization: Bearer secret"
 ```
 
-### Music (Lyria)
+- HTTP mode is stateless Streamable HTTP, which MCP 2026-07-28 requires; older clients still work.
+- The server protects against DNS rebinding and cross-origin requests.
+- It refuses to listen on a non-loopback address without a token.
+- It only reads input files from the output directory or `GEMINI_MEDIA_INPUT_DIRS`.
+- `GET /healthz` reports status.
 
-| Tier | Model | Output | Best For | Cost |
-|------|-------|--------|----------|------|
-| clip (default) | `lyria-3-clip-preview` | 30-second clips | Quick iterations, sound design | ~$0.08/song |
-| full | `lyria-3-pro-preview` | Up to ~3 minutes | Full songs with vocals, verses, choruses | Token-based |
+## Skills
 
-The `generate_music` tool creates AI-generated music from text descriptions. Capabilities include:
+The [`skills/`](skills) directory contains [Agent Skills](https://agentskills.io) that teach agents the full workflow for each media type: intent, prompt craft, model choice, cost checks, review and iteration. They cover interactive use as well as unattended runs.
 
-- **Genre and style** -- specify any genre, instruments, BPM, key/scale, mood
-- **Structure control** -- use tags like `[Verse]`, `[Chorus]`, `[Bridge]`, `[Intro]`, `[Outro]`
-- **Custom lyrics** -- include lyrics with section markers for vocal tracks
-- **Timestamp control** -- `[0:00 - 0:10] Intro: gentle piano...` for precise section timing
-- **Multi-language** -- prompt language determines output language
-- **High fidelity** -- 48kHz stereo MP3 output
+| Skill | For |
+|---|---|
+| `gemini-image` | Images: generation, editing, multi-reference composition, text rendering |
+| `gemini-video` | Video: text/image-to-video, frame interpolation, reference ingredients, Omni editing, extension, async jobs |
+| `gemini-speech` | Voiceovers, narration, two-speaker dialogue, voice and style selection |
+| `gemini-music` | Clips and full songs with structure, lyrics and tempo |
+| `gemini-media-production` | Multi-asset projects (storyboard → keyframes → video → voiceover → music → ffmpeg assembly) with a budget plan |
 
-All generated music is watermarked with SynthID.
+Plugin installs (Claude Code, Codex, Gemini CLI, VS Code) include the skills. To install them in any Agent Skills–compatible agent, run `npx skills add mordor-forge/gemini-media-mcp`, or copy the folders into `.agents/skills/` or `~/.claude/skills/`.
 
-**Example prompts:**
+## Development
 
-```
-# Instrumental
-"A gentle acoustic guitar melody in C major, 90 BPM, calm and peaceful indie folk"
-
-# With structure
-"[Intro] Ambient synth pad, ethereal
-[Verse] Lo-fi hip-hop beat, mellow piano chords, vinyl crackle
-[Chorus] Uplifting, add strings and gentle drums
-[Outro] Fade out with reverb"
-
-# With lyrics
-"Upbeat pop song, 120 BPM, major key
-[Chorus] We're dancing in the light / Everything feels right / Under stars so bright tonight"
-```
-
-You can pass the tier name (`lite`, `fast`, `standard`, `nb2`, `pro`, `tts`, `clip`, `full`) or a raw model ID directly.
-
-## MCP Client Configuration
-
-### Claude Code
-
-Add to your Claude Code MCP settings (`~/.claude/settings.json` or project `.mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "gemini-media": {
-      "command": "gemini-media-mcp",
-      "env": {
-        "GOOGLE_API_KEY": "your-api-key",
-        "MEDIA_OUTPUT_DIR": "/path/to/output"
-      }
-    }
-  }
-}
-```
-
-Use either `GOOGLE_API_KEY` or `GEMINI_API_KEY` in the `env` block above; both are accepted.
-
-Or if building from source:
-
-```json
-{
-  "mcpServers": {
-    "gemini-media": {
-      "command": "/path/to/gemini-media-mcp",
-      "env": {
-        "GOOGLE_API_KEY": "your-api-key"
-      }
-    }
-  }
-}
-```
-
-## Companion Skills for Claude Code
-
-The `skills/` directory contains Claude Code skills that provide interactive workflows on top of the MCP tools. Each skill guides Claude through prompt engineering, model selection, and iterative refinement for a specific media type.
-
-| Skill | Directory | Description |
-|-------|-----------|-------------|
-| **gemini-image-gen** | `skills/gemini-image-gen/` | Image generation, editing, and multi-reference composition |
-| **video-gen** | `skills/video-gen/` | Video generation with async polling, image-to-video, extension |
-| **music-gen** | `skills/music-gen/` | Music generation with structure tags, lyrics, genre control |
-| **tts-gen** | `skills/tts-gen/` | Text-to-speech with voice and language selection |
-
-To install a skill, copy its directory to `~/.claude/skills/`:
+Paid live E2E tests are run locally with your own API key. CI runs the free
+checks and compiles/vets the E2E tests, but never executes live generation,
+including after merges to `main` or on manual workflow runs.
 
 ```bash
-cp -r skills/video-gen ~/.claude/skills/
-cp -r skills/music-gen ~/.claude/skills/
-cp -r skills/tts-gen ~/.claude/skills/
-cp -r skills/gemini-image-gen ~/.claude/skills/
+go build ./...
+go test -race ./...
+golangci-lint run
+python3 scripts/validate-skills.py skills
+GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=... go test -tags=e2e ./internal/media/ -run E2E -v   # live, costs cents
+# add GEMINI_MEDIA_E2E_VIDEO=1 for the video test (~$0.20), GEMINI_MEDIA_E2E_OMNI=1 for the Omni clip + edit (~$0.30),
+# GEMINI_MEDIA_E2E_OUTPUT_DIR=./e2e-out to keep the files
 ```
 
-Skills are optional — the MCP tools work without them. But the skills add prompt engineering guidance, model tier recommendations, and interactive review workflows that significantly improve output quality.
-
-## Building from Source
-
-```bash
-git clone https://github.com/mordor-forge/gemini-media-mcp.git
-cd gemini-media-mcp
-go build ./cmd/gemini-media-mcp/
-```
-
-The binary will be created at `./gemini-media-mcp`.
-
-To run tests:
-
-```bash
-go test ./...
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/your-feature`)
-3. Make your changes and add tests
-4. Run `go test ./...` and `go vet ./...`
-5. Commit your changes
-6. Open a pull request against `main`
+- [AGENTS.md](AGENTS.md): guide for coding agents and contributors.
+- [docs/architecture-review.md](docs/architecture-review.md): architecture and design decisions.
+- [internal/catalog/models.yaml](internal/catalog/models.yaml): model catalog. When Google changes models, edit this file, not the code.
 
 ## License
 

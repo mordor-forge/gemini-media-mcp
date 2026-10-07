@@ -1,0 +1,46 @@
+{
+  "name": "gemini-media-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Google generative media: Nano Banana images, Veo video, Gemini TTS speech and Lyria music, with cost estimates and budgets.",
+  "mcpName": "io.github.mordor-forge/gemini-media-mcp",
+  "license": "Apache-2.0",
+  "author": "mordor-forge",
+  "homepage": "https://github.com/mordor-forge/gemini-media-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/mordor-forge/gemini-media-mcp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mordor-forge/gemini-media-mcp.git",
+    "directory": "npm/gemini-media-mcp"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "gemini",
+    "nano-banana",
+    "veo",
+    "lyria",
+    "text-to-speech",
+    "image-generation",
+    "video-generation"
+  ],
+  "bin": {
+    "gemini-media-mcp": "bin/gemini-media-mcp.js"
+  },
+  "files": [
+    "bin/gemini-media-mcp.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "gemini-media-mcp-darwin-arm64": "1.0.0",
+    "gemini-media-mcp-darwin-x64": "1.0.0",
+    "gemini-media-mcp-linux-arm64": "1.0.0",
+    "gemini-media-mcp-linux-x64": "1.0.0",
+    "gemini-media-mcp-win32-arm64": "1.0.0",
+    "gemini-media-mcp-win32-x64": "1.0.0"
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mordor-forge/gemini-media-mcp",
+  "title": "Gemini Media",
+  "description": "Generate images (Nano Banana), video (Veo), speech and music (Lyria) with Google's Gemini models",
+  "version": "1.0.0",
+  "websiteUrl": "https://github.com/mordor-forge/gemini-media-mcp",
+  "repository": {
+    "url": "https://github.com/mordor-forge/gemini-media-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "gemini-media-mcp",
+      "version": "1.0.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "GEMINI_API_KEY",
+          "description": "Gemini API key from https://aistudio.google.com/apikey. Optional when using Vertex AI or a key saved with `gemini-media-mcp configure --api-key-stdin`.",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "GOOGLE_CLOUD_PROJECT",
+          "description": "Vertex AI project ID (uses Application Default Credentials instead of an API key).",
+          "isRequired": false
+        },
+        {
+          "name": "GOOGLE_CLOUD_LOCATION",
+          "description": "Vertex AI region.",
+          "isRequired": false,
+          "default": "global"
+        },
+        {
+          "name": "MEDIA_OUTPUT_DIR",
+          "description": "Directory where generated media is saved.",
+          "isRequired": false,
+          "format": "filepath",
+          "default": "~/generated_media"
+        },
+        {
+          "name": "GEMINI_MEDIA_BUDGET_DAILY_USD",
+          "description": "Refuse new generations once today's estimated spend reaches this many US dollars (0 = no cap).",
+          "isRequired": false,
+          "format": "number"
+        }
+      ]
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/mordor-forge/gemini-media-mcp:1.0.0",
+      "runtimeHint": "docker",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "-v",
+          "description": "Host directory that receives generated media, mounted at /output in the container.",
+          "value": "{host_output_dir}:/output",
+          "isRequired": true,
+          "variables": {
+            "host_output_dir": {
+              "description": "Absolute path of a host directory for generated media (for example /home/you/generated_media).",
+              "format": "filepath",
+              "isRequired": true
+            }
+          }
+        },
+        {
+          "type": "named",
+          "name": "-v",
+          "description": "Named volume that keeps the spend ledger, budgets and video jobs across container runs, mounted at /state.",
+          "value": "gemini-media-state:/state"
+        },
+        {
+          "type": "named",
+          "name": "-e",
+          "description": "Save generated media to the mounted /output volume.",
+          "value": "MEDIA_OUTPUT_DIR=/output"
+        },
+        {
+          "type": "named",
+          "name": "-e",
+          "description": "Gemini API key from https://aistudio.google.com/apikey.",
+          "value": "GEMINI_API_KEY={api_key}",
+          "isRequired": true,
+          "variables": {
+            "api_key": {
+              "description": "Gemini API key.",
+              "isRequired": true,
+              "isSecret": true
+            }
+          }
+        },
+        {
+          "type": "named",
+          "name": "-e",
+          "description": "Optional daily spend cap in US dollars (0 = no cap).",
+          "value": "GEMINI_MEDIA_BUDGET_DAILY_USD={daily_budget_usd}",
+          "isRequired": false,
+          "variables": {
+            "daily_budget_usd": {
+              "description": "Daily budget in USD.",
+              "format": "number",
+              "default": "0"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "registryType": "mcpb",
+      "identifier": "https://github.com/mordor-forge/gemini-media-mcp/releases/download/v1.0.0/gemini-media-mcp-1.0.0.mcpb",
+      "version": "1.0.0",
+      "fileSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "skill_name": "gemini-speech",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Read this aloud in a calm documentary voice: 'In the high Andes, water is a matter of timing. Every morning, the glacier gives a little back.'",
+      "expected_output": "Calls gemini-media:generate_speech with the text verbatim, a fitting voice (e.g. Charon, Iapetus or Schedar) and a short style such as 'calm documentary narrator'. No delivery directions inside text; optionally a <short pause> tag. Reports the WAV path, voice and duration and notes it cannot listen itself.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Turn this into a two-host podcast audio. Maya: 'So is the launch really Thursday?' Tom: 'Ready enough - the last blocker cleared this morning.' Maya: 'Then let's ship it.'",
+      "expected_output": "Uses dialogue with one entry per line and speakers mapping Maya and Tom to two contrasting prebuilt voices, a shared conversational style, and per-line style only where delivery changes. Text fields contain only the spoken words. Reports file path, voices and cost.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Generate TTS for: (whispering) Don't move. (shouting) RUN!",
+      "expected_output": "Does not pass the parenthetical directions in text. Either splits into two single-speaker calls (or dialogue lines of one speaker) with style 'whispering' and 'shouting', or uses inline tags such as <whispers> and a style, so only 'Don't move.' and 'RUN!' are spoken. Explains that the default model reads text verbatim.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Narrate my whole novel, it's about 45,000 words in manuscript.txt, chapter by chapter.",
+      "expected_output": "Recognizes the volume: estimates cost with gemini-media:estimate_cost (mediaType speech, text of a chapter, extrapolated) and presents tts vs tts-lite, gets approval before starting, splits into chunks under about 10 minutes of audio each, keeps the same voice and style across chunks, and reports files in order (suggesting ffmpeg joining via gemini-media-production).",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "No human in the loop: generate the Italian voiceover for the onboarding script in onboarding_it.txt and save it as onboarding-it.",
+      "expected_output": "Does not ask questions. Reads the file, passes the Italian text verbatim (language auto-detected; languageCode it-IT optional), picks a warm or clear voice, a short style, outputName onboarding-it. Generates once, fixes only clear problems, and reports voice, style, path, duration and cost.",
+      "files": [
+        "evals/files/onboarding_it.txt"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Make an audio drama scene with a narrator, a detective and a nervous witness.",
+      "expected_output": "Explains that one call supports at most two speakers and plans separate calls (e.g. narrator lines single-speaker, detective and witness as a two-speaker dialogue), with distinct voices kept consistent, then suggests joining the parts with ffmpeg (gemini-media-production).",
+      "files": []
+    }
+  ]
+}

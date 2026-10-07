@@ -1,0 +1,20 @@
+{
+  "should_trigger": [
+    "read this out loud for me: 'Welcome to the Harbor Museum.'",
+    "I need a voiceover for my 30s ad, energetic and punchy",
+    "turn this blog post into an audio version I can listen to",
+    "make a two-person podcast dialogue from these notes, Host and Guest",
+    "TTS this in Italian please: 'Benvenuti a bordo'",
+    "narrate this bedtime story in a soft, gentle voice",
+    "generate audio of a sarcastic robot saying 'Oh great, another Monday'",
+    "record the greeting for our phone line menu"
+  ],
+  "should_not_trigger": [
+    "compose a song with lyrics about my cat",
+    "transcribe meeting.mp3 into text",
+    "generate a video where a chef looks at the camera and says 'bon appetit'",
+    "convert this wav file to mp3",
+    "write a speech for my sister's wedding",
+    "set up a real-time voice assistant I can talk to"
+  ]
+}

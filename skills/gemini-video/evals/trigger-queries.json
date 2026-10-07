@@ -1,0 +1,20 @@
+{
+  "should_trigger": [
+    "make a short video of a hummingbird drinking from a flower in slow motion",
+    "animate this image: gemini-media://files/castle.png, flags waving and clouds moving",
+    "I need vertical b-roll of a barista pouring latte art for TikTok",
+    "can you generate a clip that goes from this first frame to this last frame",
+    "extend the drone shot you made a few more seconds",
+    "create a cinematic 8 second product spin of these sneakers in 4k",
+    "Veo clip of two astronauts arguing about coffee, with dialogue",
+    "bring my watercolor painting to life, gentle wind in the trees"
+  ],
+  "should_not_trigger": [
+    "trim the first 3 seconds off interview.mp4",
+    "add burned-in subtitles to my screen recording",
+    "make a slideshow from these 20 vacation photos with transitions",
+    "write CSS for a loading spinner animation",
+    "transcribe the audio of this video",
+    "write a script for a YouTube video about budgeting"
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "name": "gemini-media-mcp",
+  "version": "1.0.0",
+  "description": "Generate images (Nano Banana), video (Veo, Gemini Omni), speech (Gemini TTS) and music (Lyria) with Google's generative media models, with cost estimates and spend budgets.",
+  "mcpServers": {
+    "gemini-media": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "gemini-media-mcp@1.0.0"
+      ]
+    }
+  },
+  "contextFileName": "packaging/gemini/GEMINI-EXTENSION.md",
+  "settings": [
+    {
+      "name": "Gemini API key",
+      "description": "Key from https://aistudio.google.com/apikey (stored in your keychain). Gemini CLI does not pass your shell's GEMINI_API_KEY to extensions, so set it here - or leave empty and use Vertex AI or `npx -y gemini-media-mcp configure --api-key-stdin`.",
+      "envVar": "GEMINI_API_KEY",
+      "sensitive": true
+    },
+    {
+      "name": "Google Cloud project",
+      "description": "Optional. Vertex AI project ID; uses gcloud application-default credentials instead of an API key.",
+      "envVar": "GOOGLE_CLOUD_PROJECT"
+    },
+    {
+      "name": "Google Cloud location",
+      "description": "Optional. Vertex AI region (default: global).",
+      "envVar": "GOOGLE_CLOUD_LOCATION"
+    },
+    {
+      "name": "Output directory",
+      "description": "Optional. Where generated media is saved (default: ~/generated_media).",
+      "envVar": "MEDIA_OUTPUT_DIR"
+    }
+  ]
+}

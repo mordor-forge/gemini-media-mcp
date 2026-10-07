@@ -1,0 +1,47 @@
+{
+  "skill_name": "gemini-video",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "make a short clip of waves crashing on black sand at sunset, with seagull sounds",
+      "expected_output": "Calls gemini-media:generate_video with default lite, 720p, 16:9, a prompt covering subject, action, camera and explicit audio cues (waves, seagulls). Then calls gemini-media:get_video with waitSeconds around 45 repeatedly until state is completed (no sleeping, no resubmitting), and reports the saved path/uri and cost. Is honest that it cannot watch the video.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "animate gemini-media://files/cat-on-roof.png - the cat should leap to the next roof as the camera follows",
+      "expected_output": "Uses image set to the given uri (image-to-video), aspectRatio matching the image (16:9 or 9:16), and a prompt describing motion and sound rather than re-describing the picture. Leaves personGeneration unset. Polls with get_video until completed and reports the file.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "I want a 4K, 8-second hero shot of our perfume bottle (bottle.png) rotating on a mirror, the highest quality you can do.",
+      "expected_output": "Recognizes this as expensive: calls gemini-media:estimate_cost (mediaType video, model standard, resolution 4k, durationSeconds 8, compare true) and tells the user the per-clip cost alongside the fast alternative before generating. Uses fast or standard (4k is not available on lite), durationSeconds 8, and either image=bottle.png or referenceImages=[bottle.png] (not both). On a [confirmation] error asks the user and retries with approvedCostUsd only after approval.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "extend the drone shot from job_7f3a2c by about 14 more seconds, flying over the ridge and down into the valley",
+      "expected_output": "Explains extension adds about 7 s per call, so plans two extend_video calls, each with a continuation prompt, polling each new jobId with get_video and using the second job's output (the combined video). Estimates the two extensions first. If the source job was made with lite or is older than 2 days, explains why extension fails and offers the last-frame-as-image alternative instead.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "Unattended run, nobody will be around to answer: produce a 9:16, 6-second teaser of a neon-lit city street in the rain for our app store listing.",
+      "expected_output": "Does not ask questions. Uses lite, 720p, aspectRatio 9:16, durationSeconds 6, a prompt with camera move and ambient sound. Stays under the confirmation threshold without setting approvedCostUsd, polls get_video until completed, and reports prompt, parameters, path, cost and what a fast/1080p version would cost.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "Use these three product photos as references and make the video start exactly on first.png, 4 seconds, on lite to keep it cheap.",
+      "expected_output": "Explains the conflicting constraints before spending: reference images require fast or standard, force 8 seconds and cannot be combined with a first frame. Proposes valid options (lite image-to-video from first.png at 4 s, or fast with referenceImages at 8 s) with estimate_cost figures, asks the user if present, or picks the cheap valid option and states the choice if autonomous.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "In the clip from job_0123456789abcdef01234567 the guy is holding a phone - can you make the phone disappear but keep everything else?",
+      "expected_output": "Calls gemini-media:edit_video with jobId set to the given job and a short prompt such as 'Make the phone invisible. Keep everything else the same.' (no model needed: edits use omni). States the estimated cost before or with the call. Polls gemini-media:get_video with the returned jobId until completed and reports the new file; does not regenerate the clip from scratch with generate_video.",
+      "files": []
+    }
+  ]
+}

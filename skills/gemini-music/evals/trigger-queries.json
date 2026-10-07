@@ -1,0 +1,20 @@
+{
+  "should_trigger": [
+    "make me a chill lo-fi beat for studying",
+    "I need a 30 second jingle for my bakery",
+    "compose a song with these lyrics: [Verse] city lights...",
+    "background music for my YouTube intro, upbeat, no vocals",
+    "create an epic orchestral theme tune for my D&D campaign",
+    "make a song inspired by this photo of a rainy neon street",
+    "a 2 minute synthwave track with dreamy female vocals about night driving",
+    "something like 80s arcade music for my game menu"
+  ],
+  "should_not_trigger": [
+    "read this poem aloud with dramatic pauses",
+    "add a whoosh sound effect when the logo appears in my video",
+    "remix this mp3 and speed it up by 10%",
+    "what chords are in this jazz standard?",
+    "recommend some focus playlists on Spotify",
+    "separate the vocals from this song"
+  ]
+}
