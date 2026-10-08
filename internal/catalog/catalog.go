@@ -240,6 +240,32 @@ func (c *Catalog) index() error {
 			}
 		}
 	}
+	// A redirect to a missing model or one of another media type would fail
+	// the request after the cutoff, and a fallback must be offered on each
+	// backend that switches requests to it.
+	for _, m := range c.Models {
+		for _, r := range []struct{ field, name string }{{"replacement", m.Replacement}, {"fallback", m.Fallback}} {
+			if r.name == "" {
+				continue
+			}
+			to, ok := c.Lookup(r.name)
+			switch {
+			case !ok:
+				return fmt.Errorf("catalog: %s: %s %q is not in the catalog", m.ID, r.field, r.name)
+			case to == m:
+				return fmt.Errorf("catalog: %s: %s %q is the model itself", m.ID, r.field, r.name)
+			case to.MediaType != m.MediaType:
+				return fmt.Errorf("catalog: %s: %s %q generates %s, not %s", m.ID, r.field, r.name, to.MediaType, m.MediaType)
+			}
+		}
+		if to, ok := c.Lookup(m.Fallback); ok {
+			for _, b := range concreteBackends {
+				if (!m.SupportsBackend(b) || m.BackendShutdown[b] != "") && !to.SupportsBackend(b) {
+					return fmt.Errorf("catalog: %s: fallback %q is not offered on %s, where requests for %s switch to it; pick a fallback offered there (only %s)", m.ID, m.Fallback, b, m.ID, strings.Join(to.backendNames(), ", "))
+				}
+			}
+		}
+	}
 	// A default naming no model, a model of another media type or one its
 	// backend does not offer would fail every request that relies on it.
 	checkDefault := func(backend, mediaType, name string) error {
@@ -264,6 +290,12 @@ func (c *Catalog) index() error {
 		if err := checkDefault("", mediaType, name); err != nil {
 			return err
 		}
+		// It also serves every backend without a default of its own.
+		for _, b := range concreteBackends {
+			if m, ok := c.Lookup(name); ok && c.BackendDefaults[b][mediaType] == "" && !m.SupportsBackend(b) {
+				return fmt.Errorf("catalog: default %s model %q is not offered on %s (only %s); set backendDefaults.%s.%s as well", mediaType, name, b, strings.Join(m.backendNames(), ", "), b, mediaType)
+			}
+		}
 	}
 	for backend, d := range c.BackendDefaults {
 		if !knownBackend(backend) {
@@ -278,8 +310,11 @@ func (c *Catalog) index() error {
 	return nil
 }
 
+// concreteBackends are the backends the catalog describes.
+var concreteBackends = []string{"gemini-api", "vertex"}
+
 // knownBackend reports whether b is a backend the catalog describes.
-func knownBackend(b string) bool { return b == "gemini-api" || b == "vertex" }
+func knownBackend(b string) bool { return slices.Contains(concreteBackends, b) }
 
 // unresolved reports whether backend is not chosen yet (e.g. no credentials).
 func unresolved(backend string) bool { return backend == "" || backend == "auto" }
