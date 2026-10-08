@@ -235,22 +235,39 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	if len(ratios) == 0 {
 		return nil, apperr.Invalidf("the catalog lists no aspect ratios for %s, so tiles cannot be shaped for it; pick nb2 or pro", m.ID)
 	}
+	// Decoding and cutting a large image takes seconds: stop between the
+	// steps once the request is gone.
+	stopped := func() error {
+		if err := ctx.Err(); err != nil {
+			return requestStopped(err, "tile_image", "it takes a few seconds on large images")
+		}
+		return nil
+	}
+	if err := stopped(); err != nil {
+		return nil, err
+	}
 
 	in, err := s.loadLocal(req.Image, "image")
 	if err != nil {
 		return nil, err
 	}
-	// A stitch_tiles result carries the pass, original and reference.
+	imageSum := sha(in.Data)
+	// A stitch_tiles result carries the pass, original and reference, as
+	// long as it still holds the bytes stitch_tiles wrote.
 	pass, original, reference, jobName := 1, strings.TrimSpace(req.Original), "", ""
 	prevNative := 0 // model-rendered long edge the image already carries
 	if name, ok := s.outputName(req.Image); ok {
 		if p, err := s.store.Provenance(name); err == nil && p.Tool == "stitch_tiles" {
-			pass = intParam(p.Params, "pass") + 1
-			prevNative = intParam(p.Params, "nativeLongEdge")
-			jobName, _ = p.Params["name"].(string)
-			if original == "" {
-				original, _ = p.Params["original"].(string)
-				reference, _ = p.Params["reference"].(string)
+			if sum, _ := p.Params["sha256"].(string); sum != imageSum {
+				warnings = append(warnings, fmt.Sprintf("%s changed since stitch_tiles wrote it, so it is tiled as a new first pass", req.Image))
+			} else {
+				pass = intParam(p.Params, "pass") + 1
+				prevNative = intParam(p.Params, "nativeLongEdge")
+				jobName, _ = p.Params["name"].(string)
+				if original == "" {
+					original, _ = p.Params["original"].(string)
+					reference, _ = p.Params["reference"].(string)
+				}
 			}
 		}
 	}
@@ -280,9 +297,15 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 			return nil, err
 		}
 		runtime.GC() // release its full-size decode before the image's
+		if err := stopped(); err != nil {
+			return nil, err
+		}
 	}
 	img, err := decodeImage(in, "image", maxPlanPixels)
 	if err != nil {
+		return nil, err
+	}
+	if err := stopped(); err != nil {
 		return nil, err
 	}
 	pw, ph := img.Bounds().Dx(), img.Bounds().Dy()
@@ -419,7 +442,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		Reference: refAsset, Model: m.ID, ImageSize: size, Warnings: warnings,
 	}
 	job := tileJob{
-		Version: 1, Pass: pass, Mode: mode, Name: name, Image: imageRef, ImageSHA256: sha(in.Data),
+		Version: 1, Pass: pass, Mode: mode, Name: name, Image: imageRef, ImageSHA256: imageSum,
 		Width: pw, Height: ph, OutWidth: outW, OutHeight: outH,
 		Original: original, Reference: reference, Model: m.ID, ImageSize: size, PrevNative: prevNative, CreatedAt: s.now().UTC(),
 	}
@@ -445,7 +468,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 			Params: map[string]any{"box": t.Box, "aspectRatio": t.AspectRatio, "pass": pass},
 		})
 		if err != nil {
-			return nil, fmt.Errorf("saving crop %d: %w", t.Index, err)
+			return nil, s.saveFailed("tile_image", fmt.Sprintf("crop %d", t.Index), err)
 		}
 		res.Tiles = append(res.Tiles, PlannedTile{Tile: t.Index, Label: t.Label, Box: t.Box, AspectRatio: t.AspectRatio, Outside: t.Outside, Crop: *a})
 		job.Tiles = append(job.Tiles, jobTile{Tile: t.Index, Label: t.Label, Box: t.Box, Core: t.Core, AspectRatio: t.AspectRatio, Crop: a.URI})
@@ -474,7 +497,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	}
 	ja, err := s.store.Save("tiles", prefix+"-tiles", "json", data, "application/json", nil)
 	if err != nil {
-		return nil, fmt.Errorf("saving the tile job: %w", err)
+		return nil, s.saveFailed("tile_image", "the tile job", err)
 	}
 	res.Job = ja.URI
 
@@ -499,7 +522,7 @@ func (s *Service) durableRef(ref string, in *store.Input, saveAs string) (string
 	case strings.HasPrefix(ref, "data:"):
 		a, err := s.store.Save("image", saveAs, store.ExtFromMIME(in.MIMEType), in.Data, in.MIMEType, nil)
 		if err != nil {
-			return "", fmt.Errorf("saving %s: %w", saveAs, err)
+			return "", s.saveFailed("tile_image", "the inline image as "+saveAs, err)
 		}
 		return a.URI, nil
 	case strings.HasPrefix(ref, store.URIScheme), strings.HasPrefix(ref, "file://"):
@@ -527,7 +550,7 @@ func (s *Service) tileReference(original, name string, src image.Image) (*store.
 	}
 	a, err := s.store.Save("image", name+"-reference", "png", data, "image/png", &store.Provenance{Tool: "tile_image", Inputs: []string{original}})
 	if err != nil {
-		return nil, fmt.Errorf("saving the reference image: %w", err)
+		return nil, s.saveFailed("tile_image", "the reference image", err)
 	}
 	return a, nil
 }
@@ -630,6 +653,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		return nil, apperr.Invalidf("no tiles given: pass the edit_image result of each tile")
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, requestStopped(err, "stitch_tiles", "an 8K stitch takes 10-30 s")
+	}
 	pin, err := s.loadLocal(job.Image, "tiled image")
 	if err != nil {
 		return nil, err
@@ -815,11 +841,11 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	// provenance, so a stitched image without it is not reported.
 	asset, err := s.store.SaveWithProvenance("image", name, "png", data, "image/png", &store.Provenance{
 		Tool: "stitch_tiles", Model: job.Model, Inputs: inputs,
-		Params: map[string]any{"pass": job.Pass, "name": job.Name, "original": job.Original, "reference": job.Reference, "job": req.Job, "nativeLongEdge": res.NativeLongEdge},
+		// tile_image trusts this record only for these exact bytes.
+		Params: map[string]any{"pass": job.Pass, "name": job.Name, "original": job.Original, "reference": job.Reference, "job": req.Job, "nativeLongEdge": res.NativeLongEdge, "sha256": sha(data)},
 	})
 	if err != nil {
-		return nil, &apperr.Error{Kind: apperr.Unknown, Message: "saving the stitched image: " + err.Error(),
-			Hint: "Make the output directory and its .meta folder writable (with free space), then call stitch_tiles again with the same job and tiles; it costs nothing.", Cause: err}
+		return nil, s.saveFailed("stitch_tiles", "the stitched image", err)
 	}
 	res.File = *asset
 
@@ -873,6 +899,13 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		res.Warnings = append(res.Warnings, fmt.Sprintf("the tiles carry about %d px of model detail along the long edge; the %d px output is interpolated beyond that", res.NativeLongEdge, max(job.OutWidth, job.OutHeight)))
 	}
 	return res, nil
+}
+
+// saveFailed reports that tool could not write what into the output
+// directory; nothing was spent, so the call can simply be repeated.
+func (s *Service) saveFailed(tool, what string, err error) error {
+	return &apperr.Error{Kind: apperr.Unknown, Message: fmt.Sprintf("%s could not save %s: %v", tool, what, err),
+		Hint: fmt.Sprintf("Make the output directory %s and its .meta folder writable, with free space, then call %s again; it costs nothing.", s.store.Dir(), tool), Cause: err}
 }
 
 // requestStopped reports local work abandoned because its request ended;

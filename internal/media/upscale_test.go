@@ -747,3 +747,63 @@ func TestTileImageReferenceFromASeparateOriginal(t *testing.T) {
 		t.Fatalf("reference provenance = %+v %v", p, err)
 	}
 }
+
+func TestTileImageTrustsProvenanceOnlyForTheStitchedBytes(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(512, 384, 16)
+	src := filepath.Join(t.TempDir(), "kept.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: fakeEdits(t, e, truth, 4, res)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Edited in place after stitching: its sidecar no longer describes it.
+	if err := os.WriteFile(out.File.Path, encode(t, scene(1024, 768, 17)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	again, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: out.File.URI, Grid: 2, LongEdge: 2048})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Pass != 1 || again.Reference == nil || again.Output.Width != 2048 || !strings.Contains(strings.Join(again.Warnings, " "), "new first pass") {
+		t.Fatalf("changed stitch = pass %d, reference %v, output %v, warnings %v", again.Pass, again.Reference, again.Output, again.Warnings)
+	}
+}
+
+func TestTileImageStopsBeforeDecodingWhenCanceled(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	uri := "data:image/png;base64," + base64.StdEncoding.EncodeToString(encode(t, scene(300, 200, 18)))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := e.svc.TileImage(ctx, TileImageRequest{Image: uri, Grid: 2}); apperr.KindOf(err) != apperr.Canceled {
+		t.Fatalf("err = %v", err)
+	}
+	if entries, _ := os.ReadDir(e.store.Dir()); len(entries) != 0 {
+		t.Fatalf("a canceled tile_image wrote %d files", len(entries))
+	}
+}
+
+func TestTileImageSaveFailuresSayWhatToFix(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	src := filepath.Join(t.TempDir(), "s.png")
+	if err := os.WriteFile(src, encode(t, scene(300, 200, 19)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The output directory is replaced by a file: nothing can be written.
+	if err := os.RemoveAll(e.store.Dir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.store.Dir(), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2})
+	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Hint, e.store.Dir()) || !strings.Contains(ae.Hint, "writable") {
+		t.Fatalf("err = %v", err)
+	}
+}
