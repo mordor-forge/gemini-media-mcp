@@ -408,14 +408,15 @@ func (m *Model) OfferedOn(backend string, now time.Time) bool {
 // BackendSummary lists the model's backends with their shutdown dates,
 // e.g. "gemini-api until 2026-10-22, vertex" or "gemini-api ended 2026-10-22".
 func (m *Model) BackendSummary(now time.Time) string {
-	if len(m.Backends) == 0 {
+	if len(m.Backends) == 0 && len(m.BackendShutdown) == 0 {
 		if !m.Active(now) {
 			return strings.TrimSpace("ended " + m.Shutdown)
 		}
 		return "all"
 	}
-	parts := make([]string, 0, len(m.Backends))
-	for _, b := range m.Backends {
+	names := m.backendNames()
+	parts := make([]string, 0, len(names))
+	for _, b := range names {
 		switch d := m.ShutdownOn(b); {
 		case !m.OfferedOn(b, now):
 			parts = append(parts, strings.TrimSpace(b+" ended "+d))

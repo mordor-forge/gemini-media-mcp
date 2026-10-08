@@ -140,6 +140,11 @@ func TestVeoPreviewsLeaveTheGeminiAPI(t *testing.T) {
 	if got := veo2.BackendSummary(after); got != "ended 2026-06-30" {
 		t.Errorf("retired model without backends = %q", got)
 	}
+	// A model offered on both backends implicitly still lists a backend's end.
+	implicit := &Model{ID: "x", BackendShutdown: map[string]string{"gemini-api": "2026-10-22"}}
+	if got := implicit.BackendSummary(after); got != "gemini-api ended 2026-10-22, vertex" {
+		t.Errorf("implicit backends with a shutdown = %q", got)
+	}
 	// Retired Veo IDs follow the chain to Omni.
 	r, err := c.Resolve("veo-3.0-generate-001", Video, "gemini-api", after)
 	if err != nil || r.Model.ID != "gemini-omni-1.1-flash" || len(r.Warnings) != 2 {
