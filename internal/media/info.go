@@ -95,8 +95,8 @@ func (s *Service) ListModels(ctx context.Context, req ListModelsRequest) (*ListM
 			Price: m.PriceSummary(), Shutdown: m.ShutdownOn(backend), Replacement: m.Replacement,
 			OnBackend: m.OfferedOn(backend, now), Notes: m.Notes,
 		}
-		if sum.Replacement == "" && (!sum.OnBackend || m.BackendShutdown[backend] != "") {
-			sum.Replacement = m.Fallback // what this backend uses instead
+		if m.Fallback != "" && (!sum.OnBackend || m.BackendShutdown[backend] != "") {
+			sum.Replacement = m.Fallback // what requests on this backend switch to
 		}
 		if req.Detail {
 			capCopy := m.Capabilities

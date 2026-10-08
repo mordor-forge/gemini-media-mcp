@@ -114,7 +114,7 @@ func (c *Catalog) elsewhere(m *Model, backend string, now time.Time) string {
 		return ""
 	}
 	var other []string
-	for _, b := range m.Backends {
+	for _, b := range m.backendNames() {
 		if b != backend && m.OfferedOn(b, now) {
 			other = append(other, fmt.Sprintf("%s on the %s backend (%s)", m.APIID(b), b, backendName(b)))
 		}

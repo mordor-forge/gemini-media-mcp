@@ -140,6 +140,14 @@ func TestVeoPreviewsLeaveTheGeminiAPI(t *testing.T) {
 	if got := veo2.BackendSummary(after); got != "ended 2026-06-30" {
 		t.Errorf("retired model without backends = %q", got)
 	}
+	// Implicit backends (no list) count as both, in warnings too.
+	ic, err := Merge(embedded, []byte("models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    status: deprecated\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, err := ic.Resolve("x-video", Video, "gemini-api", after); err != nil || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "stays available as x-video on the vertex backend") {
+		t.Errorf("implicit backends warning = %+v %v", r, err)
+	}
 	// A model offered on both backends implicitly still lists a backend's end.
 	implicit := &Model{ID: "x", BackendShutdown: map[string]string{"gemini-api": "2026-10-22"}}
 	if got := implicit.BackendSummary(after); got != "gemini-api ended 2026-10-22, vertex" {
