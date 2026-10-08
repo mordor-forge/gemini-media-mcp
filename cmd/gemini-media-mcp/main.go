@@ -385,16 +385,17 @@ func cmdModels(args []string, stdout io.Writer) error {
 		return err
 	}
 	c := catalog.Default()
-	models := c.List(*mt, *all, time.Now())
+	now := time.Now()
+	models := c.List(*mt, "", *all, now)
 	if *asJSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(models)
 	}
 	tw := tabwriter.NewWriter(stdout, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(tw, "MEDIA\tID\tALIASES\tSTATUS\tPRICE\n")
+	_, _ = fmt.Fprintf(tw, "MEDIA\tID\tALIASES\tSTATUS\tBACKENDS\tPRICE\n")
 	for _, m := range models {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", m.MediaType, m.ID, strings.Join(m.Aliases, ","), m.EffectiveStatus(time.Now()), m.PriceSummary())
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", m.MediaType, m.ID, strings.Join(m.Aliases, ","), m.EffectiveStatus(now), m.BackendSummary(now), m.PriceSummary())
 	}
 	_, _ = fmt.Fprintf(tw, "\ncatalog version %s\n", c.Version)
 	return tw.Flush()

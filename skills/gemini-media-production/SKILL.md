@@ -41,7 +41,7 @@ Look: warm minimal Scandinavian interior, soft morning light, oak and linen, mut
 
 | # | Shot (dur) | Visual | Mode / model | Keyframe | Audio in clip |
 |---|------------|--------|--------------|----------|---------------|
-| 1 | Hook (4 s) | Lamp switches on in a dark room | image-to-video, lite draft then fast | kf1 | ambient only |
+| 1 | Hook (4 s) | Lamp switches on in a dark room | image-to-video, omni 360p draft then 720p | kf1 | ambient only |
 | 2 | Detail (8 s) | Slow orbit around the lamp head | ingredients (lamp sheet), fast, 8 s required | lamp sheet | ambient only |
 | 3 | Lifestyle (6 s) | Person reading, lamp dims warmly | first+last frame, fast, 720p | kf3a, kf3b | ambient only |
 | 4 | End card (2 s) | Logo + "aurora.design" | still card (ffmpeg) | card | none |
@@ -57,7 +57,7 @@ Timing rules of thumb: Veo shots are 4, 6 or 8 s (8 s for 1080p/4k or reference 
 
 1. For each asset in the plan call `gemini-media:estimate_cost` with its real parameters: images (`mediaType: "image"`, `model`, `imageSize`, `count`, `inputImages`), video (`mediaType: "video"`, `model`, `resolution`, `durationSeconds`, `count`), speech (`mediaType: "speech"`, `text`), music (`mediaType: "music"`, `model`). Use `compare: true` on the video line to show cheaper tiers.
 2. Add a margin for iteration: a second take on about half the video shots and two or three extra keyframes.
-3. Present a short table (asset, parameters, estimate) with the total, and ask for approval. Offer a draft path (`nb2` 1K, `lite` 720p, `clip`) and a final path (`fast` or `standard`, 1080p) with their totals.
+3. Present a short table (asset, parameters, estimate) with the total, and ask for approval. Offer a draft path (`nb2` 1K, `omni` 360p or on Vertex AI `lite` 720p, `clip`) and a final path (`omni` 720p/1080p, or on Vertex AI `fast`/`standard` 1080p) with their totals.
 4. Check `budgetRemaining` from `estimate_cost` or `gemini-media:get_usage`; if the plan exceeds it, cut scope before starting.
 5. Individual calls above the approval threshold fail with `[confirmation]`. Once the user has approved the plan, retry those calls with `approvedCostUsd` set to the per-call amount they approved. Never set it without a human's approval.
 
@@ -76,7 +76,7 @@ Prices change; never hardcode them in the plan. Only the estimates from the tool
 ## Running the video jobs
 
 - Start all approved shots with `gemini-media:generate_video` (each returns a `jobId` immediately), then loop over the jobs calling `gemini-media:get_video` with `waitSeconds: 45` until each is `completed`, `failed` or `filtered`. Veo usually takes 1-3 minutes per job, Omni 1-5.
-- Draft first: animate with `lite` 720p to check motion and timing, then re-run only the approved shots on `fast`/`standard`.
+- Draft first: animate with `omni` at 360p (or `lite` 720p on Vertex AI) to check motion and timing, then re-run only the approved shots at final quality. Veo (`lite`, `fast`, `standard`) leaves the Gemini API on 2026-10-22 and stays on Vertex AI.
 - Handle one failure at a time: fix the prompt of a filtered or failed shot and restart only that shot. Never resubmit a job that is still `working`.
 - `gemini-media:get_usage` lists running jobs if you lose track of a `jobId`.
 
@@ -119,7 +119,7 @@ Tool errors read `[kind] message` then `Hint: ...`. Each media skill has a fulle
 ## Interaction mode
 
 - **With a user present:** confirm the brief and the plan in one message (shot list, script, music cue, budget) and get approval before spending. Show keyframes before animating them. At the end offer targeted next steps (reshoot shot 3, alternate voice, 16:9 cut).
-- **Autonomous (nobody to ask):** do not block on questions. Make a compact plan, choose the draft path (`nb2`, `lite` 720p, `tts`, `clip`), keep every call below the approval threshold, and stay within the configured budget (`gemini-media:get_config`). Produce the full draft cut, then report: plan, asset paths, final file, total spend, and what the final-quality version would cost to produce.
+- **Autonomous (nobody to ask):** do not block on questions. Make a compact plan, choose the draft path (`nb2`, `omni` 360p or `lite` 720p on Vertex AI, `tts`, `clip`), keep every call below the approval threshold, and stay within the configured budget (`gemini-media:get_config`). Produce the full draft cut, then report: plan, asset paths, final file, total spend, and what the final-quality version would cost to produce.
 
 ## Final report
 
@@ -128,7 +128,7 @@ End every project with a compact report, whether or not a user is watching:
 ```markdown
 Deliverable: final/promo.mp4 (20.1 s, 9:16) - or "not assembled: edit list below"
 Assets: kf1.png, lamp-sheet.png, shot1.mp4 ... vo.wav, music.mp3 (paths or gemini-media:// URIs)
-Models: nb2 1K, veo lite 720p (drafts), fast 720p (finals), tts Sulafat, clip
+Models: nb2 1K, omni 360p (drafts), omni 720p (finals), tts Sulafat, clip
 Spend: $X.XX this session (get_usage); estimate was $Y.YY
 Not verified: audio mix by ear, motion in shot 3 (checked stills only)
 Next options: 1080p finals (~$Z from estimate_cost), alternate voice, 16:9 cut

@@ -87,12 +87,16 @@ func (s *Service) ListModels(ctx context.Context, req ListModelsRequest) (*ListM
 		}
 	}
 
-	for _, m := range c.List(mt, req.IncludeInactive, now) {
+	backend := s.backend()
+	for _, m := range c.List(mt, backend, req.IncludeInactive, now) {
 		sum := ModelSummary{
 			ID: m.ID, Aliases: m.Aliases, Title: m.Title, MediaType: m.MediaType,
-			Status: m.EffectiveStatus(now), Default: c.IsDefault(m), Summary: m.Summary,
-			Price: m.PriceSummary(), Shutdown: m.Shutdown, Replacement: firstNonEmpty(m.Replacement, m.Fallback),
-			OnBackend: m.SupportsBackend(s.backend()), Notes: m.Notes,
+			Status: m.StatusOn(backend, now), Default: c.IsDefault(m, backend), Summary: m.Summary,
+			Price: m.PriceSummary(), Shutdown: m.ShutdownOn(backend), Replacement: m.Replacement,
+			OnBackend: m.OfferedOn(backend, now), Notes: m.Notes,
+		}
+		if sum.Replacement == "" && (!sum.OnBackend || m.BackendShutdown[backend] != "") {
+			sum.Replacement = m.Fallback // what this backend uses instead
 		}
 		if req.Detail {
 			capCopy := m.Capabilities
@@ -196,8 +200,8 @@ func (s *Service) EstimateCost(_ context.Context, req EstimateRequest) (*Estimat
 	}
 	if req.Compare {
 		c := s.catalog.Get()
-		for _, m := range c.List(mt, false, s.now()) {
-			if m.ID == r.Model.ID || !m.SupportsBackend(s.backend()) {
+		for _, m := range c.List(mt, s.backend(), false, s.now()) {
+			if m.ID == r.Model.ID || !m.OfferedOn(s.backend(), s.now()) {
 				continue
 			}
 			e, ok := estimate(m)
@@ -291,8 +295,7 @@ func (s *Service) Info(transport string) *InfoResult {
 	c := s.catalog.Get()
 	defaults := map[string]any{}
 	for _, mt := range []string{catalog.Image, catalog.Video, catalog.Speech, catalog.Music} {
-		name := c.Defaults[mt]
-		if r, err := c.Resolve(name, mt, s.backend(), s.now()); err == nil {
+		if r, err := c.Resolve("", mt, s.backend(), s.now()); err == nil {
 			defaults[mt] = r.Model.ID
 		}
 	}

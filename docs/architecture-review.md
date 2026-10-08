@@ -1,6 +1,6 @@
 # Architecture review and v1 refactor
 
-*Reviewed 2026-09-28 against the Gemini API, Vertex AI (now "Gemini Enterprise Agent Platform"), MCP spec 2026-07-28, go-sdk v1.8.0 and go-genai v1.71.0. Updated 2026-10-07 for Nano Banana 2.1, Gemini Omni and go-genai v1.72.0.*
+*Reviewed 2026-09-28 against the Gemini API, Vertex AI (now "Gemini Enterprise Agent Platform"), MCP spec 2026-07-28, go-sdk v1.8.0 and go-genai v1.71.0. Updated 2026-10-07 for Nano Banana 2.1, Gemini Omni and go-genai v1.72.0, and 2026-10-08 for the Veo 3.1 previews leaving the Gemini API.*
 
 ## Verdict
 
@@ -109,6 +109,7 @@ A request flows like this. An MCP tool call reaches `server`, which attaches pro
   - Retired models auto-redirect to their replacement, with a warning.
   - Deprecated models warn with their shutdown date.
   - Models missing on a backend fall back, e.g. 3.8 TTS falls back to 2.5 TTS on Vertex, and Lyria 3.5 to Lyria 3 Pro.
+  - Lifecycles can differ per backend (`backendShutdown`), and so can defaults (`backendDefaults`). Google shuts the Veo 3.1 previews down on the Gemini API on 2026-10-22 while the GA `-001` models stay on Gemini Enterprise Agent Platform (Vertex AI). The catalog records that date on the Gemini API only: Veo warns there until the date and falls back to Omni after it, Vertex keeps Veo, and the video default is Omni on the Gemini API and Veo Lite on Vertex. Nano Banana (2.5) uses the same field for its earlier Gemini API shutdown. A default set in the server config still applies on both backends.
   - Retirement dates reported by the API (`modelStatus`) are surfaced as warnings.
 - **Unknown model IDs pass through.** The family is inferred from the ID (`veo-*`, `gemini-omni-*`, `lyria-*`, `*tts*`, `gemini-*image*`, `gemini-*banana*`), so a model launched tomorrow works by raw ID before the catalog knows it. It is unvalidated and unpriced, and says so.
 - **Live discovery.** `list_models live:true` asks the API what the key can actually call. It flags catalog models that are unavailable, and lists media models the catalog doesn't know yet. `gemini-media-mcp doctor` runs the same check from a terminal.
@@ -220,7 +221,7 @@ Google returns no cost with any response, and Veo operations carry no usage at a
 | Area | Now supported |
 |---|---|
 | Images | GA Nano Banana 2.1 (default since 2026-10-06; Nano Banana 2 shuts down 2026-10-29) / Pro / 2 Lite; 1K–4K (512px on NB2 only); 14 aspect ratios (NB2/2.1); up to 14 references; Google Search grounding; 1–4 parallel variations; model commentary returned; thought images filtered |
-| Video | Veo 3.1 Lite/Fast/Standard with backend-specific IDs; first frame, first+last frame, reference "ingredients"; negative prompt; seed and silent video on Vertex; person generation; extension on both backends (720p sources, checked locally); MP4 duration read from the file; `raiMediaFilteredReasons` surfaced. Gemini Omni 1.1 Flash (Gemini API) through the Interactions API: 3–10 s at 360p–4K, first and last frames, up to 10 references, instruction-based editing (`edit_video`) and extension to 40 s, run as background jobs |
+| Video | Veo 3.1 Lite/Fast/Standard with backend-specific IDs (Gemini API until 2026-10-22, then Vertex only; Veo Lite is the Vertex default); first frame, first+last frame, reference "ingredients"; negative prompt; seed and silent video on Vertex; person generation; extension on both backends (720p sources, checked locally); MP4 duration read from the file; `raiMediaFilteredReasons` surfaced. Gemini Omni 1.1 Flash (Gemini API, its video default since 2026-10-08) through the Interactions API: 3–10 s at 360p–4K, first and last frames, up to 10 references, instruction-based editing (`edit_video`) and extension to 40 s, run as background jobs |
 | Speech | Gemini 3.8 Flash / Flash-Lite TTS (verbatim text plus per-turn `speech_metadata` style, injected through the SDK's request hook until the SDK ships the field); legacy 2.5/3.1 models get in-text directions automatically; 2-speaker dialogue; all 30 voices; custom `voice_…` IDs; WAV output from both PCM and WAV responses |
 | Music | Lyria 3.5 (full songs, WAV, image inspiration), Lyria 3 Clip / Pro; lyrics and structure returned |
 
