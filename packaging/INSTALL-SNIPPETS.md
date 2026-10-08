@@ -139,7 +139,9 @@ Add the server to `~/.gemini/config/mcp_config.json` (every workspace) or
 ```
 
 - Use the absolute path from `command -v gemini-media-mcp`: Antigravity may not
-  see your shell's `PATH`.
+  see your shell's `PATH`. On Windows, get it with
+  `(Get-Command gemini-media-mcp).Source` in PowerShell and double each
+  backslash in the JSON: `"C:\\Users\\you\\bin\\gemini-media-mcp.exe"`.
 - Leave out a `type` field; Antigravity's `mcp_config.json` rejects it.
 - Restart `agy`, then check the server with `/mcp`.
 - Already have the Gemini CLI extension? `agy plugin import gemini` converts
