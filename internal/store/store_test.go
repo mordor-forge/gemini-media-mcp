@@ -260,3 +260,26 @@ func TestOpenEnforcesContainment(t *testing.T) {
 		t.Fatalf("symlinked output directory: %v", err)
 	}
 }
+
+// A resource URI's size is checked before the file is read.
+func TestLoadInputBoundsResourceURIsBeforeReading(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.Save("image", "big", "png", pngBytes(t, 64, 64), "image/png", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.LoadInput(a.URI, InputPolicy{MaxBytes: 10})
+	var big *TooLargeError
+	if !errors.As(err, &big) || big.Size != a.Bytes || big.Limit != 10 {
+		t.Fatalf("err = %v, want a TooLargeError", err)
+	}
+	if in, err := s.LoadInput(a.URI, InputPolicy{MaxBytes: a.Bytes}); err != nil || int64(len(in.Data)) != a.Bytes {
+		t.Fatalf("at the limit: %v", err)
+	}
+	if real, info, err := s.Stat(a.Name); err != nil || info.Size() != a.Bytes || filepath.Base(real) != a.Name {
+		t.Fatalf("Stat = %s %v %v", real, info, err)
+	}
+}

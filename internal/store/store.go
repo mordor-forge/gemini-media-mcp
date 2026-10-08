@@ -206,6 +206,29 @@ func (s *Store) Provenance(name string) (*Provenance, error) {
 // target must still lie inside the output directory, so a link planted there
 // cannot expose other files through resources/read or URI inputs.
 func (s *Store) Open(uriOrName string) (string, []byte, error) {
+	return s.OpenMax(uriOrName, 0)
+}
+
+// OpenMax is Open for a file of at most maxBytes (0 = no limit), checked
+// before the file is read; a larger one is a *TooLargeError.
+func (s *Store) OpenMax(uriOrName string, maxBytes int64) (string, []byte, error) {
+	real, info, err := s.Stat(uriOrName)
+	if err != nil {
+		return "", nil, err
+	}
+	if maxBytes > 0 && info.Size() > maxBytes {
+		return "", nil, &TooLargeError{Ref: uriOrName, Size: info.Size(), Limit: maxBytes}
+	}
+	data, err := os.ReadFile(real)
+	if err != nil {
+		return "", nil, err
+	}
+	return real, data, nil
+}
+
+// Stat resolves a resource URI or bare file name like Open, without reading
+// the file.
+func (s *Store) Stat(uriOrName string) (string, os.FileInfo, error) {
 	name := strings.TrimPrefix(uriOrName, URIScheme)
 	if name == "" || name != filepath.Base(name) || strings.HasPrefix(name, ".") {
 		return "", nil, fmt.Errorf("invalid media name %q", uriOrName)
@@ -224,11 +247,7 @@ func (s *Store) Open(uriOrName string) (string, []byte, error) {
 	if !info.Mode().IsRegular() {
 		return "", nil, fmt.Errorf("%s is not a regular file", uriOrName)
 	}
-	data, err := os.ReadFile(real)
-	if err != nil {
-		return "", nil, err
-	}
-	return real, data, nil
+	return real, info, nil
 }
 
 var slugRe = regexp.MustCompile(`[^a-z0-9._-]+`)

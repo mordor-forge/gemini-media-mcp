@@ -579,7 +579,7 @@ func (s *Service) durableRef(ref string, in *store.Input, saveAs string) (string
 		return ref, nil // already absolute
 	}
 	if name, ok := s.outputName(ref); ok {
-		if _, _, err := s.store.Open(name); err == nil {
+		if _, _, err := s.store.Stat(name); err == nil {
 			return store.URIScheme + name, nil
 		}
 	}

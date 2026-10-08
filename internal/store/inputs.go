@@ -57,7 +57,7 @@ func (s *Store) LoadInput(ref string, pol InputPolicy) (*Input, error) {
 	case strings.HasPrefix(ref, "data:"):
 		return decodeDataURI(ref, maxBytes)
 	case strings.HasPrefix(ref, URIScheme):
-		path, data, err := s.Open(ref)
+		path, data, err := s.OpenMax(ref, maxBytes)
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", ref, err)
 		}
