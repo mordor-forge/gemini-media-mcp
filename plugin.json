@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "gemini-media",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Generate images (Nano Banana), video (Veo, Gemini Omni), speech (Gemini TTS) and music (Lyria) with Google's generative media models, with cost estimates and spend budgets.",
   "author": {
     "name": "mordor-forge",

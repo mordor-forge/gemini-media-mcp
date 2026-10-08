@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "gemini-media-mcp",
   "display_name": "Gemini Media",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Generate images (Nano Banana), video (Veo, Gemini Omni), speech (Gemini TTS) and music (Lyria) with Google's generative media models.",
   "long_description": "Create and edit images with Nano Banana, generate, edit and extend Veo and Gemini Omni video clips with native audio, turn text into single- or two-voice speech, and compose music with Lyria. Every call reports its estimated cost, `estimate_cost` compares options before you spend, and optional budgets stop runaway spend. Files are saved to your output directory.\n\nUse a Gemini API key from https://aistudio.google.com/apikey, or a Vertex AI project with gcloud application-default credentials.",
   "author": {

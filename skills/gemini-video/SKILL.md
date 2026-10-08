@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Requires the gemini-media MCP server (https://github.com/mordor-forge/gemini-media-mcp) with a Gemini API key or a Vertex AI project. Veo needs a Vertex AI project (Gemini Enterprise Agent Platform) from 2026-10-22, and Vertex AI express mode cannot run it; Omni runs on the Gemini API only.
 metadata:
   author: mordor-forge
-  version: "1.0.0"
+  version: "1.1.0"
   mcp-server: gemini-media
 ---
 
