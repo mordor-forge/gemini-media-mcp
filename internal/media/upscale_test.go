@@ -669,3 +669,38 @@ func TestStitchTilesRequiresProvenance(t *testing.T) {
 		t.Fatal("a stitched image without provenance must not be left behind")
 	}
 }
+
+func TestTileImageValidatesTheInputsEachPassSends(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(512, 384, 14)
+	src := filepath.Join(t.TempDir(), "refs.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: fakeEdits(t, e, truth, 4, res)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A model that takes a single input image: first-pass tiles go with
+	// the reference (two images), refinement crops alone.
+	override := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(override, []byte("models:\n  - id: gemini-nano-banana-2.1\n    capabilities:\n      maxReferenceImages: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := catalog.NewSource(override, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.svc.catalog = cat
+	if _, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Model: "nb2"}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "at most 1") {
+		t.Fatalf("first pass: err = %v", err)
+	}
+	if _, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: out.File.URI, Model: "nb2", Regions: []TileRegion{{X: 0.3, Y: 0.3, Width: 0.3, Height: 0.3}}}); err != nil {
+		t.Fatalf("refinement pass: %v", err)
+	}
+}

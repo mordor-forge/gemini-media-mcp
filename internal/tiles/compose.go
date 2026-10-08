@@ -209,17 +209,35 @@ func (c *Canvas) Reserve(ps []Placement) {
 // nothing from the canvas, so the next tile can be prepared while another
 // is painted.
 type Prepared struct {
-	p   Placement
-	f   footprint
-	src *image.RGBA
+	p      Placement
+	f      footprint
+	sw, sh int         // resampled size of the whole tile
+	src    *image.RGBA // the part of it painted (Rect within sw x sh)
 }
 
 // Prepare resamples tile (the model's output for p) to its footprint.
+// Only the part that lands on the canvas is computed: a tile reaching far
+// past the canvas would otherwise allocate all of its resampled size.
 func (c *Canvas) Prepare(p Placement, tile image.Image) *Prepared {
 	f := c.footprint(p)
 	sw := max(int(math.Round(f.x1-f.x0)), 1)
 	sh := max(int(math.Round(f.y1-f.y0)), 1)
-	return &Prepared{p: p, f: f, src: Resize(tile, tile.Bounds(), sw, sh)}
+	kx, ky := float64(sw)/(f.x1-f.x0), float64(sh)/(f.y1-f.y0)
+	x0, x1 := readSpan(f.px0, f.px1, f.x0, kx, sw)
+	y0, y1 := readSpan(f.py0, f.py1, f.y0, ky, sh)
+	win := image.Rect(x0, y0, x1, y1)
+	return &Prepared{p: p, f: f, sw: sw, sh: sh, src: ResizeWindow(tile, tile.Bounds(), sw, sh, win)}
+}
+
+// readSpan is the range of resampled pixels, within [0, n), that painting
+// canvas pixels p0 to p1 (exclusive) samples: the mapped range plus the
+// bilinear neighbors, and at least one pixel.
+func readSpan(p0, p1 int, f0, k float64, n int) (int, int) {
+	lo := int(math.Floor((float64(p0)+0.5-f0)*k-0.5)) - 1
+	hi := int(math.Ceil((float64(p1)-0.5-f0)*k-0.5)) + 2
+	lo = min(max(lo, 0), n-1)
+	hi = min(max(hi, lo+1), n)
+	return lo, hi
 }
 
 // Paint blends a prepared tile into the canvas. Call Reserve first with
@@ -229,11 +247,12 @@ func (c *Canvas) Paint(pp *Prepared) {
 		c.Reserve([]Placement{pp.p})
 	}
 	p, f, src := pp.p, pp.f, pp.src
-	sw, sh := src.Rect.Dx(), src.Rect.Dy()
-	kx, ky := float64(sw)/(f.x1-f.x0), float64(sh)/(f.y1-f.y0)
+	kx, ky := float64(pp.sw)/(f.x1-f.x0), float64(pp.sh)/(f.y1-f.y0)
+	// src holds only a window of the resampled tile.
+	ox, oy := float64(src.Rect.Min.X), float64(src.Rect.Min.Y)
 	b := p.Box
 	rows(f.py0, f.py1, func(y int) {
-		v := (float64(y)+0.5-f.y0)*ky - 0.5
+		v := (float64(y)+0.5-f.y0)*ky - 0.5 - oy
 		nv := ((float64(y)+0.5)/c.sy - float64(b.Y)) / float64(b.H)
 		for x := f.px0; x < f.px1; x++ {
 			q := uint32(math.Round(f.weight(&p, x, y) * weightScale))
@@ -244,7 +263,7 @@ func (c *Canvas) Paint(pp *Prepared) {
 			wn := uint32(c.wt[i]) + q
 			a := float32(q) / float32(wn)
 			c.wt[i] = uint16(min(wn, math.MaxUint16))
-			u := (float64(x)+0.5-f.x0)*kx - 0.5
+			u := (float64(x)+0.5-f.x0)*kx - 0.5 - ox
 			px := sampleRGBA(src, u, v)
 			off := p.Align.Color.At(((float64(x)+0.5)/c.sx-float64(b.X))/float64(b.W), nv)
 			d := c.Img.Pix[4*i : 4*i+4]

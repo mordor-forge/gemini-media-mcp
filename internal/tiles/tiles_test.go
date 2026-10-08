@@ -1,6 +1,7 @@
 package tiles
 
 import (
+	"bytes"
 	"image"
 	"image/color"
 	"math"
@@ -425,5 +426,67 @@ func TestStitchSingleTileThatExtendsPastTheImage(t *testing.T) {
 	c.Paint(c.Prepare(ps[0], tile))
 	if got, base := meanAbsDiff(c.Img, g, g.Bounds()), meanAbsDiff(scaled(plan, 1024, 512), g, g.Bounds()); got > base*0.7 {
 		t.Fatalf("single-tile error %.2f not clearly below interpolation %.2f", got, base)
+	}
+}
+
+func TestResizeWindowMatchesResize(t *testing.T) {
+	src := truth(97, 61, 3)
+	for _, size := range [][2]int{{300, 190}, {40, 25}} {
+		w, h := size[0], size[1]
+		full := Resize(src, src.Bounds(), w, h)
+		win := image.Rect(w/3, h/4, w-5, h/2+3)
+		part := ResizeWindow(src, src.Bounds(), w, h, win)
+		if part.Rect != win {
+			t.Fatalf("%dx%d: window %v, want %v", w, h, part.Rect, win)
+		}
+		for y := win.Min.Y; y < win.Max.Y; y++ {
+			for x := win.Min.X; x < win.Max.X; x++ {
+				if part.RGBAAt(x, y) != full.RGBAAt(x, y) {
+					t.Fatalf("%dx%d: pixel %d,%d = %v, want %v", w, h, x, y, part.RGBAAt(x, y), full.RGBAAt(x, y))
+				}
+			}
+		}
+	}
+	if r := ResizeWindow(src, src.Bounds(), 50, 50, image.Rect(60, 0, 70, 10)).Rect; !r.Empty() {
+		t.Fatalf("a window outside the result = %v, want empty", r)
+	}
+}
+
+func TestPrepareResamplesOnlyWhatLandsOnTheCanvas(t *testing.T) {
+	// A 32x32 box over a 16x16 image stitched to 512x512: the whole tile
+	// resamples to 1024x1024, but only the canvas part is needed.
+	g := truth(512, 512, 7)
+	plan := scaled(g, 16, 16)
+	tile := scaled(Crop(g, Box{X: -256, Y: -256, W: 1024, H: 1024}), 640, 640)
+	ps := []Placement{{Box: Box{X: -8, Y: -8, W: 32, H: 32}}}
+	Feathers(ps, 16, 16, 0.2)
+	c := NewCanvas(plan, 512, 512)
+	c.Reserve(ps)
+	pp := c.Prepare(ps[0], tile)
+	if pp.sw != 1024 || pp.sh != 1024 || pp.src.Rect.Dx() > 515 || pp.src.Rect.Dy() > 515 {
+		t.Fatalf("prepared %dx%d of a %dx%d resample, want about the 512x512 canvas", pp.src.Rect.Dx(), pp.src.Rect.Dy(), pp.sw, pp.sh)
+	}
+	// It paints exactly what the whole resampled tile would.
+	whole := &Prepared{p: pp.p, f: pp.f, sw: pp.sw, sh: pp.sh, src: Resize(tile, tile.Bounds(), pp.sw, pp.sh)}
+	c2 := NewCanvas(plan, 512, 512)
+	c2.Reserve(ps)
+	c.Paint(pp)
+	c2.Paint(whole)
+	if !bytes.Equal(c.Img.Pix, c2.Img.Pix) {
+		t.Fatal("the windowed tile paints different pixels")
+	}
+
+	for _, tc := range []struct {
+		p0, p1 int
+		f0     float64
+		lo, hi int
+	}{
+		{0, 10, 500, 0, 1},     // mapped entirely before the tile: its first pixel
+		{0, 10, -500, 99, 100}, // entirely after it: its last pixel
+		{20, 30, 10, 9, 21},
+	} {
+		if lo, hi := readSpan(tc.p0, tc.p1, tc.f0, 1, 100); lo != tc.lo || hi != tc.hi {
+			t.Errorf("readSpan(%d, %d, %g) = %d, %d; want %d, %d", tc.p0, tc.p1, tc.f0, lo, hi, tc.lo, tc.hi)
+		}
 	}
 }

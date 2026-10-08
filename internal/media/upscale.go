@@ -76,13 +76,13 @@ type TileRegion struct {
 // TileImageRequest is the input of tile_image.
 type TileImageRequest struct {
 	Image      string       `json:"image" jsonschema:"The image to cut: the original photo for the first pass, or the previous stitch_tiles result for a refinement pass. File path, gemini-media:// URI or data: URI."`
-	Grid       int          `json:"grid,omitempty" jsonschema:"Cut a grid x grid layout covering the whole image (2-4, default 3). Ignored when regions are given."`
+	Grid       int          `json:"grid,omitempty" jsonschema:"Cut a grid x grid layout covering the whole image (1-4). Omit it on a first pass to let tile_image pick the cheapest grid that covers longEdge (explained in planNote); a later full-grid pass defaults to 3. Ignored when regions are given."`
 	Regions    []TileRegion `json:"regions,omitempty" jsonschema:"Refinement pass: up to 12 areas to re-render (faces, hands, text, materials), as fractions of the image. Omit for a full grid."`
 	Padding    float64      `json:"padding,omitempty" jsonschema:"Context added around each cell or region, as a fraction of its size (default 0.2, 0.05-0.5). Tiles then grow to the nearest aspect ratio the model supports."`
 	LongEdge   int          `json:"longEdge,omitempty" jsonschema:"Long edge in pixels of the image stitch_tiles will produce (default 8192, 1024-16384, at most 70 megapixels). First pass only; later passes keep their input's size."`
 	Original   string       `json:"original,omitempty" jsonschema:"The untouched original, sent with every tile as context. Defaults to image on a first pass and to the original recorded by stitch_tiles on later passes."`
 	Model      string       `json:"model,omitempty" jsonschema:"Image model the tiles will be edited with (default nb2). Sets the supported aspect ratios and the cost estimate."`
-	ImageSize  string       `json:"imageSize,omitempty" jsonschema:"Size the tiles will be edited at (default 4K, the most detail per tile)."`
+	ImageSize  string       `json:"imageSize,omitempty" jsonschema:"Size the tiles will be edited at (1K, 2K or 4K, as the model supports). Omit it on a first pass to pick it with the grid; otherwise it defaults to the model's largest size."`
 	OutputName string       `json:"outputName,omitempty" jsonschema:"Optional base name for the crops and the stitched result. Defaults to the original's name."`
 }
 
@@ -224,13 +224,8 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		return nil, apperr.Invalidf("the catalog lists no output sizes for %s that tile_image can plan with (512, 1K, 2K, 4K, ...); pick nb2 or pro", m.ID)
 	}
 	size := strings.ToUpper(strings.TrimSpace(req.ImageSize))
-	if size != "" {
-		if _, err := m.Validate(catalog.Params{"imageSize": size, "referenceImages": "2"}, s.backend()); err != nil {
-			return nil, err
-		}
-		if imageSizePixels(size) == 0 {
-			return nil, apperr.Invalidf("tile_image cannot tell how many pixels imageSize %s has; omit imageSize to plan automatically, or use one of %s", size, strings.Join(sizes, ", "))
-		}
+	if size != "" && imageSizePixels(size) == 0 {
+		return nil, apperr.Invalidf("tile_image cannot tell how many pixels imageSize %s has; omit imageSize to plan automatically, or use one of %s", size, strings.Join(sizes, ", "))
 	}
 	ratios := tiles.ParseRatios(m.Capabilities.AspectRatios)
 	if len(ratios) == 0 {
@@ -263,6 +258,15 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	}
 	if original == "" {
 		original = req.Image
+	}
+	// Each tile is edited with its crop plus, on the first pass only, the
+	// reference.
+	editInputs := 1
+	if pass == 1 {
+		editInputs = 2
+	}
+	if _, err := m.Validate(catalog.Params{"imageSize": size, "referenceImages": strconv.Itoa(editInputs)}, s.backend()); err != nil {
+		return nil, err
 	}
 
 	outW, outH := pw, ph
@@ -453,11 +457,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	}
 	res.Job = ja.URI
 
-	inputs := 1 // refinement crops are edited alone
-	if refAsset != nil {
-		inputs = 2
-	}
-	per := m.EstimateImage(size, 1, 1200, inputs, s.backend(), location)
+	per := m.EstimateImage(size, 1, 1200, editInputs, s.backend(), location)
 	res.Cost = Cost{
 		EstimatedUSD: round4(per.USD * float64(len(planned))), USD: round4(per.USD * float64(len(planned))),
 		Basis: per.Basis, PriceAsOf: per.PriceAsOf,

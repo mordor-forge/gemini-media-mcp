@@ -14,14 +14,26 @@ import (
 // antialiases (as x/image/draw's CatmullRom.Scale does), and spread across
 // CPUs.
 func Resize(src image.Image, sr image.Rectangle, w, h int) *image.RGBA {
-	rgba := asRGBA(src, sr)
-	sw, sh := rgba.Rect.Dx(), rgba.Rect.Dy()
-	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	if sw == 0 || sh == 0 || w == 0 || h == 0 {
+	return ResizeWindow(src, sr, w, h, image.Rect(0, 0, w, h))
+}
+
+// ResizeWindow is Resize computing only the pixels of the w x h result
+// inside win, with the same values. The returned image's Rect is win
+// clipped to the result.
+func ResizeWindow(src image.Image, sr image.Rectangle, w, h int, win image.Rectangle) *image.RGBA {
+	win = win.Intersect(image.Rect(0, 0, w, h))
+	dst := image.NewRGBA(win)
+	if win.Empty() || sr.Empty() {
 		return dst
 	}
-	xs := filterTaps(sw, w)
-	ys := filterTaps(sh, h)
+	rgba := asRGBA(src, sr)
+	sw, sh := rgba.Rect.Dx(), rgba.Rect.Dy()
+	if sw == 0 || sh == 0 {
+		return dst
+	}
+	xs := filterTaps(sw, w, win.Min.X, win.Max.X)
+	ys := filterTaps(sh, h, win.Min.Y, win.Max.Y)
+	w, h = win.Dx(), win.Dy()
 
 	// Bands of output rows; each band filters the source rows it needs
 	// horizontally into a scratch buffer, then vertically into dst.
@@ -97,13 +109,14 @@ type taps struct {
 	w     []float32
 }
 
-// filterTaps computes Catmull-Rom weights mapping n source samples to m.
-func filterTaps(n, m int) []taps {
+// filterTaps computes Catmull-Rom weights mapping n source samples to m,
+// for output samples i0 to i1 (exclusive).
+func filterTaps(n, m, i0, i1 int) []taps {
 	scale := float64(m) / float64(n)
 	stretch := math.Max(1, 1/scale) // widen the kernel when shrinking
 	support := 2 * stretch
-	out := make([]taps, m)
-	for i := range m {
+	out := make([]taps, 0, i1-i0)
+	for i := i0; i < i1; i++ {
 		c := (float64(i)+0.5)/scale - 0.5
 		lo := int(math.Ceil(c - support))
 		hi := int(math.Floor(c + support))
@@ -122,7 +135,7 @@ func filterTaps(n, m int) []taps {
 			j := min(max(lo+k, 0), n-1)
 			w[j-first] += float32(v / sum)
 		}
-		out[i] = taps{first: first, w: w}
+		out = append(out, taps{first: first, w: w})
 	}
 	return out
 }
