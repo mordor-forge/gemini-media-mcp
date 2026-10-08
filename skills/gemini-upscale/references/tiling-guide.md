@@ -51,7 +51,7 @@ Keep the tile's `aspectRatio` in the `edit_image` call. A wrong ratio is the mos
    - The fade is at most half the overlap with each neighbor, so every overlap has at least one fully opaque tile and the old image never shows through a seam.
    - Sides on the image border are not faded.
    - The base image (the interpolated original, or the previous pass) keeps only the weight the tiles leave. It shows through only where no tile was placed.
-4. **Output.** The result is a lossless PNG at the planned size, with a downscaled preview and 100% crops for inspection. An 8K stitch takes 10-30 s and up to about 1 GB of RAM.
+4. **Output.** The result is a lossless PNG at the planned size, with a downscaled preview and 100% crops for inspection. An 8K stitch takes 10-30 s and up to about 1 GB of RAM. The server runs one `tile_image` or `stitch_tiles` step at a time, so parallel calls queue rather than add up.
 
 ## Worked example: a 1024 px portrait to 8K
 

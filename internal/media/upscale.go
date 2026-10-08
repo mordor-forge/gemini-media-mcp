@@ -279,6 +279,11 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	if err := stopped(); err != nil {
 		return nil, err
 	}
+	release, err := s.admitImaging(ctx, "tile_image", "it takes a few seconds on large images")
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	in, err := s.loadLocal(req.Image, "image")
 	if err != nil {
@@ -710,9 +715,11 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		return nil, apperr.Invalidf("no tiles given: pass the edit_image result of each tile")
 	}
 
-	if err := ctx.Err(); err != nil {
-		return nil, requestStopped(err, "stitch_tiles", "an 8K stitch takes 10-30 s")
+	release, err := s.admitImaging(ctx, "stitch_tiles", "an 8K stitch takes 10-30 s")
+	if err != nil {
+		return nil, err
 	}
+	defer release()
 	pin, err := s.loadLocal(job.Image, "tiled image")
 	if err != nil {
 		return nil, err
@@ -984,6 +991,28 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		res.Warnings = append(res.Warnings, fmt.Sprintf("the tiles carry about %d px of model detail along the long edge; the %d px output is interpolated beyond that", res.NativeLongEdge, max(job.OutWidth, job.OutHeight)))
 	}
 	return res, nil
+}
+
+// admitImaging waits until no other tile_image or stitch_tiles step runs in
+// this process, so their memory never adds up: each may hold about 1 GB.
+// It returns the release, or a stop error once ctx ends.
+func (s *Service) admitImaging(ctx context.Context, tool, duration string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, requestStopped(err, tool, duration)
+	}
+	release := func() { <-s.imaging }
+	select {
+	case s.imaging <- struct{}{}:
+		return release, nil
+	default:
+	}
+	progress(ctx, "waiting for another tile_image or stitch_tiles call to finish", 0, 0)
+	select {
+	case s.imaging <- struct{}{}:
+		return release, nil
+	case <-ctx.Done():
+		return nil, requestStopped(ctx.Err(), tool, duration)
+	}
 }
 
 // saveFailed reports that tool could not write what into the output

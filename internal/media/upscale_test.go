@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/image/draw"
 
@@ -1019,5 +1020,34 @@ func TestStitchReportsAnUncoveredEdge(t *testing.T) {
 	}
 	if out.NativeLongEdge != 0 || !strings.Contains(strings.Join(out.Warnings, " "), "covered by no tile") {
 		t.Fatalf("native %d, warnings %v", out.NativeLongEdge, out.Warnings)
+	}
+}
+
+// One tile_image or stitch_tiles step runs at a time per process; a call
+// that cannot get the slot waits, and stops with its request.
+func TestUpscaleStepsRunOneAtATime(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	src := filepath.Join(t.TempDir(), "gate.png")
+	if err := os.WriteFile(src, encode(t, scene(256, 192, 26)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.imaging <- struct{}{} // another step is running
+	waited := false
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	ctx = WithProgress(ctx, func(msg string, _, _ float64) {
+		if strings.HasPrefix(msg, "waiting for another") {
+			waited = true
+		}
+	})
+	if _, err := e.svc.TileImage(ctx, TileImageRequest{Image: src, Grid: 2}); apperr.KindOf(err) != apperr.Timeout || !waited {
+		t.Fatalf("while busy: err = %v, waited %v", err, waited)
+	}
+	<-e.svc.imaging
+	if _, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2}); err != nil {
+		t.Fatalf("once free: %v", err)
+	}
+	if len(e.svc.imaging) != 0 {
+		t.Fatal("the slot must be released after the call")
 	}
 }
