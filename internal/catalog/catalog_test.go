@@ -526,4 +526,13 @@ func TestOverrideErrors(t *testing.T) {
 			t.Errorf("malformed date should fail: %q -> %v", bad, err)
 		}
 	}
+	for bad, want := range map[string]string{
+		"backendDefaults:\n  vertex: {video: veo-9}\n":   "not in the catalog",
+		"backendDefaults:\n  gemini-api: {video: nb2}\n": "generates image",
+		"defaults:\n  image: omni\n":                     "generates video",
+	} {
+		if _, err := Merge(embedded, []byte(bad)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("bad default should fail: %q -> %v", bad, err)
+		}
+	}
 }
