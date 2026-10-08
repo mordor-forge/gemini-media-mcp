@@ -101,6 +101,10 @@ tool_timeout_sec = 300          # 4K images and video polls can exceed the 60 s 
 
 ## Gemini CLI
 
+Since June 2026 Gemini CLI serves only paid Gemini API keys, Vertex AI and
+Gemini Code Assist Standard/Enterprise. Free, Google AI Pro and Ultra accounts
+use [Antigravity CLI](#antigravity-cli) instead.
+
 ```sh
 gemini extensions install https://github.com/mordor-forge/gemini-media-mcp
 gemini extensions config gemini-media-mcp    # API key (keychain), Vertex project/location, output dir
@@ -115,6 +119,31 @@ to extensions, so set them with `gemini extensions config`, or run
 on `PATH`: run `./gemini-media-mcp configure --api-key-stdin` in
 `~/.gemini/extensions/gemini-media-mcp/` instead.
 Stdio MCP servers only start in trusted folders.
+
+## Antigravity CLI
+
+Not yet tested with this server. Antigravity CLI (`agy`) replaced Gemini CLI for
+free, Google AI Pro and Ultra accounts. Signing in to Antigravity pays for the
+agent only: the server still needs its own Gemini API key or Vertex project
+(section 2), billed per use.
+
+Add the server to `~/.gemini/config/mcp_config.json` (every workspace) or
+`.agents/mcp_config.json` (one workspace):
+
+```json
+{
+  "mcpServers": {
+    "gemini-media": { "command": "/home/you/.local/bin/gemini-media-mcp" }
+  }
+}
+```
+
+- Use the absolute path from `command -v gemini-media-mcp`: Antigravity may not
+  see your shell's `PATH`.
+- Leave out a `type` field; Antigravity's `mcp_config.json` rejects it.
+- Restart `agy`, then check the server with `/mcp`.
+- Already have the Gemini CLI extension? `agy plugin import gemini` converts
+  installed extensions to Antigravity plugins; check the result with `/mcp`.
 
 ## VS Code (GitHub Copilot)
 

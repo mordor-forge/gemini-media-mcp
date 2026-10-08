@@ -251,7 +251,8 @@ A release is one tag. `scripts/sync-version.sh` stamps the version into every ma
 7. **MCP Apps** (a `ui://` gallery and player) and the Skills-over-MCP extension, so skills can be served by the server itself.
 8. **OAuth and multi-tenant hosting.** Per-user job and budget isolation, and the RFC 9728 metadata endpoint. The static bearer token covers self-hosting today.
 9. **An OpenTelemetry exporter.** The ledger fields map onto `gen_ai.*` semantic conventions and can be exported later.
-10. **Live verification on Vertex AI.** The Gemini API has been tested live: the E2E suite (2026-09-29), a manual QA round of every tool (2026-10-06, which corrected Nano Banana 2.1's token counts and several naming and reporting issues) and the Omni clip-and-edit test (2026-10-07). Vertex AI has not been run live yet. Offline coverage:
+10. **An Antigravity CLI plugin.** Antigravity CLI replaced Gemini CLI for consumer accounts in June 2026. Its plugins are a folder with `plugin.json`, `mcp_config.json` and `skills/`, but its `plugin.json` schema reportedly accepts only `name` and `description`, which conflicts with the Agent Plugins 1.0 manifest at the repository root. Until that is tested with `agy`, the install snippets document a manual `mcp_config.json` entry.
+11. **Live verification on Vertex AI.** The Gemini API has been tested live: the E2E suite (2026-09-29), a manual QA round of every tool (2026-10-06, which corrected Nano Banana 2.1's token counts and several naming and reporting issues) and the Omni clip-and-edit test (2026-10-07). Vertex AI has not been run live yet. Offline coverage:
     - unit and integration tests against an in-memory fake of the Google API;
     - tests that drive the real genai SDK against local fake HTTP servers, checking serialization, the TTS body patch, retries and the Interactions API;
     - end-to-end MCP tests over in-memory and HTTP transports;

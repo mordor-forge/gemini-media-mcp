@@ -46,7 +46,9 @@ An MCP server for Google's generative media models: **images** (Nano Banana 2.1 
    tool_timeout_sec = 300   # 4K images and video polls can exceed the 60 s default
    ```
 
-   **Gemini CLI:** `gemini extensions install https://github.com/mordor-forge/gemini-media-mcp`
+   **Gemini CLI** (paid API keys and Gemini Code Assist only, since June 2026): `gemini extensions install https://github.com/mordor-forge/gemini-media-mcp`
+
+   **Antigravity CLI:** add the server to `~/.gemini/config/mcp_config.json`, as shown in the [install snippets](packaging/INSTALL-SNIPPETS.md#antigravity-cli).
 
    **Claude Desktop:** download `gemini-media-mcp-<version>.mcpb` from the [latest release](https://github.com/mordor-forge/gemini-media-mcp/releases/latest) and open it.
 
