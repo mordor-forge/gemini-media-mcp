@@ -560,7 +560,7 @@ type StitchResult struct {
 	File           store.Asset  `json:"file"`
 	Pass           int          `json:"pass"`
 	Tiles          []TileReport `json:"tiles"`
-	NativeLongEdge int          `json:"nativeLongEdge,omitempty" jsonschema:"About how many pixels of model-rendered detail the long edge carries (grid passes)"`
+	NativeLongEdge int          `json:"nativeLongEdge,omitempty" jsonschema:"About how many pixels of model-rendered detail the long edge carries, limited by the least detailed tile; 0 when unknown or when part of the image has none"`
 	Original       string       `json:"original"`
 	Reference      string       `json:"reference"`
 	Details        []string     `json:"details,omitempty" jsonschema:"What each detail preview shows, in order"`
@@ -784,7 +784,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	}
 	switch {
 	case job.Mode != "grid":
-		res.NativeLongEdge = job.PrevNative // regions do not lower it
+		// Regions keep the image's figure unless one is rendered coarser
+		// (a smaller imageSize or a large crop), which then caps it.
+		res.NativeLongEdge = min(job.PrevNative, int(math.Round(native*float64(max(job.Width, job.Height)))))
 	case len(placements) == len(job.Tiles):
 		res.NativeLongEdge = int(math.Round(native * float64(max(job.Width, job.Height))))
 	default:

@@ -190,8 +190,23 @@ func TestTileAndStitchTwoPasses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out2.Pass != 2 || out2.File.Name != "portrait-upscaled-p2.png" || out2.Tiles[0].Status != "placed" || len(out2.Details) != 1 || out2.NativeLongEdge != out.NativeLongEdge {
-		t.Fatalf("pass 2 = %+v", out2)
+	if out2.Pass != 2 || out2.File.Name != "portrait-upscaled-p2.png" || out2.Tiles[0].Status != "placed" || len(out2.Details) != 1 ||
+		out2.NativeLongEdge > out.NativeLongEdge || out2.NativeLongEdge < out.NativeLongEdge*98/100 { // the region renders at about pass 1's density
+		t.Fatalf("pass 2 = %+v (pass 1 native %d)", out2, out.NativeLongEdge)
+	}
+
+	// A region rendered coarser than the image lowers its detail figure.
+	b := res2.Tiles[0].Box
+	coarse, err := e.store.Save("image", "coarse-eye", "png", encode(t, resized(truth, image.Rect(b.X, b.Y, b.X1(), b.Y1()), b.W/2, b.H/2)), "image/png", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out3, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res2.Job, Tiles: []StitchTile{{Tile: 1, Image: coarse.URI}}})
+	if err != nil || out3.Tiles[0].Status != "placed" {
+		t.Fatalf("coarse region = %+v %v", out3, err)
+	}
+	if out3.NativeLongEdge < 480 || out3.NativeLongEdge > 540 {
+		t.Fatalf("coarse region native = %d, want about 512 (half of the 1024 px image)", out3.NativeLongEdge)
 	}
 }
 
