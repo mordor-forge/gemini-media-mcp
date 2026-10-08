@@ -83,7 +83,9 @@ func fakeEdits(t *testing.T, e *env, truth *image.RGBA, k float64, res *TileImag
 		r := image.Rect(int((float64(b.X)+dx)*k), int((float64(b.Y)+dy)*k), int((float64(b.X1())+dx)*k), int((float64(b.Y1())+dy)*k))
 		tw := int(float64(b.W) * k * 1.25)
 		th := int(math.Round(float64(tw) * float64(b.H) / float64(b.W)))
-		a, err := e.store.Save("image", pt.Crop.Name+"-edit", "png", encode(t, resized(truth, r, tw, th)), "image/png", nil)
+		// Past the image's edges the crop is mirrored, as tile_image cuts it.
+		crop := tiles.Crop(truth, tiles.Box{X: r.Min.X, Y: r.Min.Y, W: r.Dx(), H: r.Dy()})
+		a, err := e.store.Save("image", pt.Crop.Name+"-edit", "png", encode(t, resized(crop, crop.Rect, tw, th)), "image/png", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -376,6 +378,9 @@ func TestTileImageWarnsAboutLargeRegions(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 1200, 800))
 	for i := range img.Pix {
 		img.Pix[i] = uint8(i * 7)
+		if i%4 == 3 {
+			img.Pix[i] = 255 // opaque
+		}
 	}
 	src := filepath.Join(t.TempDir(), "big.png")
 	if err := os.WriteFile(src, encode(t, img), 0o600); err != nil {
@@ -410,6 +415,9 @@ func TestTileImagePlansAutomatically(t *testing.T) {
 		img := image.NewRGBA(image.Rect(0, 0, c.w, c.h))
 		for i := range img.Pix {
 			img.Pix[i] = uint8(i * 13)
+			if i%4 == 3 {
+				img.Pix[i] = 255 // opaque
+			}
 		}
 		src := filepath.Join(t.TempDir(), "in.png")
 		if err := os.WriteFile(src, encode(t, img), 0o600); err != nil {
@@ -504,7 +512,7 @@ func TestStitchTilesStopsWhenCanceled(t *testing.T) {
 func TestTileImageRefusesExtremePanoramas(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	src := filepath.Join(t.TempDir(), "strip.png")
-	if err := os.WriteFile(src, encode(t, image.NewRGBA(image.Rect(0, 0, 30000, 100))), 0o600); err != nil {
+	if err := os.WriteFile(src, encode(t, image.NewGray(image.Rect(0, 0, 30000, 100))), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	_, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 1, ImageSize: "1K"})
@@ -1049,5 +1057,56 @@ func TestUpscaleStepsRunOneAtATime(t *testing.T) {
 	}
 	if len(e.svc.imaging) != 0 {
 		t.Fatal("the slot must be released after the call")
+	}
+}
+
+// At most maxImagingWaiters calls wait for the imaging slot; more are
+// refused at once rather than queued with their requests.
+func TestImagingWaitersAreBounded(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	e.svc.imaging <- struct{}{} // a step is running
+	ctx, cancel := context.WithCancel(context.Background())
+	errs := make(chan error, maxImagingWaiters)
+	for range maxImagingWaiters {
+		go func() {
+			_, err := e.svc.admitImaging(ctx, "tile_image", "")
+			errs <- err
+		}()
+	}
+	for deadline := time.Now().Add(5 * time.Second); e.svc.imagingWaiting.Load() < maxImagingWaiters; {
+		if time.Now().After(deadline) {
+			t.Fatal("waiters never queued")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := e.svc.admitImaging(context.Background(), "stitch_tiles", ""); apperr.KindOf(err) != apperr.Unavailable || !strings.Contains(err.Error(), "busy") {
+		t.Fatalf("over the bound: err = %v", err)
+	}
+	cancel()
+	for range maxImagingWaiters {
+		if err := <-errs; apperr.KindOf(err) != apperr.Canceled {
+			t.Fatalf("canceled waiter: err = %v", err)
+		}
+	}
+	if n := e.svc.imagingWaiting.Load(); n != 0 {
+		t.Fatalf("%d waiters left counted", n)
+	}
+}
+
+// A transparent image is refused: the model returns opaque tiles.
+func TestTileImageRefusesTransparentImages(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	img := image.NewNRGBA(image.Rect(0, 0, 200, 150))
+	for i := range img.Pix {
+		img.Pix[i] = 200
+	}
+	img.SetNRGBA(10, 10, color.NRGBA{0, 0, 0, 0})
+	src := filepath.Join(t.TempDir(), "logo.png")
+	if err := os.WriteFile(src, encode(t, img), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 1})
+	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Message, "transparent") || !strings.Contains(ae.Hint, "Flatten") {
+		t.Fatalf("err = %v", err)
 	}
 }

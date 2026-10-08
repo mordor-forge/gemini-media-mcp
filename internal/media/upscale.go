@@ -336,6 +336,9 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		if refSrc, decoded, err = decodeShrunk(oin, "original", maxPlanPixels, maxCropPixels); err != nil {
 			return nil, err
 		}
+		if err := requireOpaque(refSrc, original); err != nil {
+			return nil, err
+		}
 		if decoded > 16_000_000 {
 			runtime.GC() // release a large full-size decode before the image's
 		}
@@ -348,6 +351,9 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		return nil, err
 	}
 	if err := stopped(); err != nil {
+		return nil, err
+	}
+	if err := requireOpaque(img, req.Image); err != nil {
 		return nil, err
 	}
 	pw, ph := img.Bounds().Dx(), img.Bounds().Dy()
@@ -993,9 +999,14 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	return res, nil
 }
 
+// maxImagingWaiters bounds the calls waiting for the imaging slot: each
+// holds its request (up to tens of MB inline) while it waits.
+const maxImagingWaiters = 2
+
 // admitImaging waits until no other tile_image or stitch_tiles step runs in
 // this process, so their memory never adds up: each may hold about 1 GB.
-// It returns the release, or a stop error once ctx ends.
+// It returns the release, or a stop error once ctx ends; with
+// maxImagingWaiters calls already waiting it refuses at once.
 func (s *Service) admitImaging(ctx context.Context, tool, duration string) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, requestStopped(err, tool, duration)
@@ -1006,6 +1017,13 @@ func (s *Service) admitImaging(ctx context.Context, tool, duration string) (func
 		return release, nil
 	default:
 	}
+	if s.imagingWaiting.Add(1) > maxImagingWaiters {
+		s.imagingWaiting.Add(-1)
+		return nil, &apperr.Error{Kind: apperr.Unavailable,
+			Message: fmt.Sprintf("%s: the server is busy with other tile_image and stitch_tiles calls, which run one at a time", tool),
+			Hint:    "Call it again in a minute, or wait for the earlier upscale calls to finish."}
+	}
+	defer s.imagingWaiting.Add(-1)
 	progress(ctx, "waiting for another tile_image or stitch_tiles call to finish", 0, 0)
 	select {
 	case s.imaging <- struct{}{}:
@@ -1263,6 +1281,18 @@ func decodeRaw(in *store.Input, what string, limit int) (image.Image, string, er
 		return nil, "", apperr.Invalidf("%s %s: %v", what, in.Ref, err)
 	}
 	return img, format, nil
+}
+
+// requireOpaque refuses an image with transparent areas: the model returns
+// opaque tiles, so the upscale would drop the transparency, and the
+// reference and crops would show those areas as a dark matte.
+func requireOpaque(img image.Image, ref string) error {
+	if o, ok := img.(interface{ Opaque() bool }); ok && !o.Opaque() {
+		return &apperr.Error{Kind: apperr.Invalid,
+			Message: fmt.Sprintf("%s has transparent areas, which a tiled upscale cannot keep: the model returns opaque images", ref),
+			Hint:    "Flatten it onto the background you want (for example white) and run tile_image again."}
+	}
+	return nil
 }
 
 // decodedBytesPerPixel is how many bytes per pixel the decoder holds for an
