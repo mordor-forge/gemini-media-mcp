@@ -214,7 +214,7 @@ func TestOmniRecoveryKeepsASettledEntry(t *testing.T) {
 }
 
 // A worker that was only paused past omniStale (a suspended process) still
-// settles its real outcome over the recovery's provisional one.
+// settles its real outcome over the recovery's estimate.
 func TestOmniResumedWorkerReplacesTheRecovery(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	entry, err := e.ledger.Record(spend.Entry{Tool: "generate_video", Model: "gemini-omni-1.1-flash", Status: spend.StatusPending, CostUSD: 0.81, EstimatedUSD: 0.81})
@@ -235,10 +235,30 @@ func TestOmniResumedWorkerReplacesTheRecovery(t *testing.T) {
 	if got.CostUSD != 0.61 || len(got.Outputs) != 1 || got.Error != "" {
 		t.Fatalf("the resumed worker's outcome must replace the provisional one: %+v", got)
 	}
-	// A second recovery does not undo it.
-	e.svc.recordOutcome(entry.ID, spend.StatusOK, nil, omniStopped, nil, "")
+	// A later recovery of the same job does not undo it.
+	j.State = jobs.StateWorking
+	if err := e.jobs.Put(j); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: j.ID, WaitSeconds: ptr(0)}); err != nil {
+		t.Fatal(err)
+	}
 	if got, _ = e.ledger.Get(entry.ID); got.CostUSD != 0.61 || len(got.Outputs) != 1 {
 		t.Fatalf("a recovery replaced a worker's settlement: %+v", got)
+	}
+}
+
+// If the pending entry could not be written when the job started, the
+// worker's outcome still replaces the reservation it left behind.
+func TestOmniOutcomeReplacesASurvivingReservation(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	entry, err := e.ledger.Record(spend.Entry{Tool: "generate_video", Model: "gemini-omni-1.1-flash", Status: spend.StatusReserved, CostUSD: 0.81, EstimatedUSD: 0.81})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.svc.recordOutcome(entry.ID, spend.StatusOK, &catalog.Estimate{USD: 0.61, Basis: catalog.BasisUsage}, "", nil, "", "/out/hero.mp4")
+	if got, _ := e.ledger.Get(entry.ID); got.Status != spend.StatusOK || got.CostUSD != 0.61 || len(got.Outputs) != 1 {
+		t.Fatalf("entry = %+v", got)
 	}
 }
 

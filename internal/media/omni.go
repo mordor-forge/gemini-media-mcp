@@ -440,20 +440,14 @@ func (s *Service) downloadOmni(ctx context.Context, result *google.InteractionRe
 	return nil, err
 }
 
-// omniStopped is the outcome recorded for a job whose worker went quiet. It
-// is provisional: the worker may still be alive and settle the real outcome.
-const omniStopped = "the server process generating this clip stopped before it finished; Google may still have produced (and billed) it, but it cannot be retrieved"
-
 // recordOutcome finalizes a pending ledger entry. Unbilled outcomes cost $0;
-// billed ones keep the estimate unless usage priced them. Only a pending
-// entry or a provisional stale-worker settlement is replaced, so neither the
-// recovery nor a late worker overwrites what a worker already settled.
+// billed ones keep the estimate unless usage priced them.
 func (s *Service) recordOutcome(ledgerID, status string, actual *catalog.Estimate, errText string, usage *google.Usage, fallbackErr string, outputs ...string) {
 	if ledgerID == "" {
 		return
 	}
 	e, ok := s.ledger.Get(ledgerID)
-	if !ok || e.Status != spend.StatusPending && (e.Error != omniStopped || errText == omniStopped) {
+	if !ok {
 		return
 	}
 	e.Status = status
@@ -487,11 +481,23 @@ func (s *Service) checkWorkerJob(job *jobs.Job) (jobCheck, bool) {
 	now := s.now().UTC()
 	job.CompletedAt = &now
 	job.State, job.Billed = jobs.StateFailed, true
-	job.Error = omniStopped
+	job.Error = "the server process generating this clip stopped before it finished; Google may still have produced (and billed) it, but it cannot be retrieved"
 	if err := s.jobs.Put(job); err != nil {
 		s.log.Warn("saving job failed", "job", job.ID, "err", err)
 	}
-	s.recordOutcome(job.LedgerID, spend.StatusOK, nil, job.Error, nil, "")
+	// Keep the estimate as spent, but only if the worker has not settled the
+	// entry itself (it may have finished and stopped before saving the job).
+	// A worker that was only paused and finishes later still records its
+	// real outcome over this one.
+	if e, ok := s.ledger.Get(job.LedgerID); ok {
+		e.Status, e.Error, e.Outputs = spend.StatusOK, truncate(job.Error, 300), nil
+		unsettled := func(prev spend.Entry, found bool) bool {
+			return found && (prev.Status == spend.StatusPending || prev.Status == spend.StatusReserved)
+		}
+		if _, err := s.ledger.RecordIf(e, unsettled); err != nil {
+			s.log.Warn("recording spend failed", "err", err)
+		}
+	}
 	return jobCheck{s.jobView(job), job}, true
 }
 
