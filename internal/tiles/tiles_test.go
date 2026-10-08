@@ -523,3 +523,18 @@ func TestBorderTileMovedInwardKeepsTheBase(t *testing.T) {
 		t.Fatal("a 0.4 px shift should still cover the edge")
 	}
 }
+
+func TestPreparedPixelsIsWhatPrepareAllocates(t *testing.T) {
+	g := truth(512, 512, 8)
+	plan := scaled(g, 16, 16)
+	tile := scaled(g, 320, 320)
+	ps := []Placement{{Box: Box{X: -8, Y: -8, W: 32, H: 32}}, {Box: Box{X: 4, Y: 4, W: 8, H: 8}}}
+	Feathers(ps, 16, 16, 0.2)
+	c := NewCanvas(plan, 512, 512)
+	for _, p := range ps {
+		r := c.Prepare(p, tile).src.Rect
+		if got := c.PreparedPixels(p); got != r.Dx()*r.Dy() {
+			t.Fatalf("PreparedPixels = %d, Prepare allocated %v", got, r)
+		}
+	}
+}

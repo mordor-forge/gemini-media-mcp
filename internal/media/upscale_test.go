@@ -807,3 +807,32 @@ func TestTileImageSaveFailuresSayWhatToFix(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// Tiles too large to hold two at a time are prepared one after the other,
+// with the same result.
+func TestStitchTilesPreparesSeriallyOverTheBudget(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(512, 384, 20)
+	src := filepath.Join(t.TempDir(), "budget.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edits := fakeEdits(t, e, truth, 4, res)
+	overlapped, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits, OutputName: "overlapped"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func(v int) { maxPreparedBytes = v }(maxPreparedBytes)
+	maxPreparedBytes = 0
+	serial, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits, OutputName: "serial"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decodeFile(t, overlapped.File.Path).Pix, decodeFile(t, serial.File.Path).Pix) {
+		t.Fatal("preparing tiles one at a time changed the result")
+	}
+}

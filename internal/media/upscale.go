@@ -65,6 +65,11 @@ const (
 	detailPixels  = 512
 )
 
+// maxPreparedBytes bounds the memory of two tiles in flight while
+// stitching (one painted, the next prepared); tiles larger than that
+// together are prepared one at a time. A variable for tests.
+var maxPreparedBytes = 384 << 20
+
 // TileRegion is an area of the image as fractions of its size.
 type TileRegion struct {
 	X      float64 `json:"x" jsonschema:"Left edge as a fraction of the image width (0-1)."`
@@ -728,6 +733,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	type source struct {
 		ref, sum string
 		tile     int
+		w, h     int // decoded size
 	}
 	var placements []tiles.Placement
 	var sources []source
@@ -747,7 +753,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 			rep.ScaleX, rep.ScaleY = round4(a.ScaleX), round4(a.ScaleY)
 			rep.ShiftX, rep.ShiftY = round1(a.ShiftX*sx), round1(a.ShiftY*sy)
 			placements = append(placements, tiles.Placement{Box: t.Box, Align: a})
-			sources = append(sources, source{ref: ref, sum: results[i].sum, tile: t.Tile})
+			sources = append(sources, source{ref: ref, sum: results[i].sum, tile: t.Tile, w: results[i].w, h: results[i].h})
 			// Rendered pixels per tiled-image pixel, along the sparser axis.
 			native = math.Min(native, math.Min(float64(results[i].w)/(a.ScaleX*float64(t.Box.W)), float64(results[i].h)/(a.ScaleY*float64(t.Box.H))))
 		}
@@ -761,17 +767,30 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	tiles.Feathers(placements, job.Width, job.Height, feather)
 	canvas := tiles.NewCanvas(plan, job.OutWidth, job.OutHeight)
 	canvas.Reserve(placements)
-	// Prepare (decode and resample) the next tile while painting this one.
-	// The channel is unbuffered so at most one prepared tile waits: with
-	// the one being painted, two tiles' footprints are held at a time.
+	// Prepare (decode and resample) the next tile while painting this one
+	// when the two fit maxPreparedBytes together; otherwise wait until the
+	// previous tile is painted. A tile holds its decode, a converted copy
+	// and its resampled window.
+	need := make([]int, len(placements))
+	for i, p := range placements {
+		need[i] = 8*sources[i].w*sources[i].h + 4*canvas.PreparedPixels(p)
+	}
 	type prepared struct {
 		p   *tiles.Prepared
 		err error
 	}
-	next := make(chan prepared)
+	next := make(chan prepared)                   // unbuffered: one prepared tile waits at most
+	freed := make(chan struct{}, len(placements)) // one per tile taken off next
 	go func() {
 		defer close(next)
+		taken := 0
 		for i, p := range placements {
+			if i > 0 && need[i-1]+need[i] > maxPreparedBytes {
+				for ; taken < i; taken++ {
+					<-freed
+				}
+				runtime.GC() // return the painted tile's memory first
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -796,12 +815,12 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 			}
 			return nil, pr.err
 		}
-		if ctx.Err() != nil {
-			continue // drain: the producer stops before its next tile
+		if ctx.Err() == nil { // else drain: the producer stops before its next tile
+			canvas.Paint(pr.p)
+			painted++
+			progress(ctx, fmt.Sprintf("blended %d/%d tiles", painted, len(placements)), total+float64(painted), total*2)
 		}
-		canvas.Paint(pr.p)
-		painted++
-		progress(ctx, fmt.Sprintf("blended %d/%d tiles", painted, len(placements)), total+float64(painted), total*2)
+		freed <- struct{}{}
 	}
 
 	if err := ctx.Err(); err != nil {

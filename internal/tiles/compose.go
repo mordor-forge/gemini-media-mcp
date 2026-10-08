@@ -227,14 +227,26 @@ type Prepared struct {
 // Only the part that lands on the canvas is computed: a tile reaching far
 // past the canvas would otherwise allocate all of its resampled size.
 func (c *Canvas) Prepare(p Placement, tile image.Image) *Prepared {
+	f, sw, sh, win := c.window(p)
+	return &Prepared{p: p, f: f, sw: sw, sh: sh, src: ResizeWindow(tile, tile.Bounds(), sw, sh, win)}
+}
+
+// PreparedPixels is the size in pixels of what Prepare allocates for p.
+func (c *Canvas) PreparedPixels(p Placement) int {
+	_, _, _, win := c.window(p)
+	return win.Dx() * win.Dy()
+}
+
+// window is p's footprint, the size the whole tile resamples to, and the
+// part of that painting reads.
+func (c *Canvas) window(p Placement) (footprint, int, int, image.Rectangle) {
 	f := c.footprint(p)
 	sw := max(int(math.Round(f.x1-f.x0)), 1)
 	sh := max(int(math.Round(f.y1-f.y0)), 1)
 	kx, ky := float64(sw)/(f.x1-f.x0), float64(sh)/(f.y1-f.y0)
 	x0, x1 := readSpan(f.px0, f.px1, f.x0, kx, sw)
 	y0, y1 := readSpan(f.py0, f.py1, f.y0, ky, sh)
-	win := image.Rect(x0, y0, x1, y1)
-	return &Prepared{p: p, f: f, sw: sw, sh: sh, src: ResizeWindow(tile, tile.Bounds(), sw, sh, win)}
+	return f, sw, sh, image.Rect(x0, y0, x1, y1)
 }
 
 // readSpan is the range of resampled pixels, within [0, n), that painting
