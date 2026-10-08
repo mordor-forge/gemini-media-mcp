@@ -22,8 +22,13 @@ type Placement struct {
 // Feathers sets Feather and Border for each placement. frac is the blend
 // width as a fraction of the tile's shorter side; next to a neighboring tile
 // it is limited to half the overlap, so that across every overlap at least
-// one tile is fully opaque and the base never shows through a seam.
+// one tile is fully opaque and the base never shows through a seam. Overlaps
+// are measured where the tiles were aligned, not where they were cut.
 func Feathers(ps []Placement, w, h int, frac float64) {
+	rs := make([]extent, len(ps))
+	for i := range ps {
+		rs[i] = ps[i].extent()
+	}
 	for i := range ps {
 		b := ps[i].Box
 		f := frac * float64(min(b.W, b.H))
@@ -34,56 +39,72 @@ func Feathers(ps []Placement, w, h int, frac float64) {
 				continue
 			}
 			ps[i].Feather[side] = f
-			if d, ok := neighborDepth(ps, i, side); ok {
+			if d, ok := neighborDepth(rs, i, side); ok {
 				ps[i].Feather[side] = math.Min(f, d/2)
 			}
 		}
 	}
 }
 
+// extent is a rectangle in plan-image pixels.
+type extent struct{ x0, y0, x1, y1 float64 }
+
+// extent is where the placement's tile lands in plan-image pixels: its box,
+// scaled about the center and shifted by the alignment.
+func (p Placement) extent() extent {
+	b, a := p.Box, p.Align
+	sx, sy := a.ScaleX, a.ScaleY
+	if sx == 0 || sy == 0 {
+		sx, sy = 1, 1 // not aligned (tests): the box itself
+	}
+	cx := float64(b.X) + float64(b.W)/2 + a.ShiftX
+	cy := float64(b.Y) + float64(b.H)/2 + a.ShiftY
+	hw, hh := sx*float64(b.W)/2, sy*float64(b.H)/2
+	return extent{cx - hw, cy - hh, cx + hw, cy + hh}
+}
+
 // neighborDepth is how far the closest-fitting neighbor overlaps tile i
 // across side (left, top, right, bottom). Only neighbors that cover at least
 // a quarter of that side count.
-func neighborDepth(ps []Placement, i, side int) (float64, bool) {
-	b := ps[i].Box
+func neighborDepth(rs []extent, i, side int) (float64, bool) {
+	b := rs[i]
 	depth, found := math.Inf(1), false
-	for j := range ps {
+	for j, o := range rs {
 		if j == i {
 			continue
 		}
-		o := ps[j].Box
-		var d, along, length int
+		var d, along, length float64
 		switch side {
 		case 0: // left: o extends past b's left edge into b
-			if o.X >= b.X || o.X1() <= b.X {
+			if o.x0 >= b.x0 || o.x1 <= b.x0 {
 				continue
 			}
-			d, along, length = min(o.X1(), b.X1())-b.X, overlap(o.Y, o.Y1(), b.Y, b.Y1()), b.H
+			d, along, length = math.Min(o.x1, b.x1)-b.x0, overlap(o.y0, o.y1, b.y0, b.y1), b.y1-b.y0
 		case 1:
-			if o.Y >= b.Y || o.Y1() <= b.Y {
+			if o.y0 >= b.y0 || o.y1 <= b.y0 {
 				continue
 			}
-			d, along, length = min(o.Y1(), b.Y1())-b.Y, overlap(o.X, o.X1(), b.X, b.X1()), b.W
+			d, along, length = math.Min(o.y1, b.y1)-b.y0, overlap(o.x0, o.x1, b.x0, b.x1), b.x1-b.x0
 		case 2:
-			if o.X1() <= b.X1() || o.X >= b.X1() {
+			if o.x1 <= b.x1 || o.x0 >= b.x1 {
 				continue
 			}
-			d, along, length = b.X1()-max(o.X, b.X), overlap(o.Y, o.Y1(), b.Y, b.Y1()), b.H
+			d, along, length = b.x1-math.Max(o.x0, b.x0), overlap(o.y0, o.y1, b.y0, b.y1), b.y1-b.y0
 		case 3:
-			if o.Y1() <= b.Y1() || o.Y >= b.Y1() {
+			if o.y1 <= b.y1 || o.y0 >= b.y1 {
 				continue
 			}
-			d, along, length = b.Y1()-max(o.Y, b.Y), overlap(o.X, o.X1(), b.X, b.X1()), b.W
+			d, along, length = b.y1-math.Max(o.y0, b.y0), overlap(o.x0, o.x1, b.x0, b.x1), b.x1-b.x0
 		}
 		if 4*along < length {
 			continue
 		}
-		depth, found = math.Min(depth, float64(d)), true
+		depth, found = math.Min(depth, d), true
 	}
 	return depth, found
 }
 
-func overlap(a0, a1, b0, b1 int) int { return max(0, min(a1, b1)-max(a0, b0)) }
+func overlap(a0, a1, b0, b1 float64) float64 { return math.Max(0, math.Min(a1, b1)-math.Max(a0, b0)) }
 
 // weightScale is the fixed-point unit of the weight buffer.
 const weightScale = 1024
@@ -121,12 +142,9 @@ type footprint struct {
 }
 
 func (c *Canvas) footprint(p Placement) footprint {
-	b, a := p.Box, p.Align
-	cx := float64(b.X) + float64(b.W)/2 + a.ShiftX
-	cy := float64(b.Y) + float64(b.H)/2 + a.ShiftY
-	hw, hh := a.ScaleX*float64(b.W)/2, a.ScaleY*float64(b.H)/2
+	r := p.extent()
 	f := footprint{
-		x0: (cx - hw) * c.sx, x1: (cx + hw) * c.sx, y0: (cy - hh) * c.sy, y1: (cy + hh) * c.sy,
+		x0: r.x0 * c.sx, x1: r.x1 * c.sx, y0: r.y0 * c.sy, y1: r.y1 * c.sy,
 		fl: p.Feather[0] * c.sx, ft: p.Feather[1] * c.sy, fr: p.Feather[2] * c.sx, fb: p.Feather[3] * c.sy,
 	}
 	f.px0, f.py0 = int(math.Floor(f.x0)), int(math.Floor(f.y0))

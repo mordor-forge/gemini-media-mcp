@@ -243,6 +243,19 @@ func TestFeathersLimitToHalfTheOverlap(t *testing.T) {
 	}
 }
 
+// Overlaps are measured where the tiles were aligned: a neighbor shifted
+// away leaves less overlap, and the feathers shrink with it.
+func TestFeathersFollowAlignment(t *testing.T) {
+	a := Placement{Box: Box{X: 0, Y: 0, W: 100, H: 100}, Align: Alignment{ScaleX: 1, ScaleY: 1}}
+	b := Placement{Box: Box{X: 80, Y: 0, W: 100, H: 100}, Align: Alignment{ScaleX: 1, ScaleY: 1, ShiftX: 12}}
+	ps := []Placement{a, b}
+	Feathers(ps, 180, 100, 0.2)
+	// 20 px apart as cut, 8 px as aligned: each side fades over at most 4.
+	if ps[0].Feather[2] > 4+1e-9 || ps[1].Feather[0] > 4+1e-9 || ps[0].Feather[2] <= 0 {
+		t.Fatalf("feathers %v / %v", ps[0].Feather, ps[1].Feather)
+	}
+}
+
 // assemble runs the whole stitch on synthetic tiles and returns the canvas.
 func assemble(t *testing.T, g, plan *image.RGBA, ts []Tile, k float64, skip map[int]bool, drift func(i int) (s, dx, dy float64)) *Canvas {
 	t.Helper()

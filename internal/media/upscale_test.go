@@ -403,3 +403,52 @@ func TestTileImageAcceptsFileURIs(t *testing.T) {
 		t.Fatalf("stitching a file:// job: %v", err)
 	}
 }
+
+// A canceled request stops the stitch before anything is saved, whether it
+// ends before the call or while tiles are being blended.
+func TestStitchTilesStopsWhenCanceled(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(512, 384, 8)
+	src := filepath.Join(t.TempDir(), "cancel.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edits := fakeEdits(t, e, truth, 4, res)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := e.svc.StitchTiles(ctx, StitchTilesRequest{Job: res.Job, Tiles: edits}); apperr.KindOf(err) != apperr.Canceled {
+		t.Fatalf("canceled before the call: err = %v", err)
+	}
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	ctx = WithProgress(ctx, func(msg string, _, _ float64) {
+		if strings.HasPrefix(msg, "blended 1/") {
+			cancel()
+		}
+	})
+	if _, err := e.svc.StitchTiles(ctx, StitchTilesRequest{Job: res.Job, Tiles: edits}); apperr.KindOf(err) != apperr.Canceled {
+		t.Fatalf("canceled while blending: err = %v", err)
+	}
+	if _, _, err := e.store.Open("cancel-upscaled.png"); err == nil {
+		t.Fatal("a canceled stitch must not save its output")
+	}
+}
+
+// An image far more elongated than the model's widest ratio would need a
+// crop many times its size, so planning refuses it.
+func TestTileImageRefusesExtremePanoramas(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	src := filepath.Join(t.TempDir(), "strip.png")
+	if err := os.WriteFile(src, encode(t, image.NewRGBA(image.Rect(0, 0, 30000, 100))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 1, ImageSize: "1K"})
+	if apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "too elongated") {
+		t.Fatalf("err = %v", err)
+	}
+}

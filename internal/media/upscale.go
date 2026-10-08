@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -149,7 +150,7 @@ func (j *tileJob) check() error {
 	}
 	for _, t := range j.Tiles {
 		b := t.Box
-		if b.W < tiles.MinTilePixels || b.H < tiles.MinTilePixels || b.W > 8*j.Width || b.H > 8*j.Height || b.W*b.H > 4*j.Width*j.Height ||
+		if b.W < tiles.MinTilePixels || b.H < tiles.MinTilePixels || b.W > 8*j.Width || b.H > 8*j.Height || b.W*b.H > min(4*j.Width*j.Height, maxPlanPixels) ||
 			b.X >= j.Width || b.Y >= j.Height || b.X1() <= 0 || b.Y1() <= 0 {
 			return fmt.Errorf("tile %d's box %+v does not fit the %dx%d image", t.Tile, b, j.Width, j.Height)
 		}
@@ -294,6 +295,16 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	}
 	if err != nil {
 		return nil, apperr.Invalidf("%v", err)
+	}
+	for _, t := range planned {
+		// Cutting a crop allocates all of it, mirrored padding included; an
+		// image far more elongated than the model's widest ratio would need
+		// a crop many times its own size.
+		if t.Box.W*t.Box.H > maxPlanPixels {
+			return nil, &apperr.Error{Kind: apperr.Invalid,
+				Message: fmt.Sprintf("the %dx%d image is too elongated for %s's aspect ratios: tile %d would need a %dx%d crop", pw, ph, m.ID, t.Index, t.Box.W, t.Box.H),
+				Hint:    "Cut the image into less elongated parts (no wider than the model's widest aspect ratio, e.g. 8:1 for nb2) and upscale each."}
+		}
 	}
 
 	name := slugLabel(req.OutputName)
@@ -610,6 +621,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			if ctx.Err() != nil {
+				return // reported after the wait
+			}
 			tile, err := s.loadTile(ref, t.Tile)
 			if err != nil {
 				results[i].err = err
@@ -623,6 +637,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		}()
 	}
 	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, stitchStopped(err)
+	}
 
 	var placements []tiles.Placement
 	var sources []string
@@ -664,6 +681,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	go func() {
 		defer close(next)
 		for i, p := range placements {
+			if ctx.Err() != nil {
+				return
+			}
 			tile, err := s.loadTile(sources[i], 0)
 			if err != nil {
 				next <- prepared{err: err}
@@ -679,11 +699,17 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 			}
 			return nil, pr.err
 		}
+		if ctx.Err() != nil {
+			continue // drain: the producer stops before its next tile
+		}
 		canvas.Paint(pr.p)
 		painted++
 		progress(ctx, fmt.Sprintf("blended %d/%d tiles", painted, len(placements)), total+float64(painted), total*2)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, stitchStopped(err)
+	}
 	progress(ctx, "encoding PNG", total*2, total*2)
 	out := canvas.Finish()
 	data, err := encodePNG(out)
@@ -768,6 +794,14 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		res.Warnings = append(res.Warnings, fmt.Sprintf("the tiles carry about %d px of model detail along the long edge; the %d px output is interpolated beyond that", res.NativeLongEdge, max(job.OutWidth, job.OutHeight)))
 	}
 	return res, nil
+}
+
+// stitchStopped reports a stitch abandoned because its request ended.
+func stitchStopped(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &apperr.Error{Kind: apperr.Timeout, Message: "stitching stopped: the request timed out", Hint: "Call stitch_tiles again; an 8K stitch takes 10-30 s.", Cause: err}
+	}
+	return &apperr.Error{Kind: apperr.Canceled, Message: "stitching stopped: the request was canceled", Hint: "Call stitch_tiles again when you still want the result.", Cause: err}
 }
 
 // tilePlan is a grid and edit size chosen by autoPlan.
