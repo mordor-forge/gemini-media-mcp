@@ -260,6 +260,10 @@ Everything except the model calls is deterministic image processing, so it lives
   - blending: tiles are combined as a weighted average whose fades are at most half of each overlap, and the base image keeps only the weight left over, so it shows only where no tile was placed.
 
   An 8K stitch of nine 4K tiles takes about 16 s on four cores. Tiles are decoded two at a time, and the next tile is resampled while the current one is painted. Peak heap use is under 1 GB.
+- Live testing shaped the workflow:
+  - On a 121 px portrait taken to 8K, all nine pass-1 tiles aligned with matches of 0.98-1.00, after one tile the model had zoomed out was rejected and retried.
+  - Refinement passes send the crop alone. Next to a close-up, the whole-photo reference made the model redraw the whole photo, which `stitch_tiles` rejected.
+  - `tile_image` warns about regions too large to gain detail.
 - Both tools are free and make no network calls. The agent runs the paid `edit_image` calls in between, in parallel, under the usual budgets and approvals. The `gemini-upscale` skill holds the prompt, region choice and review loop. It states that the added detail is invented, not recovered.
 
 ## 3. What I deliberately did not do (follow-ups)

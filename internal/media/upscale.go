@@ -46,10 +46,13 @@ const (
 	// Google), such as a stitched 8K PNG.
 	localInputBytes = 512 << 20
 	alignWorkers    = 2
-	maxGrid         = 4
-	maxRegions      = 12
-	maxDetails      = 6
-	detailPixels    = 512
+	// minRegionGain is the least output-to-image pixel ratio at which a
+	// refinement region adds visible detail.
+	minRegionGain = 2.0
+	maxGrid       = 4
+	maxRegions    = 12
+	maxDetails    = 6
+	detailPixels  = 512
 )
 
 // TileRegion is an area of the image as fractions of its size.
@@ -97,7 +100,7 @@ type TileImageResult struct {
 	Image          Size          `json:"image" jsonschema:"Size of the tiled image"`
 	Output         Size          `json:"output" jsonschema:"Size stitch_tiles will produce"`
 	NativeLongEdge int           `json:"nativeLongEdge,omitempty" jsonschema:"About how many pixels of model-rendered detail the output's long edge carries if every tile comes back at imageSize; beyond that the output is interpolated"`
-	Reference      store.Asset   `json:"reference" jsonschema:"Copy of the original (at most 2048 px): pass its uri as edit_image referenceImages for every tile"`
+	Reference      *store.Asset  `json:"reference,omitempty" jsonschema:"First pass only: a copy of the original (at most 2048 px) to pass as edit_image referenceImages for every tile. Refinement passes edit each crop alone."`
 	Model          string        `json:"model"`
 	ImageSize      string        `json:"imageSize"`
 	Tiles          []PlannedTile `json:"tiles"`
@@ -280,20 +283,26 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		}
 	}
 
-	refAsset, err := s.tileReference(original, reference, name, img, imageRef)
-	if err != nil {
-		return nil, err
+	// Only the first pass sends the original along: on refinement passes the
+	// crop already carries the identity, and in live tests a whole-photo
+	// reference next to a close-up made the model redraw the whole photo.
+	var refAsset *store.Asset
+	if pass == 1 {
+		if refAsset, err = s.tileReference(original, name, img, imageRef); err != nil {
+			return nil, err
+		}
+		reference = refAsset.URI
 	}
 
 	progress(ctx, fmt.Sprintf("cutting %d crops", len(planned)), 0, float64(len(planned)))
 	res := &TileImageResult{
 		Pass: pass, Mode: mode, Image: Size{pw, ph}, Output: Size{outW, outH},
-		Reference: *refAsset, Model: m.ID, ImageSize: size, Warnings: warnings,
+		Reference: refAsset, Model: m.ID, ImageSize: size, Warnings: warnings,
 	}
 	job := tileJob{
 		Version: 1, Pass: pass, Mode: mode, Name: name, Image: imageRef, ImageSHA256: sha(in.Data),
 		Width: pw, Height: ph, OutWidth: outW, OutHeight: outH,
-		Original: original, Reference: refAsset.URI, Model: m.ID, ImageSize: size, CreatedAt: s.now().UTC(),
+		Original: original, Reference: reference, Model: m.ID, ImageSize: size, CreatedAt: s.now().UTC(),
 	}
 	native := math.Inf(1)
 	for i, t := range planned {
@@ -319,6 +328,9 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		outPx := float64(imageSizePixels(size))
 		tw := math.Sqrt(outPx * float64(t.Box.W) / float64(t.Box.H))
 		native = math.Min(native, tw/float64(t.Box.W))
+		if mode == "regions" && tw/float64(t.Box.W) < minRegionGain {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("region %d (%s) is %dx%d px: at %s the model renders it at only about %.1fx (and sees the crop at %d px at most), so it adds little detail; use tighter regions, about a third of the image's long side or less", t.Index, t.Label, t.Box.W, t.Box.H, size, tw/float64(t.Box.W), maxCropPixels))
+		}
 		progress(ctx, fmt.Sprintf("%d/%d crops saved", i+1, len(planned)), float64(i+1), float64(len(planned)))
 	}
 	if mode == "grid" && !math.IsInf(native, 1) {
@@ -344,7 +356,11 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		Basis: per.Basis, PriceAsOf: per.PriceAsOf,
 		Breakdown: fmt.Sprintf("%d tiles x $%.4f (%s)", len(planned), per.USD, per.Breakdown),
 	}
-	res.Next = fmt.Sprintf("Edit every tile with edit_image (image = the tile's crop uri, referenceImages = [%s], aspectRatio = the tile's aspectRatio, imageSize = %s, model = %s), in parallel if you can; then call stitch_tiles with job = %s and the results.", refAsset.URI, size, m.ID, ja.URI)
+	if refAsset != nil {
+		res.Next = fmt.Sprintf("Edit every tile with edit_image (image = the tile's crop uri, referenceImages = [%s], aspectRatio = the tile's aspectRatio, imageSize = %s, model = %s), in parallel if you can; then call stitch_tiles with job = %s and the results.", refAsset.URI, size, m.ID, ja.URI)
+	} else {
+		res.Next = fmt.Sprintf("Edit every tile with edit_image on its own, without referenceImages (image = the tile's crop uri, aspectRatio = the tile's aspectRatio, imageSize = %s, model = %s), in parallel if you can; then call stitch_tiles with job = %s and the results.", size, m.ID, ja.URI)
+	}
 	return res, nil
 }
 
@@ -372,16 +388,9 @@ func (s *Service) durableRef(ref string, in *store.Input, saveAs string) (string
 	return ref, nil
 }
 
-// tileReference returns the copy of the original sent with every tile:
-// reused from an earlier pass when recorded, else made from original.
-func (s *Service) tileReference(original, recorded, name string, img image.Image, imageRef string) (*store.Asset, error) {
-	if recorded != "" {
-		if path, data, err := s.store.Open(recorded); err == nil {
-			a := &store.Asset{Path: path, URI: recorded, Name: filepath.Base(path), MIMEType: store.SniffMIME(data, path), Bytes: int64(len(data))}
-			a.Width, a.Height, _ = store.ImageSize(data)
-			return a, nil
-		}
-	}
+// tileReference saves the copy of the original sent with every first-pass
+// tile, made from original (or from the already decoded image).
+func (s *Service) tileReference(original, name string, img image.Image, imageRef string) (*store.Asset, error) {
 	src := img
 	if original != imageRef {
 		in, err := s.loadLocal(original, "original")
@@ -676,7 +685,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		res.Warnings = append(res.Warnings, fmt.Sprintf("%d tile(s) were rejected and keep the underlying image: %s", rejected, rejectSummary(res.Tiles)))
 		res.Next = "Retry the rejected tiles with edit_image (same crop, reference and aspectRatio; insist on returning exactly the crop's framing), at most twice each, then call stitch_tiles again with every tile. If a tile keeps failing, deliver without it and say so."
 	case job.Pass == 1:
-		res.Next = fmt.Sprintf("Inspect the preview and the 100%% details for seams, doubling or drift. For a refinement pass, call tile_image with image = %s and regions for faces, hands, text or fine materials; otherwise deliver %s.", asset.URI, asset.Path)
+		res.Next = fmt.Sprintf("Inspect the preview and the 100%% details for seams, doubling or drift. For a refinement pass, call tile_image with image = %s and tight regions (each about a third of the image or less) for faces, hands, text or fine materials, then edit those crops without referenceImages; otherwise deliver %s.", asset.URI, asset.Path)
 	default:
 		res.Next = fmt.Sprintf("Inspect the preview and details; run another regions pass for tighter features if needed, otherwise deliver %s.", asset.Path)
 	}

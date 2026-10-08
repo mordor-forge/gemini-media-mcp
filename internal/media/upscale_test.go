@@ -132,7 +132,7 @@ func TestTileAndStitchTwoPasses(t *testing.T) {
 	if p, err := e.store.Provenance(res.Tiles[0].Crop.Name); err != nil || p.Model != res.Model {
 		t.Fatalf("crop provenance = %+v %v (edit_image should default to the plan's model)", p, err)
 	}
-	if res.Reference.Width != 256 || !strings.HasPrefix(res.Job, store.URIScheme) || res.NativeLongEdge < 1024 {
+	if res.Reference == nil || res.Reference.Width != 256 || !strings.HasPrefix(res.Job, store.URIScheme) || res.NativeLongEdge < 1024 {
 		t.Fatalf("reference %+v job %s native %d", res.Reference, res.Job, res.NativeLongEdge)
 	}
 	if c := res.Tiles[0]; c.Crop.Name != "portrait-p1-t1-r1c1.png" || c.AspectRatio == "" || c.Crop.Width != c.Box.W {
@@ -173,10 +173,10 @@ func TestTileAndStitchTwoPasses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res2.Pass != 2 || res2.Mode != "regions" || res2.Output != (Size{1024, 768}) || res2.Reference.URI != res.Reference.URI {
+	if res2.Pass != 2 || res2.Mode != "regions" || res2.Output != (Size{1024, 768}) || res2.Reference != nil || !strings.Contains(res2.Next, "without referenceImages") {
 		t.Fatalf("pass 2 plan = %+v", res2)
 	}
-	if res2.Tiles[0].Label != "left-eye" || !strings.Contains(strings.Join(res2.Warnings, " "), "longEdge is ignored") {
+	if res2.Tiles[0].Label != "left-eye" || !strings.Contains(strings.Join(res2.Warnings, " "), "longEdge is ignored") || strings.Contains(strings.Join(res2.Warnings, " "), "tighter regions") {
 		t.Fatalf("pass 2 tile %+v warnings %v", res2.Tiles[0], res2.Warnings)
 	}
 	out2, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res2.Job, Tiles: fakeEdits(t, e, truth, 1, res2)})
@@ -277,5 +277,28 @@ func TestStitchTilesErrors(t *testing.T) {
 	}
 	if _, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits}); err == nil || !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("changed source: err = %v", err)
+	}
+}
+
+func TestTileImageWarnsAboutLargeRegions(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	img := image.NewRGBA(image.Rect(0, 0, 3000, 2000))
+	for i := range img.Pix {
+		img.Pix[i] = uint8(i * 7)
+	}
+	src := filepath.Join(t.TempDir(), "big.png")
+	if err := os.WriteFile(src, encode(t, img), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Regions: []TileRegion{
+		{X: 0.05, Y: 0.05, Width: 0.9, Height: 0.9, Label: "everything"},
+		{X: 0.4, Y: 0.4, Width: 0.15, Height: 0.15, Label: "detail"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := strings.Join(res.Warnings, " ")
+	if !strings.Contains(w, "region 1 (everything)") || strings.Contains(w, "region 2") {
+		t.Fatalf("warnings = %v", res.Warnings)
 	}
 }

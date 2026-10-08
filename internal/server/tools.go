@@ -45,7 +45,7 @@ func (s *Server) registerTools() {
 		Name:  "tile_image",
 		Title: "Tile image for upscaling",
 		Description: "Upscale past 4K, step 1: cut an image into overlapping crops shaped to the edit model's aspect ratios: a grid, or regions (faces, hands, text) for a refinement pass. Free and local; reports the cost of editing every tile. " +
-			"Step 2: edit_image each crop (image = crop, referenceImages = [reference], the tile's aspectRatio, imageSize 4K). Step 3: stitch_tiles. The model invents plausible detail; it does not recover the original's.",
+			"Step 2: edit_image each crop (image = crop, the tile's aspectRatio, imageSize 4K; referenceImages = [reference] on the first pass). Step 3: stitch_tiles. The model invents plausible detail; it does not recover the original's.",
 		Annotations: withTitle(processing, "Tile image for upscaling"),
 	}, s.handleTileImage)
 
@@ -169,7 +169,12 @@ func (s *Server) handleTileImage(ctx context.Context, req *mcp.CallToolRequest, 
 	if res.NativeLongEdge > 0 {
 		head += fmt.Sprintf(" At %s the tiles carry about %d px of model detail along the long edge.", res.ImageSize, res.NativeLongEdge)
 	}
-	lines := []string{head, "Reference for every edit: " + res.Reference.URI}
+	lines := []string{head}
+	if res.Reference != nil {
+		lines = append(lines, "Reference for every edit: "+res.Reference.URI)
+	} else {
+		lines = append(lines, "Refinement pass: edit each crop on its own, without referenceImages.")
+	}
 	for _, t := range res.Tiles {
 		lines = append(lines, fmt.Sprintf("Tile %d %s (aspectRatio %s): %s", t.Tile, t.Label, t.AspectRatio, t.Crop.URI))
 	}

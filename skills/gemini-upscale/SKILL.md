@@ -23,7 +23,7 @@ Say this plainly to the user. Refuse or warn for evidence, forensics, archival r
 ## Quick start
 
 1. **Choices.** If the user has not said, ask once: "2 passes (recommended) or 3? Output 8K (8192 px long edge) or another size?" Default to `nb2` (Nano Banana 2.1). `pro` costs about twice as much per tile.
-2. **Plan pass 1.** Call `gemini-media:tile_image` with `image` (the photo) and `longEdge` if not 8192. The result lists the tiles, a `reference` image, the `job`, and the cost of editing every tile.
+2. **Plan pass 1.** Call `gemini-media:tile_image` with `image` (the photo) and `longEdge` if not 8192. The result lists the tiles, a `reference` image (first pass only), the `job`, and the cost of editing every tile.
 3. **Budget.** Estimate the whole run before spending anything:
    - pass 1 costs what `tile_image` reports;
    - each later pass costs 4-8 tiles at the same per-tile price.
@@ -31,15 +31,15 @@ Say this plainly to the user. Refuse or warn for evidence, forensics, archival r
    Tell the user the total and get approval (see Cost and approvals).
 4. **Edit every tile** with `gemini-media:edit_image`, issuing the calls in parallel if your client can:
    - `image`: the tile's `crop.uri`;
-   - `referenceImages`: `[reference.uri]`;
+   - `referenceImages`: `[reference.uri]` on the first pass only;
    - `aspectRatio`: the tile's `aspectRatio`;
    - `imageSize`: the plan's `imageSize` (4K);
    - `model`: the plan's `model`;
-   - `prompt`: the tile prompt below.
+   - `prompt`: the tile prompt below (the refinement prompt on later passes).
 5. **Stitch.** Call `gemini-media:stitch_tiles` with the `job` and `tiles: [{tile, image: <edit result uri>}, ...]`. Read the report:
    - retry rejected tiles at most twice each;
    - inspect the preview and the 100% detail crops.
-6. **Pass 2:** call `tile_image` with `image` set to the stitched `file.uri` and 4-8 `regions` (Choosing regions below), then edit and stitch again. The server carries the original, the reference and the output size over from pass 1.
+6. **Pass 2:** call `tile_image` with `image` set to the stitched `file.uri` and 4-8 tight `regions` (Choosing regions below). Edit each crop **on its own, without `referenceImages`**, using the refinement prompt, then stitch again. The server carries the original and the output size over from pass 1.
 7. **Pass 3 (only if asked):** use tighter regions on the pass-2 result, such as the eyes together, the lips, the fingers or a label.
 8. **Deliver** (Delivering below).
 
@@ -49,14 +49,14 @@ The tools live on the `gemini-media` MCP server. Harnesses name MCP tools differ
 
 | Tool | Role | Cost |
 |------|------|------|
-| `gemini-media:tile_image` | Cuts a grid (pass 1) or regions (later passes) into crops shaped to the model's supported ratios. Saves the crops, a reference copy of the original (at most 2048 px) and a job file. | Free, local |
+| `gemini-media:tile_image` | Cuts a grid (pass 1) or regions (later passes) into crops shaped to the model's supported ratios. Saves the crops, a job file and, on the first pass, a reference copy of the original (at most 2048 px). Warns when a region is too large to gain detail. | Free, local |
 | `gemini-media:edit_image` | Re-renders one crop at 4K. | ~$0.12 per tile on nb2, ~$0.25 on pro |
 | `gemini-media:stitch_tiles` | Aligns each tile with the image, corrects scale and shift, matches broad color, blends overlaps and saves a PNG. Reports placed and rejected tiles and returns previews. | Free, local, 10-30 s at 8K |
 | `gemini-media:get_usage` | Spend so far, budget left. | Free |
 
 Tiles that are rejected or left out keep the underlying pixels: the interpolated original in pass 1, the previous pass's result later. Nothing turns black or blank.
 
-## The tile prompt
+## The tile prompt (pass 1)
 
 The server sends `image` first and the references second. So **image 1 is the crop to re-render and image 2 is the full original**. Use this text and append only the clauses that match what the crop shows:
 
@@ -76,12 +76,27 @@ Clauses, each added only when that material is visible in the crop:
 - **Skin:** "Skin shows irregular pores and fine creases with quiet, smooth intervals; no airbrushing, no new blemishes or freckles."
 - **Hair:** "Hair forms cohesive strand groups with a few selective flyaway fibers and a natural, sparse hairline; no uniform combed texture."
 - **Eyes:** "Keep the exact iris color of image 2, with irregular radial fibers, a round coherent pupil and small, restrained catchlights."
+- **Teeth:** "Keep the teeth exactly as shown: same count, shape, spacing and shade; natural gums and lips."
 - **Textiles:** "Keep the original weave direction, spacing and motifs."
 - **Text and logos:** "Keep exactly the letters visible in image 2; where they are unreadable, keep them soft rather than inventing letters."
 - **Foliage, water, rock:** "Natural irregular detail; no repeated patterns."
 - **Sky or plain backgrounds:** "Keep it smooth and clean; do not add texture."
 
 The same prompt goes to every tile in a pass, except for the material clauses. Keep the wording identical across tiles so neighbors render alike. More guidance and a worked example: [references/tiling-guide.md](references/tiling-guide.md).
+
+## The refinement prompt (pass 2 and 3)
+
+On refinement passes, send the crop alone. The crop already carries the identity, colors and light from pass 1. In live tests, sending a whole-photo reference next to a close-up made the model redraw the whole photo in 4 of 5 tiles, and `stitch_tiles` rejected them all. Use this text plus the same clauses, with "image 2" replaced by a description: for example "Both eyes have the same dark brown iris color", or "Keep exactly the letters shown".
+
+```text
+Re-render this photo crop as a sharp, high-resolution photograph of exactly the same crop:
+same framing, edges, composition and geometry; nothing added, removed, moved, re-centered or
+zoomed. Keep the person's identity, anatomy, expression, color and lighting exactly.
+Reconstruct plausible photographic detail at this resolution while keeping genuine
+imperfections and the original focus falloff. Avoid invented objects or marks,
+beautification, relighting, halos, ringing, over-sharpening, embossed, crosshatched or
+repeating texture and synthetic grain.
+```
 
 ## Choosing regions (pass 2 and 3)
 
@@ -91,6 +106,7 @@ Look at the stitched preview, then pass `regions` as fractions of the image (`x`
 - **Pass 3:** pick tighter features, such as the eyes, lips, nose, fingers, jewelry, label text or fine fabric.
 - **Skip low-information areas:** sky, blurred background and plain walls only waste money.
 - **Matching features:** put both eyes in one region rather than one per eye, so the irises are re-rendered together and stay alike. Do the same for earrings and pairs of hands.
+- **Size:** keep each region to about a third of the image's long side or less. The model renders each crop at 4K from an input of at most 2048 px, so a larger region comes back no sharper than pass 1: in testing, a region spanning 74% of the width only evened out the eye color. `tile_image` warns about such regions; tighten them before spending.
 - **Padding:** `tile_image` adds 20% context around each region and grows it to a supported aspect ratio. Draw regions tight around the feature.
 - **Without image previews:** if your client cannot show images, you cannot choose regions. Stop after pass 1, or ask the user where the important details are.
 
@@ -100,7 +116,7 @@ Look at the stitched preview, then pass `regions` as fractions of the image (`x`
 |-------|---------|----|
 | `placed`, `match` 0.8-1 | Tile aligned. `shift`/`scale` show the correction applied. | Nothing. |
 | `placed` with a note "part of the tile differs" | One area of the tile changed structure, for example a moved hand or an invented object. | Look at that tile in a detail crop; retry it if the change is visible. |
-| `rejected` | Different framing or shape, or content that does not match the photo. The area keeps the prior pixels. | Retry with the same inputs and the framing sentence stressed, at most twice. If it keeps failing, deliver without it and say so. |
+| `rejected` | Different framing or shape, or content that does not match the photo. The area keeps the prior pixels. | Retry at most twice, with the same inputs and this sentence first: "Keep exactly the field of view of image 1: its edges must cut through <what lies at its edges> at the same places. Do not zoom out and do not reveal anything outside image 1." (In testing this fixed a tile the model had zoomed out.) If it keeps failing, deliver without it and say so. |
 | `unedited` | You did not pass that tile. | Intended only when the area needs no detail. |
 | Warning "interpolated beyond about N px" | The tiles carry less detail than the output size. | Tell the user, or rerun with `grid: 4` or a smaller `longEdge`. |
 

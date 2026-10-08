@@ -19,7 +19,7 @@ How `tile_image` and `stitch_tiles` work, how to pick settings, and a complete w
   - Because the crop already has a supported shape, the model returns it as a pure scale-up: no cropping, letterboxing or stretching to undo.
 - **Regions (later passes):** each region is padded and grown the same way. Overlapping regions are fine.
 - **Crop size:** crops are saved as lossless PNG, at most 2048 px on the long side. The model samples its inputs at about 1K, so bigger crops would only add upload time.
-- **Reference:** the `reference` file is the original at most 2048 px. It goes with every tile so the model knows the identity, colors and light.
+- **Reference (first pass only):** the `reference` file is the original at most 2048 px. It goes with every pass-1 tile so the model knows the identity, colors and light. Refinement passes send the crop alone, because next to a close-up the model tends to redraw the whole reference photo instead.
 
 Keep the tile's `aspectRatio` in the `edit_image` call. A wrong ratio is the most common reason for a rejected tile.
 
@@ -77,9 +77,11 @@ tile_image(image: "gemini-media://files/portrait-upscaled.png", regions: [
   {x: 0.30, y: 0.05, width: 0.45, height: 0.35, label: "hair"},
   {x: 0.35, y: 0.45, width: 0.40, height: 0.35, label: "shoulder"},
   {x: 0.05, y: 0.55, width: 0.25, height: 0.30, label: "hand"}])
-  -> 4 tiles (pass 2, regions); output keeps 8192x5461; same reference
+  -> 4 tiles (pass 2, regions); output keeps 8192x5461; no reference on refinement passes
 
-edit_image ... x4, stitch_tiles(job: ".../portrait-p2-tiles.json", tiles: [...])
+edit_image(image: ".../portrait-p2-t1-face.png", aspectRatio: <tile's>, imageSize: "4K",
+           prompt: "<refinement prompt> + Skin and Eyes clauses")   # no referenceImages
+... x4, stitch_tiles(job: ".../portrait-p2-tiles.json", tiles: [...])
   -> portrait-upscaled-p2.png
 ```
 
@@ -90,7 +92,9 @@ Deliver `portrait-upscaled-p2.png` with its size, about 10,700 px of model detai
 | Symptom | Cause and fix |
 |---------|---------------|
 | A tile is rejected with "different shape" | `aspectRatio` was missing or wrong in `edit_image`. Retry with the tile's ratio. |
-| A tile is rejected with "does not match" | The model reframed, zoomed or redrew the crop. Retry with the framing sentence first in the prompt. With `pro`, try `nb2`, which follows the crop more closely in practice. |
+| A tile is rejected with "does not match" | The model reframed, zoomed or redrew the crop. Retry with the field-of-view sentence first in the prompt (see the skill). With `pro`, try `nb2`. |
+| Every refinement tile is rejected and the edits show the whole photo | `referenceImages` was sent on a refinement pass. Edit each crop alone. |
+| A refinement region comes back no sharper | The region is too large (`tile_image` warned). Use regions about a third of the image's long side or smaller. |
 | Doubled edges in a detail crop | Local drift inside a tile (the note "part of the tile differs"). Retry that tile; if it persists, cover the area with a smaller region in the next pass. |
 | Color steps between tiles | `colorMatch` was off, or a tile changed the lighting. Keep `colorMatch` on and stress "no relighting". |
 | Two irises differ | The eyes were in different tiles or regions. Re-render one region holding both eyes in the next pass. |

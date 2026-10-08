@@ -16,7 +16,7 @@
     {
       "id": 3,
       "prompt": "Pass 1 finished: gemini-media://files/wedding-upscaled.png. Now do the refinement pass on the couple's faces and hands, then stop.",
-      "expected_output": "Looks at the stitched image (preview) and calls gemini-media:tile_image with image = the stitched uri and 2-6 regions as fractions (faces with both eyes together, hands), without longEdge. Edits each tile with edit_image using the plan's reference, aspectRatio, 4K and the tile prompt with Skin/Eyes/Hair clauses as relevant, after stating the cost. Calls stitch_tiles with the pass-2 job and all tiles, checks the report and details, and delivers wedding-upscaled-p2.png with the cost.",
+      "expected_output": "Looks at the stitched image (preview) and calls gemini-media:tile_image with image = the stitched uri and 2-6 regions as fractions (faces with both eyes together, hands), without longEdge. Edits each crop with edit_image on its own (no referenceImages on a refinement pass), with the tile's aspectRatio, 4K and the refinement prompt plus Skin/Eyes/Teeth/Hair clauses as relevant, after stating the cost. Keeps regions to about a third of the image or less and tightens any region tile_image warns about. Calls stitch_tiles with the pass-2 job and all tiles, checks the report and details, and delivers wedding-upscaled-p2.png with the cost.",
       "files": []
     },
     {
