@@ -1254,21 +1254,24 @@ func decodedBytesPerPixel(m color.Model) int {
 }
 
 // shrink box-averages img by an integer factor f (dropping the last
-// partial block), converting f rows at a time.
+// partial block), converting a band of rows at a time. Along a side
+// shorter than f it averages that whole side instead, so neither side
+// shrinks to zero.
 func shrink(img image.Image, f int) *image.RGBA {
 	b := img.Bounds()
-	w, h := b.Dx()/f, b.Dy()/f
+	fx, fy := min(f, b.Dx()), min(f, b.Dy())
+	w, h := b.Dx()/fx, b.Dy()/fy
 	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	band := image.NewRGBA(image.Rect(0, 0, w*f, f))
+	band := image.NewRGBA(image.Rect(0, 0, w*fx, fy))
 	sum := make([]uint32, 4*w)
-	div := uint32(f * f)
+	div := uint32(fx * fy)
 	for y := range h {
-		draw.Draw(band, band.Rect, img, image.Pt(b.Min.X, b.Min.Y+y*f), draw.Src)
+		draw.Draw(band, band.Rect, img, image.Pt(b.Min.X, b.Min.Y+y*fy), draw.Src)
 		clear(sum)
-		for r := range f {
-			row := band.Pix[r*band.Stride : r*band.Stride+4*w*f]
-			for x := range w * f {
-				s, p := sum[4*(x/f):4*(x/f)+4], row[4*x:4*x+4]
+		for r := range fy {
+			row := band.Pix[r*band.Stride : r*band.Stride+4*w*fx]
+			for x := range w * fx {
+				s, p := sum[4*(x/fx):4*(x/fx)+4], row[4*x:4*x+4]
 				s[0], s[1], s[2], s[3] = s[0]+uint32(p[0]), s[1]+uint32(p[1]), s[2]+uint32(p[2]), s[3]+uint32(p[3])
 			}
 		}

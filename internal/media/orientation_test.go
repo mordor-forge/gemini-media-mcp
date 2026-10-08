@@ -157,4 +157,12 @@ func TestDecodeShrunkTurnsAfterShrinking(t *testing.T) {
 	if s.Rect.Dx() != 3 || s.Rect.Dy() != 2 || s.RGBAAt(2, 1) != (color.RGBA{40, 90, 140, 190}) {
 		t.Fatalf("shrink = %v %v", s.Rect, s.RGBAAt(2, 1))
 	}
+	// A side shorter than the factor is averaged whole, never shrunk to 0.
+	strip := image.NewRGBA(image.Rect(0, 0, 9000, 4))
+	for i := range strip.Pix {
+		strip.Pix[i] = uint8(40 + i%4*50)
+	}
+	if s := shrink(strip, 9); s.Rect.Dx() != 1000 || s.Rect.Dy() != 1 || s.RGBAAt(999, 0) != (color.RGBA{40, 90, 140, 190}) {
+		t.Fatalf("panorama shrink = %v %v", s.Rect, s.RGBAAt(999, 0))
+	}
 }
