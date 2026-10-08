@@ -518,4 +518,12 @@ func TestOverrideErrors(t *testing.T) {
 	if _, err := Merge(embedded, []byte("models:\n  - id: x-image\n    family: gemini-image\n    mediaType: image\n    aliases: [nb2]\n")); err == nil {
 		t.Fatal("alias collisions should fail")
 	}
+	for _, bad := range []string{
+		"models:\n  - id: veo-3.1-generate-preview\n    backendShutdown: {gemini-api: 2026-10-32}\n",
+		"models:\n  - id: veo-3.1-generate-preview\n    shutdown: next week\n",
+	} {
+		if _, err := Merge(embedded, []byte(bad)); err == nil || !strings.Contains(err.Error(), "YYYY-MM-DD") {
+			t.Errorf("malformed date should fail: %q -> %v", bad, err)
+		}
+	}
 }
