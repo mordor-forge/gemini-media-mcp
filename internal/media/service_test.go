@@ -862,3 +862,31 @@ func TestUsageWithoutMediaIsRecordedAndBilled(t *testing.T) {
 		t.Fatalf("speech entry = %+v", got)
 	}
 }
+
+// When a backend has a fallback for a model, list_models names it as the
+// replacement there: it is what a request on that backend switches to.
+func TestListModelsNamesTheBackendFallback(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	override := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(override, []byte("models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    status: deprecated\n    replacement: veo-3.1-generate-preview\n    fallback: gemini-omni-1.1-flash\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := catalog.NewSource(override, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.svc.catalog = src
+	res, err := e.svc.ListModels(context.Background(), ListModelsRequest{MediaType: "video"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range res.Models {
+		if m.ID == "x-video" {
+			if m.Replacement != "gemini-omni-1.1-flash" {
+				t.Fatalf("replacement = %q, want the gemini-api fallback", m.Replacement)
+			}
+			return
+		}
+	}
+	t.Fatal("x-video not listed")
+}
