@@ -42,8 +42,9 @@ const (
 	// maxPlanPixels bounds images tile_image and stitch_tiles decode.
 	maxPlanPixels = 100_000_000
 	// maxTilePixels bounds an edited tile: the model returns at most about
-	// 17 megapixels (4K), and stitch_tiles decodes tiles two at a time.
-	maxTilePixels = 40_000_000
+	// 17 megapixels (4K). With its converted copy and a resampled window
+	// no larger than the canvas, one tile then fits maxPreparedBytes.
+	maxTilePixels = 24_000_000
 	// maxFootprintPixels bounds the output pixels all tiles of a job cover
 	// together (what blending visits). Real plans stay at a few times the
 	// output; a crafted job of many overlapping full-size tiles does not.
@@ -65,10 +66,11 @@ const (
 	detailPixels  = 512
 )
 
-// maxPreparedBytes bounds the memory of two tiles in flight while
-// stitching (one painted, the next prepared); tiles larger than that
-// together are prepared one at a time. A variable for tests.
-var maxPreparedBytes = 384 << 20
+// maxPreparedBytes bounds the memory of the tiles in flight while
+// stitching, on top of the canvas: one tile painted and the next prepared
+// when both fit, otherwise one at a time; a tile that does not fit alone
+// is refused. A variable for tests.
+var maxPreparedBytes = 512 << 20
 
 // TileRegion is an area of the image as fractions of its size.
 type TileRegion struct {
@@ -86,7 +88,7 @@ type TileImageRequest struct {
 	Regions    []TileRegion `json:"regions,omitempty" jsonschema:"Refinement pass: up to 12 areas to re-render (faces, hands, text, materials), as fractions of the image. Omit for a full grid."`
 	Padding    float64      `json:"padding,omitempty" jsonschema:"Context added around each cell or region, as a fraction of its size (default 0.2, 0.05-0.5). Tiles then grow to the nearest aspect ratio the model supports."`
 	LongEdge   int          `json:"longEdge,omitempty" jsonschema:"Long edge in pixels of the image stitch_tiles will produce (default 8192, 1024-16384, at most 70 megapixels). First pass only; later passes keep their input's size."`
-	Original   string       `json:"original,omitempty" jsonschema:"The untouched original, sent with every tile as context. Defaults to image on a first pass and to the original recorded by stitch_tiles on later passes."`
+	Original   string       `json:"original,omitempty" jsonschema:"First pass only: the untouched original, sent with every tile as context (as a copy of at most 2048 px). Defaults to image. Refinement passes edit crops alone and keep the first pass's original, so it is ignored there."`
 	Model      string       `json:"model,omitempty" jsonschema:"Image model the tiles will be edited with (default nb2). Sets the supported aspect ratios and the cost estimate."`
 	ImageSize  string       `json:"imageSize,omitempty" jsonschema:"Size the tiles will be edited at (1K, 2K or 4K, as the model supports). Omit it on a first pass to pick it with the grid; otherwise it defaults to the model's largest size."`
 	OutputName string       `json:"outputName,omitempty" jsonschema:"Optional base name for the crops and the stitched result. Defaults to the original's name."`
@@ -269,10 +271,11 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 				pass = intParam(p.Params, "pass") + 1
 				prevNative = intParam(p.Params, "nativeLongEdge")
 				jobName, _ = p.Params["name"].(string)
-				if original == "" {
-					original, _ = p.Params["original"].(string)
-					reference, _ = p.Params["reference"].(string)
+				if original != "" {
+					warnings = append(warnings, "original is ignored on refinement passes: their crops are edited alone, and the job keeps the first pass's original")
 				}
+				original, _ = p.Params["original"].(string)
+				reference, _ = p.Params["reference"].(string)
 			}
 		}
 	}
@@ -298,10 +301,13 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		if err != nil {
 			return nil, err
 		}
-		if refSrc, err = decodeShrunk(oin, "original", maxPlanPixels, maxCropPixels); err != nil {
+		var decoded int
+		if refSrc, decoded, err = decodeShrunk(oin, "original", maxPlanPixels, maxCropPixels); err != nil {
 			return nil, err
 		}
-		runtime.GC() // release its full-size decode before the image's
+		if decoded > 16_000_000 {
+			runtime.GC() // release a large full-size decode before the image's
+		}
 		if err := stopped(); err != nil {
 			return nil, err
 		}
@@ -774,6 +780,11 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	need := make([]int, len(placements))
 	for i, p := range placements {
 		need[i] = 8*sources[i].w*sources[i].h + 4*canvas.PreparedPixels(p)
+		if need[i] > maxPreparedBytes {
+			return nil, &apperr.Error{Kind: apperr.Invalid,
+				Message: fmt.Sprintf("tile %d would need about %d MB to blend, more than stitch_tiles allows (%d MB)", sources[i].tile, need[i]>>20, maxPreparedBytes>>20),
+				Hint:    "Run tile_image again with a smaller longEdge or a finer grid, so each tile covers less of the output."}
+		}
 	}
 	type prepared struct {
 		p   *tiles.Prepared
@@ -1119,19 +1130,21 @@ func decodeImage(in *store.Input, what string, limit int) (image.Image, error) {
 
 // decodeShrunk is decodeImage for an image only needed small: it is
 // box-averaged to a long side under 2*maxPx before being turned, a band of
-// rows at a time, so it costs its decoded size once.
-func decodeShrunk(in *store.Input, what string, limit, maxPx int) (image.Image, error) {
+// rows at a time, so it costs its decoded size once. It also returns the
+// decoded size in pixels.
+func decodeShrunk(in *store.Input, what string, limit, maxPx int) (image.Image, int, error) {
 	img, format, err := decodeRaw(in, what, limit)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	if f := max(img.Bounds().Dx(), img.Bounds().Dy()) / maxPx; f >= 2 {
+	b := img.Bounds()
+	if f := max(b.Dx(), b.Dy()) / maxPx; f >= 2 {
 		img = shrink(img, f)
 	}
 	if format == "jpeg" {
 		img = orient(img, jpegOrientation(in.Data))
 	}
-	return img, nil
+	return img, b.Dx() * b.Dy(), nil
 }
 
 func decodeRaw(in *store.Input, what string, limit int) (image.Image, string, error) {

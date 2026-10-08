@@ -521,7 +521,7 @@ func TestDecodeImageChecksTheLimitFromTheHeader(t *testing.T) {
 	png = append(png, chunk...)
 	png = binary.BigEndian.AppendUint32(png, crc32.ChecksumIEEE(chunk))
 	_, err := decodeImage(&store.Input{Data: png, MIMEType: "image/png", Ref: "big.png"}, "tile 1", maxTilePixels)
-	if apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "limit is 40 megapixels") {
+	if apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "limit is 24 megapixels") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -763,6 +763,12 @@ func TestTileImageTrustsProvenanceOnlyForTheStitchedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A refinement pass edits crops alone: an original passed there is ignored.
+	refine, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: out.File.URI, Original: src, Regions: []TileRegion{{X: 0.3, Y: 0.3, Width: 0.3, Height: 0.3}}})
+	if err != nil || refine.Pass != 2 || refine.Reference != nil || !strings.Contains(strings.Join(refine.Warnings, " "), "original is ignored") {
+		t.Fatalf("refinement with original = %+v, %v", refine, err)
+	}
+
 	// Edited in place after stitching: its sidecar no longer describes it.
 	if err := os.WriteFile(out.File.Path, encode(t, scene(1024, 768, 17)), 0o600); err != nil {
 		t.Fatal(err)
@@ -827,12 +833,18 @@ func TestStitchTilesPreparesSeriallyOverTheBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func(v int) { maxPreparedBytes = v }(maxPreparedBytes)
-	maxPreparedBytes = 0
+	// Each tile here needs about 2 MB: 3 MB holds one, not two.
+	maxPreparedBytes = 3 << 20
 	serial, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits, OutputName: "serial"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(decodeFile(t, overlapped.File.Path).Pix, decodeFile(t, serial.File.Path).Pix) {
 		t.Fatal("preparing tiles one at a time changed the result")
+	}
+	// A tile that does not fit alone is refused.
+	maxPreparedBytes = 1 << 20
+	if _, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "would need") {
+		t.Fatalf("oversized tile: err = %v", err)
 	}
 }

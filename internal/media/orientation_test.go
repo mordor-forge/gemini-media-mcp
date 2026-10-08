@@ -138,9 +138,9 @@ func TestOrientMatchesAPixelMapAcrossBands(t *testing.T) {
 func TestDecodeShrunkTurnsAfterShrinking(t *testing.T) {
 	// 64x32, left half red, turned clockwise: 32x64 with red on top.
 	in := &store.Input{Data: exifJPEG(t, 6, binary.BigEndian), MIMEType: "image/jpeg", Ref: "x.jpg"}
-	img, err := decodeShrunk(in, "original", maxPlanPixels, 16)
-	if err != nil {
-		t.Fatal(err)
+	img, decoded, err := decodeShrunk(in, "original", maxPlanPixels, 16)
+	if err != nil || decoded != 64*32 {
+		t.Fatal(decoded, err)
 	}
 	if b := img.Bounds(); b.Dx() != 8 || b.Dy() != 16 {
 		t.Fatalf("shrunk to %v, want 8x16 (64/4 x 32/4, turned)", b)
