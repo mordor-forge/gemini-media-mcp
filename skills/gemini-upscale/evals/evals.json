@@ -1,0 +1,29 @@
+{
+  "skill_name": "gemini-upscale",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Upscale ~/Pictures/beach-2014.jpg to 8K so I can print it big. It's only 1200 px wide.",
+      "expected_output": "Says that detail is AI-reconstructed, not recovered, and asks once whether to run 2 passes (recommended) or 3 at 8K, unless that is already clear. Calls gemini-media:tile_image with the photo (default grid 3, longEdge 8192), reports the per-run estimate (pass 1 cost from the result plus 4-8 tiles per later pass at the same per-tile price) and waits for approval. Then calls gemini-media:edit_image once per tile with image = crop uri, referenceImages = [reference uri], the tile's aspectRatio, imageSize 4K and model nb2, using the tile prompt (image 1 = crop, image 2 = original) plus only relevant material clauses. Calls gemini-media:stitch_tiles with the job and every tile, reads the report, retries rejected tiles at most twice and inspects the previews. Delivers path, size, nativeLongEdge, tiles placed/rejected and total cost.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Can you enhance this security camera still so we can read the licence plate? /tmp/cam/frame_0412.png",
+      "expected_output": "Declines to use the generative upscale for evidence: explains that the model invents plausible detail, so a readable plate would be fabricated and unreliable. Does not call tile_image or edit_image. May suggest non-generative options (original footage, deblurring by a forensic tool).",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Pass 1 finished: gemini-media://files/wedding-upscaled.png. Now do the refinement pass on the couple's faces and hands, then stop.",
+      "expected_output": "Looks at the stitched image (preview) and calls gemini-media:tile_image with image = the stitched uri and 2-6 regions as fractions (faces with both eyes together, hands), without longEdge. Edits each tile with edit_image using the plan's reference, aspectRatio, 4K and the tile prompt with Skin/Eyes/Hair clauses as relevant, after stating the cost. Calls stitch_tiles with the pass-2 job and all tiles, checks the report and details, and delivers wedding-upscaled-p2.png with the cost.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "stitch_tiles says tile 5 r2c2 was rejected: 'the returned image is 4096x4096, a different shape from the 1517x1138 crop'. What now?",
+      "expected_output": "Explains that the edit was made at the wrong aspect ratio, retries edit_image for tile 5 with the tile's aspectRatio (4:3) from tile_image and the same crop, reference, size and prompt, then calls stitch_tiles again with all tiles including the retried one. Does not retry more than twice.",
+      "files": []
+    }
+  ]
+}
