@@ -525,6 +525,21 @@ func TestDecodeImageChecksTheLimitFromTheHeader(t *testing.T) {
 	if apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "limit is 24 megapixels") {
 		t.Fatalf("err = %v", err)
 	}
+
+	// The same header at 16 bits per channel decodes to twice the bytes:
+	// 64 MP is under the plan limit at 8 bits, over it at 16.
+	ihdr[8] = 16
+	chunk = append([]byte("IHDR"), ihdr...)
+	png16 := append([]byte("\x89PNG\r\n\x1a\n"), 0, 0, 0, 13)
+	png16 = append(png16, chunk...)
+	png16 = binary.BigEndian.AppendUint32(png16, crc32.ChecksumIEEE(chunk))
+	_, err = decodeImage(&store.Input{Data: png16, MIMEType: "image/png", Ref: "deep.png"}, "image", maxPlanPixels)
+	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Message, "16 bits per channel") || !strings.Contains(ae.Hint, "8 bits") {
+		t.Fatalf("16-bit: err = %v", err)
+	}
+	if _, err := decodeImage(&store.Input{Data: png, MIMEType: "image/png", Ref: "big.png"}, "image", maxPlanPixels); err == nil || strings.Contains(err.Error(), "megapixels") {
+		t.Fatalf("8-bit 64 MP passes the size check (and fails decoding the stub): err = %v", err)
+	}
 }
 
 // tile_image stops between crops when the request ends, without writing
@@ -902,5 +917,22 @@ func TestPartialRefinementGridKeepsTheDetailFigure(t *testing.T) {
 	out2, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res2.Job, Tiles: fakeEdits(t, e, truth, 1, res2)[1:]})
 	if err != nil || out2.NativeLongEdge == 0 || out2.NativeLongEdge > out.NativeLongEdge {
 		t.Fatalf("partial refinement native = %d (pass 1 %d), %v", out2.NativeLongEdge, out.NativeLongEdge, err)
+	}
+}
+
+// A large image is shrunk a band at a time before the reference is cut
+// from it; the reference still comes out at the full 2048 px.
+func TestTileReferenceShrinksLargeImages(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	big := image.NewGray(image.Rect(0, 0, 5000, 2500)) // not RGBA: no whole-image copy is made
+	for i := range big.Pix {
+		big.Pix[i] = uint8(i % 251)
+	}
+	a, err := e.svc.tileReference("orig.png", "big", big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Width != 2048 || a.Height != 1024 || a.MIMEType != "image/jpeg" {
+		t.Fatalf("reference = %dx%d %s", a.Width, a.Height, a.MIMEType)
 	}
 }

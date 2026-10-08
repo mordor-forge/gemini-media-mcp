@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"image/jpeg"
 	"image/png"
 	"maps"
@@ -570,6 +571,11 @@ func (s *Service) durableRef(ref string, in *store.Input, saveAs string) (string
 // tile, made from src: the shrunk original, or the image when it is the
 // original.
 func (s *Service) tileReference(original, name string, src image.Image) (*store.Asset, error) {
+	// A large image is box-shrunk a band of rows at a time first, so
+	// resizing it never copies it whole.
+	if f := max(src.Bounds().Dx(), src.Bounds().Dy()) / maxCropPixels; f >= 2 {
+		src = shrink(src, f)
+	}
 	ref := cropImage(src, tiles.Box{W: src.Bounds().Dx(), H: src.Bounds().Dy()}, maxCropPixels)
 	// Context only, and sent inline next to every crop: a JPEG keeps the
 	// pair well under the request size limit.
@@ -1176,7 +1182,13 @@ func decodeRaw(in *store.Input, what string, limit int) (image.Image, string, er
 	if err != nil {
 		return nil, "", apperr.Invalidf("%s %s: cannot decode %s (%v); use PNG, JPEG or WebP", what, in.Ref, in.MIMEType, err)
 	}
-	if cfg.Width*cfg.Height > limit {
+	// limit is for 8-bit images; a 16-bit one decodes to twice the bytes.
+	if bpp := max(decodedBytesPerPixel(cfg.ColorModel), 4); cfg.Width*cfg.Height*bpp > 4*limit {
+		if bpp > 4 {
+			return nil, "", &apperr.Error{Kind: apperr.Invalid,
+				Message: fmt.Sprintf("%s %s is %dx%d at 16 bits per channel; the limit is %d megapixels for such images (%d at 8 bits)", what, in.Ref, cfg.Width, cfg.Height, 4*limit/bpp/1_000_000, limit/1_000_000),
+				Hint:    "Convert it to 8 bits per channel (a regular PNG or JPEG) and try again."}
+		}
 		return nil, "", apperr.Invalidf("%s %s is %dx%d; the limit is %d megapixels", what, in.Ref, cfg.Width, cfg.Height, limit/1_000_000)
 	}
 	img, format, err := image.Decode(bytes.NewReader(in.Data))
@@ -1184,6 +1196,23 @@ func decodeRaw(in *store.Input, what string, limit int) (image.Image, string, er
 		return nil, "", apperr.Invalidf("%s %s: %v", what, in.Ref, err)
 	}
 	return img, format, nil
+}
+
+// decodedBytesPerPixel is how many bytes per pixel the decoder holds for an
+// image of color model m.
+func decodedBytesPerPixel(m color.Model) int {
+	switch m {
+	case color.RGBA64Model, color.NRGBA64Model:
+		return 8
+	case color.Gray16Model, color.Alpha16Model:
+		return 2
+	case color.GrayModel, color.AlphaModel:
+		return 1
+	}
+	if _, ok := m.(color.Palette); ok {
+		return 1
+	}
+	return 4
 }
 
 // shrink box-averages img by an integer factor f (dropping the last
