@@ -440,16 +440,20 @@ func (s *Service) downloadOmni(ctx context.Context, result *google.InteractionRe
 	return nil, err
 }
 
+// omniStopped is the outcome recorded for a job whose worker went quiet. It
+// is provisional: the worker may still be alive and settle the real outcome.
+const omniStopped = "the server process generating this clip stopped before it finished; Google may still have produced (and billed) it, but it cannot be retrieved"
+
 // recordOutcome finalizes a pending ledger entry. Unbilled outcomes cost $0;
-// billed ones keep the estimate unless usage priced them. An entry already
-// finalized is left alone: a worker that settled it but stopped before
-// saving its job must not lose its cost and output paths to the recovery.
+// billed ones keep the estimate unless usage priced them. Only a pending
+// entry or a provisional stale-worker settlement is replaced, so neither the
+// recovery nor a late worker overwrites what a worker already settled.
 func (s *Service) recordOutcome(ledgerID, status string, actual *catalog.Estimate, errText string, usage *google.Usage, fallbackErr string, outputs ...string) {
 	if ledgerID == "" {
 		return
 	}
 	e, ok := s.ledger.Get(ledgerID)
-	if !ok || e.Status != spend.StatusPending {
+	if !ok || e.Status != spend.StatusPending && (e.Error != omniStopped || errText == omniStopped) {
 		return
 	}
 	e.Status = status
@@ -483,7 +487,7 @@ func (s *Service) checkWorkerJob(job *jobs.Job) (jobCheck, bool) {
 	now := s.now().UTC()
 	job.CompletedAt = &now
 	job.State, job.Billed = jobs.StateFailed, true
-	job.Error = "the server process generating this clip stopped before it finished; Google may still have produced (and billed) it, but it cannot be retrieved"
+	job.Error = omniStopped
 	if err := s.jobs.Put(job); err != nil {
 		s.log.Warn("saving job failed", "job", job.ID, "err", err)
 	}
