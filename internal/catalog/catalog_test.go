@@ -153,6 +153,30 @@ func TestVeoPreviewsLeaveTheGeminiAPI(t *testing.T) {
 	if got := implicit.BackendSummary(after); got != "gemini-api ended 2026-10-22, vertex" {
 		t.Errorf("implicit backends with a shutdown = %q", got)
 	}
+	// With no backend resolved (the CLI listing, no credentials), a model is
+	// retired once every backend has ended it.
+	ended, err := Merge(embedded, []byte("models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    status: preview\n    replacement: gemini-omni-1.1-flash\n    backendShutdown: {gemini-api: \"2026-10-22\", vertex: \"2026-10-01\"}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	x, _ := ended.Lookup("x-video")
+	for _, b := range []string{"", "auto"} {
+		if st := x.StatusOn(b, before); st != StatusPreview || !x.OfferedOn(b, before) {
+			t.Errorf("StatusOn(%q) with gemini-api still open = %s", b, st)
+		}
+		if st := x.StatusOn(b, after); st != StatusRetired || x.OfferedOn(b, after) {
+			t.Errorf("StatusOn(%q) after every backend ended = %s", b, st)
+		}
+		if has(ended.List(Video, b, false, after), "x-video") || !has(ended.List(Video, b, true, after), "x-video") {
+			t.Errorf("List(%q) must hide a model every backend ended unless includeInactive is set", b)
+		}
+	}
+	if !has(ended.List(Video, "", false, after), lite.ID) {
+		t.Error("List(\"\") must keep lite, which vertex still offers")
+	}
+	if r, err := ended.Resolve("x-video", Video, "auto", after); err != nil || r.Model.ID != "gemini-omni-1.1-flash" || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "x-video shut down on every backend (gemini-api ended 2026-10-22, vertex ended 2026-10-01); using gemini-omni-1.1-flash") {
+		t.Errorf("unresolved backend after every backend ended = %+v %v", r, err)
+	}
 	// Retired Veo IDs follow the chain to Omni.
 	r, err := c.Resolve("veo-3.0-generate-001", Video, "gemini-api", after)
 	if err != nil || r.Model.ID != "gemini-omni-1.1-flash" || len(r.Warnings) != 2 {
@@ -546,6 +570,7 @@ func TestOverrideErrors(t *testing.T) {
 		"backendDefaults:\n  vertex: {video: omni}\n":                                                "not offered on vertex",
 		"backendDefaults:\n  vertexai: {video: lite}\n":                                              "the backends are",
 		"models:\n  - id: veo-3.1-generate-preview\n    backendShutdown: {gemini_api: 2026-10-22}\n": "not one of its backends",
+		"models:\n  - id: gemini-2.5-flash-image\n    backendShutdown: {vertex: \"2027-04-01\"}\n":   "after the model's shutdown 2027-03-15",
 	} {
 		if _, err := Merge(embedded, []byte(bad)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("bad default should fail: %q -> %v", bad, err)

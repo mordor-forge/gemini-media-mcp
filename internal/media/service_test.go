@@ -868,7 +868,11 @@ func TestUsageWithoutMediaIsRecordedAndBilled(t *testing.T) {
 func TestListModelsNamesTheBackendFallback(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	override := filepath.Join(t.TempDir(), "override.yaml")
-	if err := os.WriteFile(override, []byte("models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    status: deprecated\n    replacement: veo-3.1-generate-preview\n    fallback: gemini-omni-1.1-flash\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n"), 0o600); err != nil {
+	yaml := "models:\n" +
+		"  - id: x-video\n    family: veo\n    mediaType: video\n    status: deprecated\n    replacement: veo-3.1-generate-preview\n    fallback: gemini-omni-1.1-flash\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n" +
+		// Past the global shutdown, Resolve follows the replacement.
+		"  - id: x-old\n    family: veo\n    mediaType: video\n    status: deprecated\n    shutdown: \"2026-01-01\"\n    replacement: gemini-omni-1.1-flash\n    fallback: veo-3.1-lite-generate-preview\n    backendShutdown: {gemini-api: \"2025-12-01\"}\n"
+	if err := os.WriteFile(override, []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	src, err := catalog.NewSource(override, nil, nil)
@@ -876,17 +880,23 @@ func TestListModelsNamesTheBackendFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.svc.catalog = src
-	res, err := e.svc.ListModels(context.Background(), ListModelsRequest{MediaType: "video"})
+	res, err := e.svc.ListModels(context.Background(), ListModelsRequest{MediaType: "video", IncludeInactive: true})
 	if err != nil {
 		t.Fatal(err)
 	}
+	want := map[string]string{"x-video": "gemini-omni-1.1-flash", "x-old": "gemini-omni-1.1-flash"}
 	for _, m := range res.Models {
-		if m.ID == "x-video" {
-			if m.Replacement != "gemini-omni-1.1-flash" {
-				t.Fatalf("replacement = %q, want the gemini-api fallback", m.Replacement)
+		if r, ok := want[m.ID]; ok {
+			if m.Replacement != r {
+				t.Errorf("%s replacement = %q, want %q", m.ID, m.Replacement, r)
 			}
-			return
+			if resolved, err := e.svc.catalog.Get().Resolve(m.ID, "video", "gemini-api", e.svc.now()); !m.OnBackend && (err != nil || resolved.Model.ID != r) {
+				t.Errorf("%s resolves to %+v %v, not its listed replacement %s", m.ID, resolved, err, r)
+			}
+			delete(want, m.ID)
 		}
 	}
-	t.Fatal("x-video not listed")
+	if len(want) != 0 {
+		t.Fatalf("not listed: %v", want)
+	}
 }
