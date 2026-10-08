@@ -223,6 +223,32 @@ func (c *Catalog) index() error {
 			}
 		}
 	}
+	// A default naming no model, or a model of another media type, would
+	// fail every request that relies on it.
+	checkDefault := func(scope, mediaType, name string) error {
+		m, ok := c.Lookup(name)
+		switch {
+		case name == "":
+			return nil
+		case !ok:
+			return fmt.Errorf("catalog: %sdefault %s model %q is not in the catalog", scope, mediaType, name)
+		case m.MediaType != mediaType:
+			return fmt.Errorf("catalog: %sdefault %s model %q generates %s", scope, mediaType, name, m.MediaType)
+		}
+		return nil
+	}
+	for mediaType, name := range c.Defaults {
+		if err := checkDefault("", mediaType, name); err != nil {
+			return err
+		}
+	}
+	for backend, d := range c.BackendDefaults {
+		for mediaType, name := range d {
+			if err := checkDefault(backend+" ", mediaType, name); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
