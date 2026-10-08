@@ -527,9 +527,12 @@ func TestOverrideErrors(t *testing.T) {
 		}
 	}
 	for bad, want := range map[string]string{
-		"backendDefaults:\n  vertex: {video: veo-9}\n":   "not in the catalog",
-		"backendDefaults:\n  gemini-api: {video: nb2}\n": "generates image",
-		"defaults:\n  image: omni\n":                     "generates video",
+		"backendDefaults:\n  vertex: {video: veo-9}\n":                                               "not in the catalog",
+		"backendDefaults:\n  gemini-api: {video: nb2}\n":                                             "generates image",
+		"defaults:\n  image: omni\n":                                                                 "generates video",
+		"backendDefaults:\n  vertex: {video: omni}\n":                                                "not offered on vertex",
+		"backendDefaults:\n  vertexai: {video: lite}\n":                                              "the backends are",
+		"models:\n  - id: veo-3.1-generate-preview\n    backendShutdown: {gemini_api: 2026-10-22}\n": "not one of its backends",
 	} {
 		if _, err := Merge(embedded, []byte(bad)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("bad default should fail: %q -> %v", bad, err)

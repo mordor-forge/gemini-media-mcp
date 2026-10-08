@@ -209,6 +209,10 @@ func (c *Catalog) index() error {
 			if _, ok := parseDate(d); !ok {
 				return fmt.Errorf("catalog: %s: backendShutdown %s %q is not a YYYY-MM-DD date", m.ID, backend, d)
 			}
+			// A misspelled backend would never match, keeping the model on.
+			if !knownBackend(backend) || !m.SupportsBackend(backend) {
+				return fmt.Errorf("catalog: %s: backendShutdown names %q, which is not one of its backends (%s)", m.ID, backend, strings.Join(m.backendNames(), ", "))
+			}
 		}
 		for _, name := range append([]string{m.ID}, m.Aliases...) {
 			key := strings.ToLower(name)
@@ -223,9 +227,13 @@ func (c *Catalog) index() error {
 			}
 		}
 	}
-	// A default naming no model, or a model of another media type, would
-	// fail every request that relies on it.
-	checkDefault := func(scope, mediaType, name string) error {
+	// A default naming no model, a model of another media type or one its
+	// backend does not offer would fail every request that relies on it.
+	checkDefault := func(backend, mediaType, name string) error {
+		scope := ""
+		if backend != "" {
+			scope = backend + " "
+		}
 		m, ok := c.Lookup(name)
 		switch {
 		case name == "":
@@ -234,6 +242,8 @@ func (c *Catalog) index() error {
 			return fmt.Errorf("catalog: %sdefault %s model %q is not in the catalog", scope, mediaType, name)
 		case m.MediaType != mediaType:
 			return fmt.Errorf("catalog: %sdefault %s model %q generates %s", scope, mediaType, name, m.MediaType)
+		case !m.SupportsBackend(backend):
+			return fmt.Errorf("catalog: %sdefault %s model %q is not offered on %s (only %s)", scope, mediaType, name, backend, strings.Join(m.backendNames(), ", "))
 		}
 		return nil
 	}
@@ -243,13 +253,27 @@ func (c *Catalog) index() error {
 		}
 	}
 	for backend, d := range c.BackendDefaults {
+		if !knownBackend(backend) {
+			return fmt.Errorf("catalog: backendDefaults names %q; the backends are gemini-api and vertex", backend)
+		}
 		for mediaType, name := range d {
-			if err := checkDefault(backend+" ", mediaType, name); err != nil {
+			if err := checkDefault(backend, mediaType, name); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// knownBackend reports whether b is a backend the catalog describes.
+func knownBackend(b string) bool { return b == "gemini-api" || b == "vertex" }
+
+// backendNames lists the backends m is offered on.
+func (m *Model) backendNames() []string {
+	if len(m.Backends) == 0 {
+		return []string{"gemini-api", "vertex"}
+	}
+	return m.Backends
 }
 
 // Lookup finds a model by ID, alias or Vertex ID (case-insensitive).
