@@ -315,6 +315,24 @@ func TestVideoLifecycle(t *testing.T) {
 	}
 }
 
+// A Veo clip made before Veo left the Gemini API is not offered for
+// extension afterwards: the next step points to its last frame instead.
+func TestVeoClipAfterTheGeminiAPIShutdown(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "waves", Model: "fast", WaitSeconds: 30})
+	if err != nil || job.State != jobs.StateCompleted || !strings.Contains(job.Next, "call extend_video") {
+		t.Fatalf("before = %+v %v", job, err)
+	}
+	e.svc.now = func() time.Time { return time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC) }
+	got, err := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
+	if err != nil || strings.Contains(got.Next, "call extend_video") || !strings.Contains(got.Next, "last frame") {
+		t.Fatalf("after = %+v %v", got, err)
+	}
+	if _, err := e.svc.ExtendVideo(context.Background(), ExtendVideoRequest{JobID: job.JobID, Prompt: "more"}); err == nil {
+		t.Fatal("extending after the shutdown must fail")
+	}
+}
+
 func TestVideoValidationAndLegacyOperations(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	if _, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite", Resolution: "4k"}); apperr.KindOf(err) != apperr.Invalid {

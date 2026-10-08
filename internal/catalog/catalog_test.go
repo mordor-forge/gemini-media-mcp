@@ -132,6 +132,14 @@ func TestVeoPreviewsLeaveTheGeminiAPI(t *testing.T) {
 	if got := lite.BackendSummary(after); got != "gemini-api ended 2026-10-22, vertex" {
 		t.Errorf("BackendSummary = %q", got)
 	}
+	preview, _ := c.Lookup("gemini-omni-flash-preview")
+	veo2, _ := c.Lookup("veo-2.0-generate-001")
+	if got := preview.BackendSummary(after); got != "gemini-api ended 2026-10-22" {
+		t.Errorf("globally retired BackendSummary = %q", got)
+	}
+	if got := veo2.BackendSummary(after); got != "ended 2026-06-30" {
+		t.Errorf("retired model without backends = %q", got)
+	}
 	// Retired Veo IDs follow the chain to Omni.
 	r, err := c.Resolve("veo-3.0-generate-001", Video, "gemini-api", after)
 	if err != nil || r.Model.ID != "gemini-omni-1.1-flash" || len(r.Warnings) != 2 {
