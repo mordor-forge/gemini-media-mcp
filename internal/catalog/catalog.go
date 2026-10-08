@@ -289,7 +289,8 @@ func (c *Catalog) IsDefault(m *Model, backend string) bool {
 	return ok && d == m
 }
 
-// ShutdownTime parses the shutdown date (end of that day, UTC).
+// ShutdownTime parses the shutdown date. Google shuts a model down on that
+// date, so it counts as gone from the start of the day (UTC).
 func (m *Model) ShutdownTime() (time.Time, bool) {
 	return parseDate(m.Shutdown)
 }
@@ -302,7 +303,7 @@ func parseDate(s string) (time.Time, bool) {
 	if err != nil {
 		return time.Time{}, false
 	}
-	return t.Add(24*time.Hour - time.Second), true
+	return t, true
 }
 
 // ShutdownOn returns the shutdown date that applies on backend: the
@@ -316,18 +317,18 @@ func (m *Model) ShutdownOn(backend string) string {
 
 // EffectiveStatus accounts for shutdown dates that have passed.
 func (m *Model) EffectiveStatus(now time.Time) string {
-	if t, ok := m.ShutdownTime(); ok && now.After(t) {
+	if t, ok := m.ShutdownTime(); ok && !now.Before(t) {
 		return StatusRetired
 	}
 	return m.Status
 }
 
 // StatusOn is EffectiveStatus on one backend: a backend shutdown date makes
-// the model deprecated there until the date and retired after it.
+// the model deprecated there before the date and retired from it on.
 func (m *Model) StatusOn(backend string, now time.Time) string {
 	st := m.EffectiveStatus(now)
 	if t, ok := parseDate(m.BackendShutdown[backend]); ok && st != StatusRetired {
-		if now.After(t) {
+		if !now.Before(t) {
 			return StatusRetired
 		}
 		return StatusDeprecated
