@@ -201,6 +201,15 @@ func (c *Catalog) index() error {
 		if m.Status == "" {
 			m.Status = StatusPreview
 		}
+		// A date that does not parse would silently keep the model offered.
+		if _, ok := parseDate(m.Shutdown); m.Shutdown != "" && !ok {
+			return fmt.Errorf("catalog: %s: shutdown %q is not a YYYY-MM-DD date", m.ID, m.Shutdown)
+		}
+		for backend, d := range m.BackendShutdown {
+			if _, ok := parseDate(d); !ok {
+				return fmt.Errorf("catalog: %s: backendShutdown %s %q is not a YYYY-MM-DD date", m.ID, backend, d)
+			}
+		}
 		for _, name := range append([]string{m.ID}, m.Aliases...) {
 			key := strings.ToLower(name)
 			if prev, dup := c.byName[key]; dup && prev != m {
