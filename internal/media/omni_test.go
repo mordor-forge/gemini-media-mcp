@@ -191,6 +191,77 @@ func TestOmniInterruptedWorkerIsReported(t *testing.T) {
 	}
 }
 
+// A worker that settled its spend but stopped before saving the finished job
+// keeps the settled entry, with its cost and output, through the recovery.
+func TestOmniRecoveryKeepsASettledEntry(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	entry, err := e.ledger.Record(spend.Entry{Tool: "generate_video", Model: "gemini-omni-1.1-flash", Status: spend.StatusOK, CostUSD: 0.61, EstimatedUSD: 0.81, Outputs: []string{"/out/hero.mp4"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := &jobs.Job{ID: jobs.NewID(), Tool: "generate_video", Model: "gemini-omni-1.1-flash", State: jobs.StateWorking, Worker: "gone", LedgerID: entry.ID, EstimateUSD: 0.81}
+	if err := e.jobs.Put(j); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.now = func() time.Time { return time.Now().Add(omniStale + time.Minute) }
+	if _, err := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: j.ID, WaitSeconds: ptr(0)}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := e.ledger.Get(entry.ID)
+	if !ok || got.CostUSD != 0.61 || len(got.Outputs) != 1 || got.Status != spend.StatusOK {
+		t.Fatalf("settled entry changed by the recovery: %+v", got)
+	}
+}
+
+// A worker that was only paused past omniStale (a suspended process) still
+// settles its real outcome over the recovery's estimate.
+func TestOmniResumedWorkerReplacesTheRecovery(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	entry, err := e.ledger.Record(spend.Entry{Tool: "generate_video", Model: "gemini-omni-1.1-flash", Status: spend.StatusPending, CostUSD: 0.81, EstimatedUSD: 0.81})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := &jobs.Job{ID: jobs.NewID(), Tool: "generate_video", Model: "gemini-omni-1.1-flash", State: jobs.StateWorking, Worker: "gone", LedgerID: entry.ID, EstimateUSD: 0.81}
+	if err := e.jobs.Put(j); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.now = func() time.Time { return time.Now().Add(omniStale + time.Minute) }
+	if _, err := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: j.ID, WaitSeconds: ptr(0)}); err != nil {
+		t.Fatal(err)
+	}
+	actual := &catalog.Estimate{USD: 0.61, Basis: catalog.BasisUsage}
+	e.svc.recordOutcome(entry.ID, spend.StatusOK, actual, "", nil, "", "/out/hero.mp4")
+	got, _ := e.ledger.Get(entry.ID)
+	if got.CostUSD != 0.61 || len(got.Outputs) != 1 || got.Error != "" {
+		t.Fatalf("the resumed worker's outcome must replace the provisional one: %+v", got)
+	}
+	// A later recovery of the same job does not undo it.
+	j.State = jobs.StateWorking
+	if err := e.jobs.Put(j); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: j.ID, WaitSeconds: ptr(0)}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = e.ledger.Get(entry.ID); got.CostUSD != 0.61 || len(got.Outputs) != 1 {
+		t.Fatalf("a recovery replaced a worker's settlement: %+v", got)
+	}
+}
+
+// If the pending entry could not be written when the job started, the
+// worker's outcome still replaces the reservation it left behind.
+func TestOmniOutcomeReplacesASurvivingReservation(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	entry, err := e.ledger.Record(spend.Entry{Tool: "generate_video", Model: "gemini-omni-1.1-flash", Status: spend.StatusReserved, CostUSD: 0.81, EstimatedUSD: 0.81})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.svc.recordOutcome(entry.ID, spend.StatusOK, &catalog.Estimate{USD: 0.61, Basis: catalog.BasisUsage}, "", nil, "", "/out/hero.mp4")
+	if got, _ := e.ledger.Get(entry.ID); got.Status != spend.StatusOK || got.CostUSD != 0.61 || len(got.Outputs) != 1 {
+		t.Fatalf("entry = %+v", got)
+	}
+}
+
 func TestOmniIsGeminiAPIOnly(t *testing.T) {
 	e := newEnv(t, &config.Auth{Backend: config.BackendVertex, Mode: config.AuthVertexADC, Project: "p", Location: "us-central1"}, spend.Budget{})
 	_, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "omni"})

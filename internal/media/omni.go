@@ -410,10 +410,12 @@ func (s *Service) runOmni(ctx context.Context, job *jobs.Job, ireq *google.Inter
 	if actual != nil && status == spend.StatusOK {
 		job.CostUSD, job.CostBasis = actual.USD, actual.Basis
 	}
+	// Settle the spend before publishing the finished job: a caller that
+	// sees it finished may read usage right away.
+	s.recordOutcome(job.LedgerID, status, actual, job.Error, usage, "", assetPaths(job.Outputs)...)
 	if err := s.jobs.Put(job); err != nil {
 		s.log.Error("saving video job failed", "job", job.ID, "err", err)
 	}
-	s.recordOutcome(job.LedgerID, status, actual, job.Error, usage, "", assetPaths(job.Outputs)...)
 }
 
 // downloadOmni fetches the clip, retrying transient failures: the video is
@@ -483,7 +485,19 @@ func (s *Service) checkWorkerJob(job *jobs.Job) (jobCheck, bool) {
 	if err := s.jobs.Put(job); err != nil {
 		s.log.Warn("saving job failed", "job", job.ID, "err", err)
 	}
-	s.recordOutcome(job.LedgerID, spend.StatusOK, nil, job.Error, nil, "")
+	// Keep the estimate as spent, but only if the worker has not settled the
+	// entry itself (it may have finished and stopped before saving the job).
+	// A worker that was only paused and finishes later still records its
+	// real outcome over this one.
+	if e, ok := s.ledger.Get(job.LedgerID); ok {
+		e.Status, e.Error, e.Outputs = spend.StatusOK, truncate(job.Error, 300), nil
+		unsettled := func(prev spend.Entry, found bool) bool {
+			return found && (prev.Status == spend.StatusPending || prev.Status == spend.StatusReserved)
+		}
+		if _, err := s.ledger.RecordIf(e, unsettled); err != nil {
+			s.log.Warn("recording spend failed", "err", err)
+		}
+	}
 	return jobCheck{s.jobView(job), job}, true
 }
 
