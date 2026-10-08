@@ -42,6 +42,10 @@ const (
 	// maxTilePixels bounds an edited tile: the model returns at most about
 	// 17 megapixels (4K), and stitch_tiles decodes tiles two at a time.
 	maxTilePixels = 40_000_000
+	// maxFootprintPixels bounds the output pixels all tiles of a job cover
+	// together (what blending visits). Real plans stay at a few times the
+	// output; a crafted job of many overlapping full-size tiles does not.
+	maxFootprintPixels = 6 * maxCanvasPixels
 	// maxCropPixels is the long side of crops and of the reference sent to
 	// the model; the model samples inputs at about 1K, so larger files only
 	// cost upload time and request size.
@@ -151,14 +155,30 @@ func (j *tileJob) check() error {
 	case len(j.Tiles) > max(maxGrid*maxGrid, maxRegions):
 		return fmt.Errorf("%d tiles is more than tile_image plans", len(j.Tiles))
 	}
-	for _, t := range j.Tiles {
+	boxes := make([]tiles.Box, len(j.Tiles))
+	for i, t := range j.Tiles {
 		b := t.Box
 		if b.W < tiles.MinTilePixels || b.H < tiles.MinTilePixels || b.W > 8*j.Width || b.H > 8*j.Height || b.W*b.H > min(4*j.Width*j.Height, maxPlanPixels) ||
 			b.X >= j.Width || b.Y >= j.Height || b.X1() <= 0 || b.Y1() <= 0 {
 			return fmt.Errorf("tile %d's box %+v does not fit the %dx%d image", t.Tile, b, j.Width, j.Height)
 		}
+		boxes[i] = b
+	}
+	if px := footprintPixels(boxes, j.Width, j.Height, j.OutWidth, j.OutHeight); px > maxFootprintPixels {
+		return fmt.Errorf("its tiles together cover %.0f megapixels of output (the limit is %d)", px/1e6, maxFootprintPixels/1_000_000)
 	}
 	return nil
+}
+
+// footprintPixels is how many output pixels the boxes (in w x h image
+// pixels) cover together, overlaps counted once per box.
+func footprintPixels(boxes []tiles.Box, w, h, outW, outH int) float64 {
+	scale := float64(outW) / float64(w) * float64(outH) / float64(h)
+	sum := 0.0
+	for _, b := range boxes {
+		sum += float64(b.W) * float64(b.H) * scale
+	}
+	return sum
 }
 
 type jobTile struct {
@@ -308,6 +328,15 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 				Message: fmt.Sprintf("the %dx%d image is too elongated for %s's aspect ratios: tile %d would need a %dx%d crop", pw, ph, m.ID, t.Index, t.Box.W, t.Box.H),
 				Hint:    "Cut the image into less elongated parts (no wider than the model's widest aspect ratio, e.g. 8:1 for nb2) and upscale each."}
 		}
+	}
+	boxes := make([]tiles.Box, len(planned))
+	for i, t := range planned {
+		boxes[i] = t.Box
+	}
+	if px := footprintPixels(boxes, pw, ph, outW, outH); px > maxFootprintPixels {
+		return nil, &apperr.Error{Kind: apperr.Invalid,
+			Message: fmt.Sprintf("the %d tiles together cover %.0f megapixels of output, more than stitch_tiles blends (%d)", len(planned), px/1e6, maxFootprintPixels/1_000_000),
+			Hint:    "Lower padding, use fewer or smaller regions, or a smaller longEdge."}
 	}
 
 	name := slugLabel(req.OutputName)
@@ -681,11 +710,13 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	canvas := tiles.NewCanvas(plan, job.OutWidth, job.OutHeight)
 	canvas.Reserve(placements)
 	// Prepare (decode and resample) the next tile while painting this one.
+	// The channel is unbuffered so at most one prepared tile waits: with
+	// the one being painted, two tiles' footprints are held at a time.
 	type prepared struct {
 		p   *tiles.Prepared
 		err error
 	}
-	next := make(chan prepared, 1)
+	next := make(chan prepared)
 	go func() {
 		defer close(next)
 		for i, p := range placements {

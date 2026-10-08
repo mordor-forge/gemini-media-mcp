@@ -315,6 +315,15 @@ func TestStitchTilesErrors(t *testing.T) {
 		"huge box": func(j map[string]any) {
 			j["tiles"].([]any)[0].(map[string]any)["box"] = map[string]any{"x": 0, "y": 0, "width": 1 << 40, "height": 1 << 40}
 		},
+		"overlapping full tiles": func(j map[string]any) {
+			// 16 tiles each covering the whole 48 MP output: 768 MP to blend.
+			j["outWidth"], j["outHeight"] = 8000, 6000
+			var ts []any
+			for i := range 16 {
+				ts = append(ts, map[string]any{"tile": i + 1, "label": "all", "box": map[string]any{"x": 0, "y": 0, "width": 256, "height": 192}})
+			}
+			j["tiles"] = ts
+		},
 	} {
 		var j map[string]any
 		_ = json.Unmarshal(data, &j)
