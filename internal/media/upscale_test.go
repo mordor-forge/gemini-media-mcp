@@ -25,6 +25,7 @@ import (
 	"github.com/mordor-forge/gemini-media-mcp/internal/catalog"
 	"github.com/mordor-forge/gemini-media-mcp/internal/spend"
 	"github.com/mordor-forge/gemini-media-mcp/internal/store"
+	"github.com/mordor-forge/gemini-media-mcp/internal/tiles"
 )
 
 // scene renders a deterministic textured image with structure at every scale.
@@ -740,7 +741,7 @@ func TestTileImageReferenceFromASeparateOriginal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r := res.Reference; r == nil || r.Width != 32 || r.Height != 64 {
+	if r := res.Reference; r == nil || r.Width != 32 || r.Height != 64 || r.MIMEType != "image/jpeg" {
 		t.Fatalf("reference = %+v, want the original turned upright (32x64)", r)
 	}
 	if p, err := e.store.Provenance(res.Reference.Name); err != nil || p.Inputs[0] != orig {
@@ -833,8 +834,9 @@ func TestStitchTilesPreparesSeriallyOverTheBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func(v int) { maxPreparedBytes = v }(maxPreparedBytes)
-	// Each tile here needs about 2 MB: 3 MB holds one, not two.
-	maxPreparedBytes = 3 << 20
+	// Each tile here needs about 2 MB plus the resizer's scratch allowance:
+	// 3 MB more than that holds one tile, not two.
+	maxPreparedBytes = tiles.MaxResizeScratch + 3<<20
 	serial, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits, OutputName: "serial"})
 	if err != nil {
 		t.Fatal(err)
@@ -843,8 +845,62 @@ func TestStitchTilesPreparesSeriallyOverTheBudget(t *testing.T) {
 		t.Fatal("preparing tiles one at a time changed the result")
 	}
 	// A tile that does not fit alone is refused.
-	maxPreparedBytes = 1 << 20
+	maxPreparedBytes = tiles.MaxResizeScratch
 	if _, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "would need") {
 		t.Fatalf("oversized tile: err = %v", err)
+	}
+}
+
+// Crops stay lossless unless the crop and the reference sent with it would
+// not fit one edit request.
+func TestEncodeCropFitsTheEditPayload(t *testing.T) {
+	img := scene(64, 48, 22)
+	if _, ext, mime, err := encodeCrop(img, 1<<20); err != nil || ext != "png" || mime != "image/png" {
+		t.Fatalf("small crop: %s %s %v", ext, mime, err)
+	}
+	data, ext, mime, err := encodeCrop(img, maxEditPayload)
+	if err != nil || ext != "jpg" || mime != "image/jpeg" || !bytes.HasPrefix(data, []byte{0xFF, 0xD8}) {
+		t.Fatalf("crop over the payload: %s %s %v", ext, mime, err)
+	}
+}
+
+// The output size tile_image plans for a panorama is rounded; stitch_tiles
+// accepts exactly that size and nothing else.
+func TestTileJobAcceptsTheRoundedPlannedOutput(t *testing.T) {
+	job := tileJob{Version: 1, Width: 6400, Height: 90, OutWidth: 1024, OutHeight: 14, // 14.4 rounded
+		Tiles: []jobTile{{Tile: 1, Box: tiles.Box{X: 0, Y: -35, W: 1280, H: 160}}}}
+	if err := job.check(); err != nil {
+		t.Fatalf("planned output refused: %v", err)
+	}
+	job.OutHeight = 15
+	if err := job.check(); err == nil {
+		t.Fatal("an output tile_image never plans should be refused")
+	}
+}
+
+// A refinement grid with a tile left out keeps the previous image there, so
+// its detail figure is the lower of the two rather than none.
+func TestPartialRefinementGridKeepsTheDetailFigure(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(1024, 768, 23)
+	src := filepath.Join(t.TempDir(), "refine.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 256, 192)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: fakeEdits(t, e, truth, 4, res)})
+	if err != nil || out.NativeLongEdge == 0 {
+		t.Fatalf("pass 1 = %+v, %v", out, err)
+	}
+	res2, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: out.File.URI, Grid: 2})
+	if err != nil || res2.Pass != 2 || res2.Mode != "grid" {
+		t.Fatalf("pass 2 plan = %+v, %v", res2, err)
+	}
+	out2, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res2.Job, Tiles: fakeEdits(t, e, truth, 1, res2)[1:]})
+	if err != nil || out2.NativeLongEdge == 0 || out2.NativeLongEdge > out.NativeLongEdge {
+		t.Fatalf("partial refinement native = %d (pass 1 %d), %v", out2.NativeLongEdge, out.NativeLongEdge, err)
 	}
 }

@@ -42,8 +42,9 @@ const (
 	// maxPlanPixels bounds images tile_image and stitch_tiles decode.
 	maxPlanPixels = 100_000_000
 	// maxTilePixels bounds an edited tile: the model returns at most about
-	// 17 megapixels (4K). With its converted copy and a resampled window
-	// no larger than the canvas, one tile then fits maxPreparedBytes.
+	// 17 megapixels (4K). With its converted copy, a resampled window no
+	// larger than the canvas and the resampler's scratch, one tile then
+	// fits maxPreparedBytes.
 	maxTilePixels = 24_000_000
 	// maxFootprintPixels bounds the output pixels all tiles of a job cover
 	// together (what blending visits). Real plans stay at a few times the
@@ -53,6 +54,9 @@ const (
 	// the model; the model samples inputs at about 1K, so larger files only
 	// cost upload time and request size.
 	maxCropPixels = 2048
+	// maxEditPayload bounds the image bytes one tile edit sends inline (crop
+	// and reference): base64 adds a third, and a request takes about 20 MB.
+	maxEditPayload = 12 << 20
 	// localInputBytes bounds files read for local processing (not sent to
 	// Google), such as a stitched 8K PNG.
 	localInputBytes = 512 << 20
@@ -150,6 +154,14 @@ type tileJob struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
+// plannedOutput reports whether the output size is one tile_image plans:
+// the image's own size (refinement passes) or fitLong's scaling of it,
+// rounding included.
+func (j *tileJob) plannedOutput() bool {
+	w, h := fitLong(j.Width, j.Height, max(j.OutWidth, j.OutHeight))
+	return j.OutWidth == j.Width && j.OutHeight == j.Height || j.OutWidth == w && j.OutHeight == h
+}
+
 // check bounds a job's geometry before stitch_tiles allocates for it: the
 // job is a file a caller could have edited.
 func (j *tileJob) check() error {
@@ -159,7 +171,7 @@ func (j *tileJob) check() error {
 		return fmt.Errorf("image size %dx%d is out of range", j.Width, j.Height)
 	case j.OutWidth < 1 || j.OutHeight < 1 || j.OutWidth > maxLongEdge || j.OutHeight > maxLongEdge || j.OutWidth*j.OutHeight > maxCanvasPixels:
 		return fmt.Errorf("output size %dx%d is out of range (at most %d megapixels)", j.OutWidth, j.OutHeight, maxCanvasPixels/1_000_000)
-	case math.Abs(float64(j.OutWidth*j.Height)/float64(j.OutHeight*j.Width)-1) > 0.02:
+	case !j.plannedOutput():
 		return fmt.Errorf("output size %dx%d does not have the shape of the %dx%d image", j.OutWidth, j.OutHeight, j.Width, j.Height)
 	case len(j.Tiles) > max(maxGrid*maxGrid, maxRegions):
 		return fmt.Errorf("%d tiles is more than tile_image plans", len(j.Tiles))
@@ -469,11 +481,15 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 			return nil, requestStopped(err, "tile_image", "it takes a few seconds on large images")
 		}
 		crop := cropImage(img, t.Box, maxCropPixels)
-		data, err := encodePNG(crop)
+		var refBytes int
+		if refAsset != nil {
+			refBytes = int(refAsset.Bytes)
+		}
+		data, ext, mime, err := encodeCrop(crop, refBytes)
 		if err != nil {
 			return nil, err
 		}
-		a, err := s.store.Save("image", fmt.Sprintf("%s-t%d-%s", prefix, t.Index, t.Label), "png", data, "image/png", &store.Provenance{
+		a, err := s.store.Save("image", fmt.Sprintf("%s-t%d-%s", prefix, t.Index, t.Label), ext, data, mime, &store.Provenance{
 			// The model is recorded so edit_image defaults to it for this crop.
 			Tool: "tile_image", Model: m.ID, Inputs: []string{imageRef},
 			Params: map[string]any{"box": t.Box, "aspectRatio": t.AspectRatio, "pass": pass},
@@ -555,11 +571,13 @@ func (s *Service) durableRef(ref string, in *store.Input, saveAs string) (string
 // original.
 func (s *Service) tileReference(original, name string, src image.Image) (*store.Asset, error) {
 	ref := cropImage(src, tiles.Box{W: src.Bounds().Dx(), H: src.Bounds().Dy()}, maxCropPixels)
-	data, err := encodePNG(ref)
-	if err != nil {
-		return nil, err
+	// Context only, and sent inline next to every crop: a JPEG keeps the
+	// pair well under the request size limit.
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, ref, &jpeg.Options{Quality: 90}); err != nil {
+		return nil, fmt.Errorf("encoding the reference: %w", err)
 	}
-	a, err := s.store.Save("image", name+"-reference", "png", data, "image/png", &store.Provenance{Tool: "tile_image", Inputs: []string{original}})
+	a, err := s.store.Save("image", name+"-reference", "jpg", buf.Bytes(), "image/jpeg", &store.Provenance{Tool: "tile_image", Inputs: []string{original}})
 	if err != nil {
 		return nil, s.saveFailed("tile_image", "the reference image", err)
 	}
@@ -775,11 +793,11 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	canvas.Reserve(placements)
 	// Prepare (decode and resample) the next tile while painting this one
 	// when the two fit maxPreparedBytes together; otherwise wait until the
-	// previous tile is painted. A tile holds its decode, a converted copy
-	// and its resampled window.
+	// previous tile is painted. A tile holds its decode, a converted copy,
+	// its resampled window and the resampler's scratch buffers.
 	need := make([]int, len(placements))
 	for i, p := range placements {
-		need[i] = 8*sources[i].w*sources[i].h + 4*canvas.PreparedPixels(p)
+		need[i] = 8*sources[i].w*sources[i].h + 4*canvas.PreparedPixels(p) + tiles.MaxResizeScratch
 		if need[i] > maxPreparedBytes {
 			return nil, &apperr.Error{Kind: apperr.Invalid,
 				Message: fmt.Sprintf("tile %d would need about %d MB to blend, more than stitch_tiles allows (%d MB)", sources[i].tile, need[i]>>20, maxPreparedBytes>>20),
@@ -857,6 +875,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		res.NativeLongEdge = min(job.PrevNative, int(math.Round(native*float64(max(job.Width, job.Height)))))
 	case len(placements) == len(job.Tiles):
 		res.NativeLongEdge = int(math.Round(native * float64(max(job.Width, job.Height))))
+	case job.Pass > 1:
+		// A refinement grid's missing tiles keep the previous image there.
+		res.NativeLongEdge = min(job.PrevNative, int(math.Round(native*float64(max(job.Width, job.Height)))))
 	default:
 		// Areas without a placed tile are interpolated, so the image as a
 		// whole carries no model detail figure; 0 keeps later passes from
@@ -1227,6 +1248,24 @@ func cropImage(img image.Image, box tiles.Box, maxPx int) image.Image {
 		return c
 	}
 	return tiles.Resize(c, c.Rect, w, h)
+}
+
+// encodeCrop encodes a crop as PNG, or as a high-quality JPEG when the PNG
+// and the others bytes sent with it would not fit one edit request. It
+// returns the data, its extension and its MIME type.
+func encodeCrop(img image.Image, others int) ([]byte, string, string, error) {
+	data, err := encodePNG(img)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if len(data)+others <= maxEditPayload {
+		return data, "png", "image/png", nil
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 95}); err != nil {
+		return nil, "", "", fmt.Errorf("encoding a crop: %w", err)
+	}
+	return buf.Bytes(), "jpg", "image/jpeg", nil
 }
 
 func encodePNG(img image.Image) ([]byte, error) {

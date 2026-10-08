@@ -58,13 +58,13 @@ Keep the tile's `aspectRatio` in the `edit_image` call. A wrong ratio is the mos
 ```text
 tile_image(image: "~/Pictures/portrait.jpg")
   -> 9 tiles (pass 1, grid); output 8192x5461; ~10,700 px native
-     reference gemini-media://files/portrait-reference.png
+     reference gemini-media://files/portrait-reference.jpg
      tile 1 r1c1 (aspectRatio 3:2) gemini-media://files/portrait-p1-t1-r1c1.png ...
      editing every tile once with gemini-nano-banana-2.1 at 4K: ~$1.12
 
 # Tell the user: about $1.10-1.40 with retries, plus about $0.12-0.50 if a fix pass is needed. Approved.
 
-edit_image(image: ".../portrait-p1-t1-r1c1.png", referenceImages: [".../portrait-reference.png"],
+edit_image(image: ".../portrait-p1-t1-r1c1.png", referenceImages: [".../portrait-reference.jpg"],
            aspectRatio: "3:2", imageSize: "4K", model: "nb2",
            prompt: "<tile prompt> + Hair clause + Foliage clause")
 ... same for tiles 2-9 (tile 5, the face: + Skin and Eyes clauses)

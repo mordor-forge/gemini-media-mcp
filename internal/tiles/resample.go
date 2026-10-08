@@ -9,6 +9,10 @@ import (
 	"golang.org/x/image/draw"
 )
 
+// MaxResizeScratch bounds the scratch buffers a resize holds at once (bands
+// run in parallel up to this), unless a single band needs more.
+const MaxResizeScratch = 32 << 20
+
 // Resize resamples the sr part of src into a new w x h image with a
 // separable Catmull-Rom filter, widened when shrinking so that it
 // antialiases (as x/image/draw's CatmullRom.Scale does), and spread across
@@ -38,20 +42,36 @@ func ResizeWindow(src image.Image, sr image.Rectangle, w, h int, win image.Recta
 	// Bands of output rows; each band filters the source rows it needs
 	// horizontally into a scratch buffer, then vertically into dst.
 	const band = 64
+	span := func(y0 int) (s0, s1 int) {
+		s0 = ys[y0].first
+		for y := y0; y < min(y0+band, h); y++ {
+			s0 = min(s0, ys[y].first)
+			s1 = max(s1, ys[y].first+len(ys[y].w))
+		}
+		return s0, s1
+	}
+	// Run as many bands at once as their scratch buffers fit
+	// MaxResizeScratch, reusing the buffers.
+	rows, bands := 0, (h+band-1)/band
+	for y0 := 0; y0 < h; y0 += band {
+		s0, s1 := span(y0)
+		rows = max(rows, s1-s0)
+	}
+	per := rows * w * 4 // float32s per band
+	workers := max(1, min(runtime.GOMAXPROCS(0), bands, MaxResizeScratch/(4*per)))
+	bufs := make(chan []float32, workers)
+	for range workers {
+		bufs <- make([]float32, per)
+	}
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
 	for y0 := 0; y0 < h; y0 += band {
 		y1 := min(y0+band, h)
+		buf := <-bufs
 		wg.Add(1)
-		sem <- struct{}{}
 		go func() {
-			defer func() { <-sem; wg.Done() }()
-			s0, s1 := ys[y0].first, 0
-			for y := y0; y < y1; y++ {
-				s0 = min(s0, ys[y].first)
-				s1 = max(s1, ys[y].first+len(ys[y].w))
-			}
-			tmp := make([]float32, (s1-s0)*w*4)
+			defer func() { bufs <- buf; wg.Done() }()
+			s0, s1 := span(y0)
+			tmp := buf[:(s1-s0)*w*4]
 			for sy := s0; sy < s1; sy++ {
 				row := rgba.Pix[sy*rgba.Stride:]
 				out := tmp[(sy-s0)*w*4:]
