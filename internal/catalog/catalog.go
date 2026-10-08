@@ -224,14 +224,16 @@ func (c *Catalog) Lookup(name string) (*Model, bool) {
 }
 
 // List returns models, optionally filtered by media type, sorted with the
-// backend's defaults first, then GA before preview, then by ID.
+// backend's defaults first, then GA before preview, then by ID. Unless
+// includeInactive is set, models retired on backend are left out (models
+// the backend never offered stay, so callers can say where they run).
 func (c *Catalog) List(mediaType, backend string, includeInactive bool, now time.Time) []*Model {
 	var out []*Model
 	for _, m := range c.Models {
 		if mediaType != "" && m.MediaType != mediaType {
 			continue
 		}
-		if !includeInactive && !m.Active(now) {
+		if !includeInactive && m.StatusOn(backend, now) == StatusRetired {
 			continue
 		}
 		out = append(out, m)
