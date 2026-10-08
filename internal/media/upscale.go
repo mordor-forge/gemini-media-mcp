@@ -135,9 +135,17 @@ type TileImageResult struct {
 	ImageSize      string        `json:"imageSize"`
 	Tiles          []PlannedTile `json:"tiles"`
 	Cost           Cost          `json:"cost" jsonschema:"Estimated cost of editing every tile once (tile_image itself is free)"`
+	Prompt         string        `json:"prompt" jsonschema:"Base edit_image prompt for every tile of this pass: it keeps each crop's framing. The gemini-upscale skill adds clauses for skin, eyes, hair, text and other materials."`
 	Next           string        `json:"next"`
 	Warnings       []string      `json:"warnings,omitempty"`
 }
+
+// The base tile prompts, as in the gemini-upscale skill: the first pass
+// sends the crop and the original (image 2), later passes the crop alone.
+const (
+	tilePrompt   = "Image 1 is a crop of the photo in image 2. Re-render image 1 as a sharp, high-resolution photograph of exactly the same crop: same framing, edges, composition and geometry; nothing added, removed, moved, re-centered or zoomed. Image 2 is the authority for identity, anatomy, color and lighting. Reconstruct plausible photographic detail at this resolution while keeping expression, pose, contours, clothing, genuine imperfections and the original focus falloff (out-of-focus areas stay soft). Clean up compression artifacts and noise. Avoid invented objects, marks or text, beautification, relighting, halos, ringing, over-sharpening, embossed, crosshatched or repeating texture and synthetic grain."
+	refinePrompt = "Re-render this photo crop as a sharp, high-resolution photograph of exactly the same crop: same framing, edges, composition and geometry; nothing added, removed, moved, re-centered or zoomed. Keep the person's identity, anatomy, expression, color and lighting exactly. Reconstruct plausible photographic detail at this resolution while keeping genuine imperfections and the original focus falloff. Avoid invented objects or marks, beautification, relighting, halos, ringing, over-sharpening, embossed, crosshatched or repeating texture and synthetic grain."
+)
 
 // tileJob is the manifest tile_image writes and stitch_tiles reads.
 type tileJob struct {
@@ -548,9 +556,11 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		Breakdown: fmt.Sprintf("%d tiles x $%.4f (%s)", len(planned), per.USD, per.Breakdown),
 	}
 	if refAsset != nil {
-		res.Next = fmt.Sprintf("Edit every tile with edit_image (image = the tile's crop uri, referenceImages = [%s], aspectRatio = the tile's aspectRatio, imageSize = %s, model = %s), in parallel if you can; then call stitch_tiles with job = %s and the results.", refAsset.URI, size, m.ID, ja.URI)
+		res.Prompt = tilePrompt
+		res.Next = fmt.Sprintf("Edit every tile with edit_image (image = the tile's crop uri, referenceImages = [%s], aspectRatio = the tile's aspectRatio, imageSize = %s, model = %s, prompt = this result's prompt), in parallel if you can; then call stitch_tiles with job = %s and the results.", refAsset.URI, size, m.ID, ja.URI)
 	} else {
-		res.Next = fmt.Sprintf("Edit every tile with edit_image on its own, without referenceImages (image = the tile's crop uri, aspectRatio = the tile's aspectRatio, imageSize = %s, model = %s), in parallel if you can; then call stitch_tiles with job = %s and the results.", size, m.ID, ja.URI)
+		res.Prompt = refinePrompt
+		res.Next = fmt.Sprintf("Edit every tile with edit_image on its own, without referenceImages (image = the tile's crop uri, aspectRatio = the tile's aspectRatio, imageSize = %s, model = %s, prompt = this result's prompt), in parallel if you can; then call stitch_tiles with job = %s and the results.", size, m.ID, ja.URI)
 	}
 	return res, nil
 }
@@ -668,7 +678,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	if len(req.Details) > maxDetails {
 		return nil, apperr.Invalidf("at most %d detail points (got %d)", maxDetails, len(req.Details))
 	}
-	jin, err := s.loadLocalMax(req.Job, "job", maxJobBytes)
+	jin, err := s.loadLocalMax(req.Job, "job", maxJobBytes, "Pass the job uri tile_image returned, unchanged (a job file is a few KB), or run tile_image again.")
 	if err != nil {
 		return nil, err
 	}
@@ -874,6 +884,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		return nil, requestStopped(err, "stitch_tiles", "an 8K stitch takes 10-30 s")
 	}
 	progress(ctx, "encoding PNG", total*2, total*2)
+	uncovered := canvas.Uncovered()
 	out := canvas.Finish()
 	data, err := encodePNG(out)
 	if err != nil {
@@ -891,7 +902,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		// Regions keep the image's figure unless one is rendered coarser
 		// (a smaller imageSize or a large crop), which then caps it.
 		res.NativeLongEdge = min(job.PrevNative, int(math.Round(native*float64(max(job.Width, job.Height)))))
-	case len(placements) == len(job.Tiles):
+	case len(placements) == len(job.Tiles) && uncovered < 0.01:
+		// A thin strip alignment left uncovered (warned about below) does
+		// not change the figure; a real gap makes the grid partial.
 		res.NativeLongEdge = int(math.Round(native * float64(max(job.Width, job.Height))))
 	case job.Pass > 1:
 		// A refinement grid's missing tiles keep the previous image there.
@@ -950,6 +963,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	}
 	if len(unedited) > 0 {
 		res.Warnings = append(res.Warnings, fmt.Sprintf("tile(s) %s were not passed and keep the underlying image there", strings.Join(unedited, ", ")))
+	}
+	if job.Mode == "grid" && rejected == 0 && len(unedited) == 0 && uncovered > 0 {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("about %.1f%% of the output, where alignment moved a tile inward from the image's edge, is covered by no tile and keeps the interpolated image", 100*uncovered))
 	}
 	switch {
 	case rejected > 0:
@@ -1118,17 +1134,22 @@ func detailPoints(asked []DetailPoint, job tileJob, ps []tiles.Placement) []Deta
 // loadLocal reads an input for local processing (not sent to Google), with
 // a size limit large enough for stitched images.
 func (s *Service) loadLocal(ref, what string) (*store.Input, error) {
-	return s.loadLocalMax(ref, what, localInputBytes)
+	return s.loadLocalMax(ref, what, localInputBytes, fmt.Sprintf("Use a file of at most %d MB.", localInputBytes>>20))
 }
 
-// loadLocalMax is loadLocal with its own size limit in bytes.
-func (s *Service) loadLocalMax(ref, what string, maxBytes int64) (*store.Input, error) {
+// loadLocalMax is loadLocal with its own size limit in bytes, and the hint
+// for an input over it.
+func (s *Service) loadLocalMax(ref, what string, maxBytes int64, tooLarge string) (*store.Input, error) {
 	pol := s.inputPolicy()
 	pol.MaxBytes = maxBytes
 	in, err := s.store.LoadInput(ref, pol)
 	if err != nil {
-		return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s: %v", what, err),
-			Hint: "Pass a gemini-media:// URI or file name from an earlier result, or a path inside the allowed directories (get_config shows them).", Cause: err}
+		hint := "Pass a gemini-media:// URI or file name from an earlier result, or a path inside the allowed directories (get_config shows them)."
+		var big *store.TooLargeError
+		if errors.As(err, &big) {
+			hint = tooLarge
+		}
+		return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s: %v", what, err), Hint: hint, Cause: err}
 	}
 	return in, nil
 }
@@ -1136,7 +1157,7 @@ func (s *Service) loadLocalMax(ref, what string, maxBytes int64) (*store.Input, 
 // loadTile decodes edited tile index and returns the sha256 of its bytes.
 func (s *Service) loadTile(ref string, index int) (image.Image, string, error) {
 	what := fmt.Sprintf("tile %d", index)
-	in, err := s.loadLocalMax(ref, what, maxTileBytes)
+	in, err := s.loadLocalMax(ref, what, maxTileBytes, fmt.Sprintf("Pass the edit_image result as it was saved (a 4K PNG is about 25 MB); a re-encoded or padded file must be saved again as PNG or JPEG under %d MB.", maxTileBytes>>20))
 	if err != nil {
 		return nil, "", err
 	}

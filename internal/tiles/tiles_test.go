@@ -516,6 +516,9 @@ func TestBorderTileMovedInwardKeepsTheBase(t *testing.T) {
 	if px := c.Img.RGBAAt(300, 200); px != (color.RGBA{255, 0, 0, 255}) {
 		t.Fatalf("inside the tile: %v", px)
 	}
+	if u := c.Uncovered(); math.Abs(u-24.0/512) > 1e-9 {
+		t.Fatalf("uncovered = %.4f, want the 24 px strip (%.4f)", u, 24.0/512)
+	}
 	// Half a pixel or less still reaches the edge.
 	ps[0].Align.ShiftX = 0.4
 	Feathers(ps, 128, 96, 0.2)

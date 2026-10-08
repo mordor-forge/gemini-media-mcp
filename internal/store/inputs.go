@@ -100,7 +100,7 @@ func (s *Store) LoadInput(ref string, pol InputPolicy) (*Input, error) {
 		return nil, fmt.Errorf("input %s is not a regular file", ref)
 	}
 	if info.Size() > maxBytes {
-		return nil, fmt.Errorf("input %s is %d bytes; the limit is %d", ref, info.Size(), maxBytes)
+		return nil, &TooLargeError{Ref: ref, Size: info.Size(), Limit: maxBytes}
 	}
 	data, err := os.ReadFile(real)
 	if err != nil {
@@ -131,9 +131,19 @@ func rootsHint(roots []string) string {
 	return ", " + strings.Join(roots, ", ")
 }
 
+// TooLargeError reports an input over the size limit it was loaded with.
+type TooLargeError struct {
+	Ref         string
+	Size, Limit int64
+}
+
+func (e *TooLargeError) Error() string {
+	return fmt.Sprintf("input %s is %d bytes; the limit is %d", e.Ref, e.Size, e.Limit)
+}
+
 func newInput(data []byte, path, ref string, maxBytes int64) (*Input, error) {
 	if int64(len(data)) > maxBytes {
-		return nil, fmt.Errorf("input %s is %d bytes; the limit is %d", ref, len(data), maxBytes)
+		return nil, &TooLargeError{Ref: ref, Size: int64(len(data)), Limit: maxBytes}
 	}
 	return &Input{Data: data, MIMEType: SniffMIME(data, path), Ref: ref}, nil
 }

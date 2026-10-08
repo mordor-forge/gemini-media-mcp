@@ -184,6 +184,7 @@ func (s *Server) handleTileImage(ctx context.Context, req *mcp.CallToolRequest, 
 	lines = append(lines,
 		fmt.Sprintf("Editing every tile once with %s at %s: ~$%.2f (%s).", res.Model, res.ImageSize, res.Cost.USD, res.Cost.Breakdown),
 		"Job: "+res.Job,
+		"Prompt for every tile: "+res.Prompt,
 		"Next: "+res.Next)
 	lines = append(lines, warningLines(res.Warnings)...)
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: joinLines(lines)}}}, res, nil

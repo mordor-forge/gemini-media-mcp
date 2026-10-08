@@ -139,6 +139,9 @@ func TestTileAndStitchTwoPasses(t *testing.T) {
 	if p, err := e.store.Provenance(res.Tiles[0].Crop.Name); err != nil || p.Model != res.Model {
 		t.Fatalf("crop provenance = %+v %v (edit_image should default to the plan's model)", p, err)
 	}
+	if res.Prompt != tilePrompt || !strings.Contains(res.Next, "prompt = this result's prompt") {
+		t.Fatalf("prompt %q next %q", res.Prompt, res.Next)
+	}
 	if res.Reference == nil || res.Reference.Width != 256 || !strings.HasPrefix(res.Job, store.URIScheme) || res.NativeLongEdge < 1024 {
 		t.Fatalf("reference %+v job %s native %d", res.Reference, res.Job, res.NativeLongEdge)
 	}
@@ -180,7 +183,7 @@ func TestTileAndStitchTwoPasses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res2.Pass != 2 || res2.Mode != "regions" || res2.Output != (Size{1024, 768}) || res2.Reference != nil || !strings.Contains(res2.Next, "without referenceImages") {
+	if res2.Pass != 2 || res2.Mode != "regions" || res2.Output != (Size{1024, 768}) || res2.Reference != nil || !strings.Contains(res2.Next, "without referenceImages") || res2.Prompt != refinePrompt {
 		t.Fatalf("pass 2 plan = %+v", res2)
 	}
 	if res2.Tiles[0].Label != "left-eye" || !strings.Contains(strings.Join(res2.Warnings, " "), "longEdge is ignored") || strings.Contains(strings.Join(res2.Warnings, " "), "tighter regions") ||
@@ -969,7 +972,8 @@ func TestStitchTilesBoundsJobAndTileFiles(t *testing.T) {
 	if err := os.WriteFile(padded, append(jobData, bytes.Repeat([]byte(" "), maxJobBytes)...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: padded, Tiles: edits}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "limit") {
+	_, err = e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: padded, Tiles: edits})
+	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Message, "limit") || !strings.Contains(ae.Hint, "job uri") {
 		t.Fatalf("padded job: err = %v", err)
 	}
 
@@ -981,7 +985,39 @@ func TestStitchTilesBoundsJobAndTileFiles(t *testing.T) {
 	if err := os.WriteFile(path, append(tileData, make([]byte, maxTileBytes)...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "tile 1") {
+	_, err = e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits})
+	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Message, "tile 1") || !strings.Contains(ae.Hint, "under 64 MB") {
 		t.Fatalf("oversized tile file: err = %v", err)
+	}
+}
+
+// When alignment moves an edge tile inward, the strip it no longer covers
+// keeps the interpolated image: past 1% of the output, the stitch claims
+// no model detail figure, and it always says so.
+func TestStitchReportsAnUncoveredEdge(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(1024, 768, 25)
+	src := filepath.Join(t.TempDir(), "edge.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 1, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The returned tile shows the crop shifted 5 plan px right.
+	b := res.Tiles[0].Box
+	const k, shift = 8, 5
+	r := image.Rect((b.X+shift)*k, b.Y*k, (b.X1()+shift)*k, b.Y1()*k)
+	tile, err := e.store.Save("image", "edge-edit", "png", encode(t, resized(truth, r, b.W*5, b.H*5)), "image/png", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: []StitchTile{{Tile: 1, Image: tile.URI}}})
+	if err != nil || out.Tiles[0].Status != "placed" {
+		t.Fatalf("stitch = %+v, %v", out, err)
+	}
+	if out.NativeLongEdge != 0 || !strings.Contains(strings.Join(out.Warnings, " "), "covered by no tile") {
+		t.Fatalf("native %d, warnings %v", out.NativeLongEdge, out.Warnings)
 	}
 }

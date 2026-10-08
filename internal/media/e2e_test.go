@@ -184,16 +184,6 @@ func TestE2E_Omni(t *testing.T) {
 	t.Logf("omni edit %s (%.1fs) cost %+v", edit.Files[0].Path, edit.Files[0].DurationSeconds, edit.Cost)
 }
 
-// tilePrompt mirrors the tile prompt of skills/gemini-upscale.
-const tilePrompt = `Image 1 is a crop of the photo in image 2. Re-render image 1 as a sharp, high-resolution
-photograph of exactly the same crop: same framing, edges, composition and geometry; nothing
-added, removed, moved, re-centered or zoomed. Image 2 is the authority for identity, anatomy,
-color and lighting. Reconstruct plausible photographic detail at this resolution while keeping
-expression, pose, contours, clothing, genuine imperfections and the original focus falloff
-(out-of-focus areas stay soft). Clean up compression artifacts and noise. Avoid invented
-objects, marks or text, beautification, relighting, halos, ringing, over-sharpening,
-embossed, crosshatched or repeating texture and synthetic grain.`
-
 // TestE2E_Upscale runs a small tiled upscale end to end: a 2x2 grid edited
 // at 1K, which checks that real model tiles keep their framing well enough
 // to align.
@@ -220,7 +210,7 @@ func TestE2E_Upscale(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			res, err := s.EditImage(ctx, EditImageRequest{Image: pt.Crop.URI, ReferenceImages: []string{plan.Reference.URI},
-				AspectRatio: pt.AspectRatio, ImageSize: plan.ImageSize, Prompt: tilePrompt})
+				AspectRatio: pt.AspectRatio, ImageSize: plan.ImageSize, Prompt: plan.Prompt})
 			if err != nil {
 				errs[i] = err
 				return

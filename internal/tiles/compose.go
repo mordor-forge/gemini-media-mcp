@@ -125,6 +125,7 @@ type Canvas struct {
 	w, h   int
 	sx, sy float64 // canvas pixels per plan pixel
 	wt     []uint16
+	bare   int // pixels no reserved placement reaches
 }
 
 // NewCanvas scales base (the plan image) to w x h. When base is already an
@@ -208,7 +209,11 @@ func (c *Canvas) Reserve(ps []Placement) {
 			}
 		})
 	}
+	c.bare = 0
 	for i, a := range c.wt {
+		if a == 0 {
+			c.bare++
+		}
 		c.wt[i] = uint16(max(weightScale-int(a), 0))
 	}
 }
@@ -294,6 +299,15 @@ func (c *Canvas) Paint(pp *Prepared) {
 			d[3] = uint8(math.Round(float64(float32(d[3]) + (px[3]-float32(d[3]))*a)))
 		}
 	})
+}
+
+// Uncovered is the fraction of the canvas that no placement passed to
+// Reserve reaches, which keeps the base image (1 before Reserve).
+func (c *Canvas) Uncovered() float64 {
+	if c.wt == nil {
+		return 1
+	}
+	return float64(c.bare) / float64(c.w*c.h)
 }
 
 // Finish releases the weight buffer and returns the assembled image.
