@@ -499,3 +499,54 @@ func TestDecodeImageChecksTheLimitFromTheHeader(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// tile_image stops between crops when the request ends, without writing
+// the job.
+func TestTileImageStopsWhenCanceled(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	src := filepath.Join(t.TempDir(), "cut.png")
+	if err := os.WriteFile(src, encode(t, scene(256, 192, 10)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx = WithProgress(ctx, func(msg string, _, _ float64) {
+		if strings.HasPrefix(msg, "1/") {
+			cancel()
+		}
+	})
+	if _, err := e.svc.TileImage(ctx, TileImageRequest{Image: src, Grid: 2, LongEdge: 1024}); apperr.KindOf(err) != apperr.Canceled {
+		t.Fatalf("err = %v", err)
+	}
+	if _, _, err := e.store.Open("cut-p1-tiles.json"); err == nil {
+		t.Fatal("a canceled tile_image must not write its job")
+	}
+}
+
+// The model-detail figure follows the sparser axis of each placed tile.
+func TestNativeDetailUsesBothAxes(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(512, 384, 11)
+	src := filepath.Join(t.TempDir(), "axes.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 1, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The tile comes back 5x as wide as the crop but only 4.75x as tall.
+	b := res.Tiles[0].Box
+	r := image.Rect(b.X*4, b.Y*4, b.X1()*4, b.Y1()*4)
+	a, err := e.store.Save("image", "axes-edit", "png", encode(t, resized(truth, r, b.W*5, b.H*475/100)), "image/png", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: []StitchTile{{Tile: 1, Image: a.URI}}})
+	if err != nil || out.Tiles[0].Status != "placed" {
+		t.Fatalf("stitch = %+v %v", out, err)
+	}
+	if want := 4.75 * 128; float64(out.NativeLongEdge) > want*1.02 {
+		t.Fatalf("NativeLongEdge = %d, want about %.0f (the vertical density)", out.NativeLongEdge, want)
+	}
+}

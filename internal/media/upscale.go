@@ -369,6 +369,9 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	}
 	native := math.Inf(1)
 	for i, t := range planned {
+		if err := ctx.Err(); err != nil {
+			return nil, requestStopped(err, "tile_image", "it takes a few seconds on large images")
+		}
 		crop := cropImage(img, t.Box, maxCropPixels)
 		data, err := encodePNG(crop)
 		if err != nil {
@@ -605,9 +608,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	// Align the edited tiles, decoding a few at a time (a 4K tile decodes
 	// to about 70 MB).
 	type aligned struct {
-		a   tiles.Alignment
-		w   int
-		err error
+		a    tiles.Alignment
+		w, h int
+		err  error
 	}
 	results := make([]aligned, len(job.Tiles))
 	var wg sync.WaitGroup
@@ -633,7 +636,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 				results[i].err = err
 				return
 			}
-			results[i] = aligned{a: tiles.Align(plan, t.Box, tile, opt), w: tile.Bounds().Dx()}
+			results[i] = aligned{a: tiles.Align(plan, t.Box, tile, opt), w: tile.Bounds().Dx(), h: tile.Bounds().Dy()}
 			mu.Lock()
 			done++
 			progress(ctx, fmt.Sprintf("aligned %d/%d tiles", done, len(edited)), float64(done), total*2)
@@ -642,7 +645,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	}
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
-		return nil, stitchStopped(err)
+		return nil, requestStopped(err, "stitch_tiles", "an 8K stitch takes 10-30 s")
 	}
 
 	var placements []tiles.Placement
@@ -664,7 +667,8 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 			rep.ShiftX, rep.ShiftY = round1(a.ShiftX*sx), round1(a.ShiftY*sy)
 			placements = append(placements, tiles.Placement{Box: t.Box, Align: a})
 			sources = append(sources, ref)
-			native = math.Min(native, float64(results[i].w)/(a.ScaleX*float64(t.Box.W)))
+			// Rendered pixels per tiled-image pixel, along the sparser axis.
+			native = math.Min(native, math.Min(float64(results[i].w)/(a.ScaleX*float64(t.Box.W)), float64(results[i].h)/(a.ScaleY*float64(t.Box.H))))
 		}
 		res.Tiles = append(res.Tiles, rep)
 	}
@@ -712,7 +716,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, stitchStopped(err)
+		return nil, requestStopped(err, "stitch_tiles", "an 8K stitch takes 10-30 s")
 	}
 	progress(ctx, "encoding PNG", total*2, total*2)
 	out := canvas.Finish()
@@ -803,12 +807,13 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	return res, nil
 }
 
-// stitchStopped reports a stitch abandoned because its request ended.
-func stitchStopped(err error) error {
+// requestStopped reports local work abandoned because its request ended;
+// duration says how long the tool takes, for the timeout hint.
+func requestStopped(err error, tool, duration string) error {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return &apperr.Error{Kind: apperr.Timeout, Message: "stitching stopped: the request timed out", Hint: "Call stitch_tiles again; an 8K stitch takes 10-30 s.", Cause: err}
+		return &apperr.Error{Kind: apperr.Timeout, Message: tool + " stopped: the request timed out", Hint: fmt.Sprintf("Call %s again with a longer client timeout; %s.", tool, duration), Cause: err}
 	}
-	return &apperr.Error{Kind: apperr.Canceled, Message: "stitching stopped: the request was canceled", Hint: "Call stitch_tiles again when you still want the result.", Cause: err}
+	return &apperr.Error{Kind: apperr.Canceled, Message: tool + " stopped: the request was canceled", Hint: "Call " + tool + " again when you still want the result.", Cause: err}
 }
 
 // tilePlan is a grid and edit size chosen by autoPlan.
