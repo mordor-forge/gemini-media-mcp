@@ -346,21 +346,24 @@ func (m *Model) OfferedOn(backend string, now time.Time) bool {
 	return m.SupportsBackend(backend) && m.StatusOn(backend, now) != StatusRetired
 }
 
-// BackendSummary lists the backends offering the model, with backend
-// shutdown dates, e.g. "gemini-api until 2026-10-22, vertex".
+// BackendSummary lists the model's backends with their shutdown dates,
+// e.g. "gemini-api until 2026-10-22, vertex" or "gemini-api ended 2026-10-22".
 func (m *Model) BackendSummary(now time.Time) string {
 	if len(m.Backends) == 0 {
+		if !m.Active(now) {
+			return strings.TrimSpace("ended " + m.Shutdown)
+		}
 		return "all"
 	}
 	parts := make([]string, 0, len(m.Backends))
 	for _, b := range m.Backends {
-		switch d := m.BackendShutdown[b]; {
-		case d == "":
-			parts = append(parts, b)
-		case m.OfferedOn(b, now):
+		switch d := m.ShutdownOn(b); {
+		case !m.OfferedOn(b, now):
+			parts = append(parts, strings.TrimSpace(b+" ended "+d))
+		case d != "":
 			parts = append(parts, b+" until "+d)
 		default:
-			parts = append(parts, b+" ended "+d)
+			parts = append(parts, b)
 		}
 	}
 	return strings.Join(parts, ", ")

@@ -651,11 +651,16 @@ func (s *Service) jobView(job *jobs.Job) *VideoJob {
 			v.Next = fmt.Sprintf("The video is ready and being downloaded. Call get_video with jobId %s again in a few seconds.", job.ID)
 		}
 	case jobs.StateCompleted:
+		// extend_video refuses models no longer offered on this backend.
+		extend := "call extend_video"
+		if known && !m.OfferedOn(s.backend(), s.now()) {
+			extend = "start a new clip from its last frame (generate_video with image); " + m.ID + " is no longer offered here, so it cannot be extended"
+		}
 		switch {
 		case known && m.Capabilities.VideoEdit:
-			v.Next = "Review the video. To change it, call edit_video with this jobId; to continue the shot, call extend_video."
+			v.Next = "Review the video. To change it, call edit_video with this jobId; to continue the shot, " + extend + "."
 		case known && m.Capabilities.Extend:
-			v.Next = "Review the video. To continue the shot, call extend_video with this jobId."
+			v.Next = "Review the video. To continue the shot, " + strings.Replace(extend, "call extend_video", "call extend_video with this jobId", 1) + "."
 		}
 	case jobs.StateFailed, jobs.StateFiltered:
 		if job.Billed {
