@@ -258,7 +258,7 @@ models:
     title: Veo 3.1 Lite
     family: veo
     mediaType: video
-    status: ga
+    status: preview
     released: "2026-04-02"
     backendShutdown: {gemini-api: "2026-10-22"}
     fallback: gemini-omni-1.1-flash
@@ -291,7 +291,7 @@ models:
       perSecondNoAudio: {720p: 0.03, 1080p: 0.05}
     notes:
       - seed and generateAudio are only accepted on Vertex AI.
-      - Google deprecated the Veo 3.1 previews on the Gemini API, effective 2026-10-22 (AI Studio notice, 2026-10-08). The GA -001 models stay on Gemini Enterprise Agent Platform (formerly Vertex AI), the vertex backend. On the Gemini API the server warns until then and uses gemini-omni-1.1-flash after.
+      - Google deprecated the Veo 3.1 previews on the Gemini API, effective 2026-10-22 (AI Studio notice, 2026-10-08). The -001 models stay on Gemini Enterprise Agent Platform (formerly Vertex AI), the vertex backend. On the Gemini API the server warns until then and uses gemini-omni-1.1-flash after.
 
   - id: veo-3.1-fast-generate-preview
     vertexId: veo-3.1-fast-generate-001
@@ -342,7 +342,7 @@ models:
     notes:
       - Extension adds 7s per step (up to 148s total), 720p only, and needs a Veo video generated in the last 2 days.
       - seed and generateAudio are only accepted on Vertex AI.
-      - Google deprecated the Veo 3.1 previews on the Gemini API, effective 2026-10-22 (AI Studio notice, 2026-10-08). The GA -001 models stay on Gemini Enterprise Agent Platform (formerly Vertex AI), the vertex backend. On the Gemini API the server warns until then and uses gemini-omni-1.1-flash after.
+      - Google deprecated the Veo 3.1 previews on the Gemini API, effective 2026-10-22 (AI Studio notice, 2026-10-08). The -001 models stay on Gemini Enterprise Agent Platform (formerly Vertex AI), the vertex backend. On the Gemini API the server warns until then and uses gemini-omni-1.1-flash after.
 
   - id: veo-3.1-generate-preview
     vertexId: veo-3.1-generate-001
@@ -364,7 +364,7 @@ models:
       perSecond: {720p: 0.40, 1080p: 0.40, 4k: 0.60}
       perSecondNoAudio: {720p: 0.20, 1080p: 0.20, 4k: 0.40}
     notes:
-      - Google deprecated the Veo 3.1 previews on the Gemini API, effective 2026-10-22 (AI Studio notice, 2026-10-08). The GA -001 models stay on Gemini Enterprise Agent Platform (formerly Vertex AI), the vertex backend. On the Gemini API the server warns until then and uses gemini-omni-1.1-flash after.
+      - Google deprecated the Veo 3.1 previews on the Gemini API, effective 2026-10-22 (AI Studio notice, 2026-10-08). The -001 models stay on Gemini Enterprise Agent Platform (formerly Vertex AI), the vertex backend. On the Gemini API the server warns until then and uses gemini-omni-1.1-flash after.
 
   - id: veo-3.0-generate-001
     family: veo

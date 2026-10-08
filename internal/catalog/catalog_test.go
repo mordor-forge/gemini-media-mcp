@@ -111,8 +111,19 @@ func TestVeoPreviewsLeaveTheGeminiAPI(t *testing.T) {
 	if st := lite.StatusOn("gemini-api", before); st != StatusDeprecated {
 		t.Errorf("lite on the Gemini API before = %s", st)
 	}
-	if lite.OfferedOn("gemini-api", after) || !lite.OfferedOn("vertex", after) || lite.StatusOn("vertex", after) != StatusGA {
-		t.Error("after the date lite is only offered on vertex")
+	if lite.OfferedOn("gemini-api", after) || !lite.OfferedOn("vertex", after) || lite.StatusOn("vertex", after) != StatusPreview {
+		t.Error("after the date lite is only offered on vertex, still in preview there")
+	}
+	// Retired on the Gemini API, Veo leaves its default listing but stays
+	// on Vertex and in the full listing.
+	has := func(ms []*Model, id string) bool {
+		return slices.ContainsFunc(ms, func(m *Model) bool { return m.ID == id })
+	}
+	if has(c.List(Video, "gemini-api", false, after), lite.ID) || !has(c.List(Video, "gemini-api", true, after), lite.ID) || !has(c.List(Video, "vertex", false, after), lite.ID) {
+		t.Error("List must hide models retired on the backend unless includeInactive is set")
+	}
+	if !has(c.List(Video, "gemini-api", false, before), lite.ID) || !has(c.List(Video, "vertex", false, before), omni.ID) {
+		t.Error("List must keep deprecated models and models the backend never offered")
 	}
 	if got := lite.BackendSummary(after); got != "gemini-api ended 2026-10-22, vertex" {
 		t.Errorf("BackendSummary = %q", got)

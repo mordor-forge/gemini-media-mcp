@@ -36,7 +36,7 @@ const maxDownloadAttempts = 3
 // VideoRequest is the input of generate_video.
 type VideoRequest struct {
 	Prompt           string   `json:"prompt" jsonschema:"What happens in the clip: subject and action, camera movement, setting, lighting, style, and sound (dialogue in quotes, sound effects, ambience, music)."`
-	Model            string   `json:"model,omitempty" jsonschema:"Model ID or alias: omni (default on the Gemini API: Gemini Omni Flash, best prompt adherence, editable and extendable to 40 s), lite (cheapest Veo; the default on Vertex AI), fast (Veo 4K, ingredients) or standard (highest Veo quality). Veo leaves the Gemini API on 2026-10-22. See list_models."`
+	Model            string   `json:"model,omitempty" jsonschema:"Model ID or alias: omni (default on the Gemini API: Gemini Omni Flash, best prompt adherence, editable and extendable to 40 s), lite (cheapest Veo; the default on Vertex AI), fast (Veo 4K, ingredients) or standard (highest Veo quality). Veo is leaving the Gemini API: list_models shows its shutdown date. See list_models."`
 	AspectRatio      string   `json:"aspectRatio,omitempty" jsonschema:"16:9 (default) or 9:16"`
 	Resolution       string   `json:"resolution,omitempty" jsonschema:"720p (default), 1080p or 4k (not lite); omni also 360p for fast drafts. Veo 1080p and 4k require 8-second clips."`
 	DurationSeconds  int      `json:"durationSeconds,omitempty" jsonschema:"Clip length: Veo 4, 6 or 8 seconds; omni 3-10 seconds (default 8)."`
