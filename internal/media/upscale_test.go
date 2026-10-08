@@ -395,12 +395,24 @@ func TestTileImageAcceptsFileURIs(t *testing.T) {
 	if !strings.HasPrefix(src, "/") {
 		uri = "file:///" + filepath.ToSlash(src) // Windows drive paths
 	}
-	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: uri, Grid: 1, LongEdge: 1024})
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: uri, Grid: 2, LongEdge: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: fakeEdits(t, e, truth, 2, res)}); err != nil {
+	out, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: fakeEdits(t, e, truth, 2, res)})
+	if err != nil {
 		t.Fatalf("stitching a file:// job: %v", err)
+	}
+	// The stitched image passed back as a file:// URI is still a refinement pass.
+	fileURI := func(p string) string {
+		if strings.HasPrefix(p, "/") {
+			return "file://" + filepath.ToSlash(p)
+		}
+		return "file:///" + filepath.ToSlash(p)
+	}
+	res2, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: fileURI(out.File.Path), Regions: []TileRegion{{X: 0.3, Y: 0.3, Width: 0.3, Height: 0.3, Label: "face"}}})
+	if err != nil || res2.Pass != 2 || res2.Reference != nil {
+		t.Fatalf("refinement from a file:// URI = %+v %v", res2, err)
 	}
 }
 

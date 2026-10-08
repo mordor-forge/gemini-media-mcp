@@ -66,18 +66,9 @@ func (s *Store) LoadInput(ref string, pol InputPolicy) (*Input, error) {
 		return nil, fmt.Errorf("remote URLs are not fetched (%s); download the file first and pass its path", ref)
 	}
 
-	path := ref
-	if strings.HasPrefix(ref, "file://") {
-		u, err := url.Parse(ref)
-		if err != nil {
-			return nil, fmt.Errorf("invalid file URI %q: %w", ref, err)
-		}
-		path = u.Path
-		// file:///C:/x on Windows parses to /C:/x.
-		if len(path) >= 3 && path[0] == '/' && path[2] == ':' {
-			path = path[1:]
-		}
-		path = filepath.FromSlash(path)
+	path, err := FilePath(ref)
+	if err != nil {
+		return nil, err
 	}
 	path = expandHome(path)
 
@@ -186,4 +177,22 @@ func expandHome(p string) string {
 		}
 	}
 	return p
+}
+
+// FilePath turns a file:// URI into a local path; other references are
+// returned unchanged.
+func FilePath(ref string) (string, error) {
+	if !strings.HasPrefix(ref, "file://") {
+		return ref, nil
+	}
+	u, err := url.Parse(ref)
+	if err != nil {
+		return "", fmt.Errorf("invalid file URI %q: %w", ref, err)
+	}
+	path := u.Path
+	// file:///C:/x on Windows parses to /C:/x.
+	if len(path) >= 3 && path[0] == '/' && path[2] == ':' {
+		path = path[1:]
+	}
+	return filepath.FromSlash(path), nil
 }
