@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -272,6 +273,45 @@ func TestStitchTilesErrors(t *testing.T) {
 		t.Fatalf("all rejected: err = %v", err)
 	}
 
+	// A tile left out keeps the base: the result claims no model detail
+	// figure and asks for the missing tile.
+	out, err = e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits[1:]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Tiles[0].Status != "unedited" || out.NativeLongEdge != 0 || !strings.Contains(strings.Join(out.Warnings, " "), "were not passed") || !strings.Contains(out.Next, "missing tiles") {
+		t.Fatalf("partial stitch = %+v", out)
+	}
+
+	// A job file with tampered geometry is refused before anything is allocated.
+	_, data, err := e.store.Open(res.Job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var job map[string]any
+	if err := json.Unmarshal(data, &job); err != nil {
+		t.Fatal(err)
+	}
+	for name, edit := range map[string]func(map[string]any){
+		"huge output": func(j map[string]any) { j["outWidth"], j["outHeight"] = 1<<40, 1<<40 },
+		"wrong shape": func(j map[string]any) { j["outHeight"] = 100 },
+		"huge box": func(j map[string]any) {
+			j["tiles"].([]any)[0].(map[string]any)["box"] = map[string]any{"x": 0, "y": 0, "width": 1 << 40, "height": 1 << 40}
+		},
+	} {
+		var j map[string]any
+		_ = json.Unmarshal(data, &j)
+		edit(j)
+		raw, _ := json.Marshal(j)
+		path := filepath.Join(e.store.Dir(), "tampered.json")
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: path, Tiles: edits}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "not a usable") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+
 	// The tiled image changed after tile_image.
 	if err := os.WriteFile(src, encode(t, scene(256, 192, 5)), 0o600); err != nil {
 		t.Fatal(err)
@@ -340,5 +380,26 @@ func TestTileImagePlansAutomatically(t *testing.T) {
 				t.Errorf("900x500 tile = %+v", tl)
 			}
 		}
+	}
+}
+
+// A file:// image keeps working after tile_image: the job stores it as given.
+func TestTileImageAcceptsFileURIs(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(512, 384, 6)
+	src := filepath.Join(t.TempDir(), "uri.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 256, 192)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	uri := "file://" + filepath.ToSlash(src)
+	if !strings.HasPrefix(src, "/") {
+		uri = "file:///" + filepath.ToSlash(src) // Windows drive paths
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: uri, Grid: 1, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: fakeEdits(t, e, truth, 2, res)}); err != nil {
+		t.Fatalf("stitching a file:// job: %v", err)
 	}
 }

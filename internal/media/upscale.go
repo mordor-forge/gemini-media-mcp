@@ -133,6 +133,30 @@ type tileJob struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
+// check bounds a job's geometry before stitch_tiles allocates for it: the
+// job is a file a caller could have edited.
+func (j *tileJob) check() error {
+	const side = 1 << 20 // beyond any real image; keeps the products below from overflowing
+	switch {
+	case j.Width < tiles.MinTilePixels || j.Height < tiles.MinTilePixels || j.Width > side || j.Height > side || j.Width*j.Height > maxPlanPixels:
+		return fmt.Errorf("image size %dx%d is out of range", j.Width, j.Height)
+	case j.OutWidth < 1 || j.OutHeight < 1 || j.OutWidth > maxLongEdge || j.OutHeight > maxLongEdge || j.OutWidth*j.OutHeight > maxCanvasPixels:
+		return fmt.Errorf("output size %dx%d is out of range (at most %d megapixels)", j.OutWidth, j.OutHeight, maxCanvasPixels/1_000_000)
+	case math.Abs(float64(j.OutWidth*j.Height)/float64(j.OutHeight*j.Width)-1) > 0.02:
+		return fmt.Errorf("output size %dx%d does not have the shape of the %dx%d image", j.OutWidth, j.OutHeight, j.Width, j.Height)
+	case len(j.Tiles) > max(maxGrid*maxGrid, maxRegions):
+		return fmt.Errorf("%d tiles is more than tile_image plans", len(j.Tiles))
+	}
+	for _, t := range j.Tiles {
+		b := t.Box
+		if b.W < tiles.MinTilePixels || b.H < tiles.MinTilePixels || b.W > 8*j.Width || b.H > 8*j.Height || b.W*b.H > 4*j.Width*j.Height ||
+			b.X >= j.Width || b.Y >= j.Height || b.X1() <= 0 || b.Y1() <= 0 {
+			return fmt.Errorf("tile %d's box %+v does not fit the %dx%d image", t.Tile, b, j.Width, j.Height)
+		}
+	}
+	return nil
+}
+
 type jobTile struct {
 	Tile        int       `json:"tile"`
 	Label       string    `json:"label"`
@@ -403,8 +427,8 @@ func (s *Service) durableRef(ref string, in *store.Input, saveAs string) (string
 			return "", fmt.Errorf("saving %s: %w", saveAs, err)
 		}
 		return a.URI, nil
-	case strings.HasPrefix(ref, store.URIScheme):
-		return ref, nil
+	case strings.HasPrefix(ref, store.URIScheme), strings.HasPrefix(ref, "file://"):
+		return ref, nil // already absolute
 	}
 	if name, ok := s.outputName(ref); ok {
 		if _, _, err := s.store.Open(name); err == nil {
@@ -518,6 +542,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	var job tileJob
 	if err := json.Unmarshal(jin.Data, &job); err != nil || job.Version != 1 || len(job.Tiles) == 0 {
 		return nil, apperr.Invalidf("%s is not a tile_image job", req.Job)
+	}
+	if err := job.check(); err != nil {
+		return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s is not a usable tile_image job: %v", req.Job, err), Hint: "Run tile_image again and pass the job uri it returns unchanged."}
 	}
 	byIndex := map[int]jobTile{}
 	for _, t := range job.Tiles {
@@ -670,10 +697,16 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 			name += fmt.Sprintf("-p%d", job.Pass)
 		}
 	}
-	if job.Mode == "grid" && !math.IsInf(native, 1) {
-		res.NativeLongEdge = int(math.Round(native * float64(max(job.Width, job.Height))))
-	} else {
+	switch {
+	case job.Mode != "grid":
 		res.NativeLongEdge = job.PrevNative // regions do not lower it
+	case len(placements) == len(job.Tiles):
+		res.NativeLongEdge = int(math.Round(native * float64(max(job.Width, job.Height))))
+	default:
+		// Areas without a placed tile are interpolated, so the image as a
+		// whole carries no model detail figure; 0 keeps later passes from
+		// treating it as saturated.
+		res.NativeLongEdge = 0
 	}
 	inputs := append([]string{job.Image}, sources...)
 	asset, err := s.store.Save("image", name, "png", data, "image/png", &store.Provenance{
@@ -706,15 +739,24 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	}
 
 	rejected := 0
+	var unedited []string
 	for _, t := range res.Tiles {
-		if t.Status == tiles.Rejected {
+		switch t.Status {
+		case tiles.Rejected:
 			rejected++
+		case "unedited":
+			unedited = append(unedited, fmt.Sprintf("%d (%s)", t.Tile, t.Label))
 		}
+	}
+	if len(unedited) > 0 {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("tile(s) %s were not passed and keep the underlying image there", strings.Join(unedited, ", ")))
 	}
 	switch {
 	case rejected > 0:
 		res.Warnings = append(res.Warnings, fmt.Sprintf("%d tile(s) were rejected and keep the underlying image: %s", rejected, rejectSummary(res.Tiles)))
 		res.Next = "Retry the rejected tiles with edit_image (same crop, reference and aspectRatio; insist on returning exactly the crop's framing), at most twice each, then call stitch_tiles again with every tile. If a tile keeps failing, deliver without it and say so."
+	case len(unedited) > 0 && job.Mode == "grid":
+		res.Next = "Edit the missing tiles with edit_image (same crop, reference and aspectRatio), then call stitch_tiles again with every tile. If you deliver without them, say which areas are only interpolated."
 	case job.Pass == 1 && res.NativeLongEdge >= max(job.OutWidth, job.OutHeight):
 		res.Next = fmt.Sprintf("Inspect the preview and the 100%% details for seams, doubling or drift, and for defects such as mismatched eyes or garbled hands or text. The tiles already carry detail at full resolution, so another pass adds no resolution: only to fix a visible defect, call tile_image with image = %s and a few targeted regions, then edit those crops without referenceImages. Otherwise deliver %s.", asset.URI, asset.Path)
 	case job.Pass == 1:
@@ -893,9 +935,12 @@ func decodeImage(in *store.Input, what string) (image.Image, error) {
 	if cfg.Width*cfg.Height > maxPlanPixels {
 		return nil, apperr.Invalidf("%s %s is %dx%d; the limit is %d megapixels", what, in.Ref, cfg.Width, cfg.Height, maxPlanPixels/1_000_000)
 	}
-	img, _, err := image.Decode(bytes.NewReader(in.Data))
+	img, format, err := image.Decode(bytes.NewReader(in.Data))
 	if err != nil {
 		return nil, apperr.Invalidf("%s %s: %v", what, in.Ref, err)
+	}
+	if format == "jpeg" {
+		img = orient(img, jpegOrientation(in.Data))
 	}
 	return img, nil
 }
