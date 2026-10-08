@@ -43,7 +43,7 @@ func (s *Server) registerTools() {
 		Name:  "generate_video",
 		Title: "Generate video",
 		Description: "Start a video clip with native audio from a text prompt, optionally from a first frame, first+last frames, or reference images. " +
-			"Default omni (Gemini Omni Flash: 3-10s, 360p drafts at ~$0.03/s to 4K, up to 10 references, ~$0.10/s at 720p). On Vertex AI the default is Veo lite ($0.05/s at 720p); fast/standard add Veo 4K and ingredients. Veo is leaving the Gemini API (list_models has the date). " +
+			"Default omni (Gemini Omni Flash: 3-10s, cheap 360p drafts up to 4K, up to 10 references). On Vertex AI the default is Veo lite; fast/standard add Veo 4K and ingredients. Veo is leaving the Gemini API (list_models has the date). estimate_cost prices any option. " +
 			"Asynchronous: returns a jobId; then call get_video.",
 		Annotations: withTitle(generative, "Generate video"),
 	}, s.handleGenerateVideo)

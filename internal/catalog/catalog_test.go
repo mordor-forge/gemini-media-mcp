@@ -111,6 +111,10 @@ func TestVeoPreviewsLeaveTheGeminiAPI(t *testing.T) {
 	if st := lite.StatusOn("gemini-api", before); st != StatusDeprecated {
 		t.Errorf("lite on the Gemini API before = %s", st)
 	}
+	// The shutdown date itself is the first day without the model.
+	if lite.OfferedOn("gemini-api", time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)) || !lite.OfferedOn("gemini-api", time.Date(2026, 10, 21, 23, 59, 0, 0, time.UTC)) {
+		t.Error("the Gemini API shutdown must take effect at the start of 2026-10-22 (UTC)")
+	}
 	if lite.OfferedOn("gemini-api", after) || !lite.OfferedOn("vertex", after) || lite.StatusOn("vertex", after) != StatusPreview {
 		t.Error("after the date lite is only offered on vertex, still in preview there")
 	}
