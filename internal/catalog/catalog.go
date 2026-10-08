@@ -206,8 +206,14 @@ func (c *Catalog) index() error {
 			return fmt.Errorf("catalog: %s: shutdown %q is not a YYYY-MM-DD date", m.ID, m.Shutdown)
 		}
 		for backend, d := range m.BackendShutdown {
-			if _, ok := parseDate(d); !ok {
+			bt, ok := parseDate(d)
+			if !ok {
 				return fmt.Errorf("catalog: %s: backendShutdown %s %q is not a YYYY-MM-DD date", m.ID, backend, d)
+			}
+			// The global shutdown ends every backend, so a later backend date
+			// would be listed but never take effect.
+			if gt, ok := m.ShutdownTime(); ok && bt.After(gt) {
+				return fmt.Errorf("catalog: %s: backendShutdown %s %s is after the model's shutdown %s; set it on or before %s, or drop it", m.ID, backend, d, m.Shutdown, m.Shutdown)
 			}
 			// A misspelled backend would never match, keeping the model on.
 			if !knownBackend(backend) || !m.SupportsBackend(backend) {
@@ -267,6 +273,9 @@ func (c *Catalog) index() error {
 
 // knownBackend reports whether b is a backend the catalog describes.
 func knownBackend(b string) bool { return b == "gemini-api" || b == "vertex" }
+
+// unresolved reports whether backend is not chosen yet (e.g. no credentials).
+func unresolved(backend string) bool { return backend == "" || backend == "auto" }
 
 // backendNames lists the backends m is offered on.
 func (m *Model) backendNames() []string {
@@ -383,10 +392,23 @@ func (m *Model) EffectiveStatus(now time.Time) string {
 }
 
 // StatusOn is EffectiveStatus on one backend: a backend shutdown date makes
-// the model deprecated there before the date and retired from it on.
+// the model deprecated there before the date and retired from it on. With
+// no backend resolved ("" or "auto"), the model is retired once every one
+// of its backends has ended it.
 func (m *Model) StatusOn(backend string, now time.Time) string {
 	st := m.EffectiveStatus(now)
-	if t, ok := parseDate(m.BackendShutdown[backend]); ok && st != StatusRetired {
+	if st == StatusRetired {
+		return st
+	}
+	if unresolved(backend) {
+		for _, b := range m.backendNames() {
+			if m.StatusOn(b, now) != StatusRetired {
+				return st
+			}
+		}
+		return StatusRetired
+	}
+	if t, ok := parseDate(m.BackendShutdown[backend]); ok {
 		if !now.Before(t) {
 			return StatusRetired
 		}
@@ -431,8 +453,8 @@ func (m *Model) BackendSummary(now time.Time) string {
 
 // SupportsBackend reports whether the model is offered on backend.
 func (m *Model) SupportsBackend(backend string) bool {
-	if backend == "" || backend == "auto" {
-		return true // backend not resolved yet (e.g. no credentials)
+	if unresolved(backend) {
+		return true
 	}
 	return len(m.Backends) == 0 || slices.Contains(m.Backends, backend)
 }

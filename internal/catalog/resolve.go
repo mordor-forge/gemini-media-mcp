@@ -64,7 +64,10 @@ func (c *Catalog) Resolve(name, mediaType, backend string, now time.Time) (*Reso
 				target = m.Replacement
 			}
 			msg := fmt.Sprintf("%s is not available on %s", m.ID, backend)
-			if ended {
+			switch {
+			case ended && unresolved(backend):
+				msg = fmt.Sprintf("%s shut down on every backend (%s)", m.ID, m.BackendSummary(now))
+			case ended:
 				msg = fmt.Sprintf("%s shut down on %s on %s", m.ID, backendName(backend), m.BackendShutdown[backend])
 			}
 			next, ok := c.Lookup(target)

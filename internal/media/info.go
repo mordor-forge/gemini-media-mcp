@@ -95,8 +95,10 @@ func (s *Service) ListModels(ctx context.Context, req ListModelsRequest) (*ListM
 			Price: m.PriceSummary(), Shutdown: m.ShutdownOn(backend), Replacement: m.Replacement,
 			OnBackend: m.OfferedOn(backend, now), Notes: m.Notes,
 		}
-		if m.Fallback != "" && (!sum.OnBackend || m.BackendShutdown[backend] != "") {
-			sum.Replacement = m.Fallback // what requests on this backend switch to
+		// What requests on this backend switch to: past the global shutdown
+		// the replacement, as Resolve does; otherwise the backend fallback.
+		if m.Fallback != "" && m.Active(now) && (!sum.OnBackend || m.BackendShutdown[backend] != "") {
+			sum.Replacement = m.Fallback
 		}
 		if req.Detail {
 			capCopy := m.Capabilities
