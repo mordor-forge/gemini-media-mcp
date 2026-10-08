@@ -540,6 +540,11 @@ func TestOverrideBackendDefaults(t *testing.T) {
 	if c.DefaultFor(Video, "vertex") != "standard" || c.DefaultFor(Video, "gemini-api") != "fast" {
 		t.Fatalf("defaults = %v, backend defaults = %v", c.Defaults, c.BackendDefaults)
 	}
+	// A Gemini-only default needs a Vertex default alongside it.
+	c, err = Merge(embedded, []byte("defaults:\n  video: omni\nbackendDefaults:\n  vertex: {video: lite}\n"))
+	if err != nil || c.DefaultFor(Video, "vertex") != "lite" || c.DefaultFor(Video, "gemini-api") != "omni" {
+		t.Fatalf("omni default with a vertex default = %v", err)
+	}
 }
 
 func TestOverrideErrors(t *testing.T) {
@@ -573,6 +578,13 @@ func TestOverrideErrors(t *testing.T) {
 		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backends: [\"\"]\n":    "the backends are",
 		"models:\n  - id: veo-3.1-generate-preview\n    backendShutdown: {gemini_api: 2026-10-22}\n": "not one of its backends",
 		"models:\n  - id: gemini-2.5-flash-image\n    backendShutdown: {vertex: \"2027-04-01\"}\n":   "after the model's shutdown 2027-03-15",
+		"defaults:\n  video: omni\n":                                                                 "not offered on vertex (only gemini-api); set backendDefaults.vertex.video as well",
+		"models:\n  - id: veo-3.1-generate-preview\n    fallback: nb2\n":                             "fallback \"nb2\" generates image, not video",
+		"models:\n  - id: veo-3.0-generate-001\n    replacement: nb2\n":                              "replacement \"nb2\" generates image, not video",
+		"models:\n  - id: veo-3.0-generate-001\n    replacement: veo-9\n":                            "replacement \"veo-9\" is not in the catalog",
+		"models:\n  - id: veo-3.0-generate-001\n    replacement: veo-3.0-generate-001\n":             "is the model itself",
+		"models:\n  - id: gemini-3.8-flash-tts\n    fallback: gemini-3.8-flash-lite-tts\n":           "not offered on vertex, where requests for gemini-3.8-flash-tts switch to it",
+		"models:\n  - id: veo-3.1-lite-generate-preview\n    fallback: lite\n":                       "is the model itself",
 	} {
 		if _, err := Merge(embedded, []byte(bad)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("bad default should fail: %q -> %v", bad, err)
