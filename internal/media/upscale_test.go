@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"hash/crc32"
 	"image"
 	"image/color"
@@ -21,6 +22,7 @@ import (
 	"golang.org/x/image/draw"
 
 	"github.com/mordor-forge/gemini-media-mcp/internal/apperr"
+	"github.com/mordor-forge/gemini-media-mcp/internal/catalog"
 	"github.com/mordor-forge/gemini-media-mcp/internal/spend"
 	"github.com/mordor-forge/gemini-media-mcp/internal/store"
 )
@@ -557,5 +559,113 @@ func TestNativeDetailUsesBothAxes(t *testing.T) {
 	}
 	if want := 4.75 * 128; float64(out.NativeLongEdge) > want*1.02 {
 		t.Fatalf("NativeLongEdge = %d, want about %.0f (the vertical density)", out.NativeLongEdge, want)
+	}
+}
+
+func TestImageSizesComeFromTheCatalog(t *testing.T) {
+	for size, want := range map[string]int{"512": 512 * 512, "1K": 1 << 20, "2K": 2048 * 2048, "4K": 4096 * 4096, "8K": 8192 * 8192, "HD": 0, "": 0, "0K": 0, "-1": 0, "99K": 0} {
+		if got := imageSizePixels(size); got != want {
+			t.Errorf("imageSizePixels(%q) = %d, want %d", size, got, want)
+		}
+	}
+	m := &catalog.Model{Capabilities: catalog.Capabilities{ImageSizes: []string{"512", "1K", "8K", "4K", "HD"}}}
+	if got := editSizes(m); !slices.Equal(got, []string{"1K", "8K", "4K"}) {
+		t.Fatalf("editSizes = %v", got)
+	}
+	if got := largestEditSize(editSizes(m)); got != "8K" {
+		t.Fatalf("largestEditSize = %s", got)
+	}
+
+	// A size the catalog accepts but whose pixels are unknown is refused,
+	// and automatic planning leaves it out.
+	e := newEnv(t, nil, spend.Budget{})
+	override := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(override, []byte("models:\n  - id: gemini-nano-banana-2.1\n    capabilities:\n      imageSizes: [\"1K\", \"2K\", \"4K\", \"HD\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := catalog.NewSource(override, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, lastErr := src.Status(); lastErr != nil {
+		t.Fatalf("override: %v", lastErr)
+	}
+	e.svc.catalog = src
+	img := filepath.Join(t.TempDir(), "s.png")
+	if err := os.WriteFile(img, encode(t, scene(400, 300, 2)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: img, Model: "nb2", ImageSize: "HD"}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "omit imageSize") {
+		t.Fatalf("unknown size: err = %v", err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: img, Model: "nb2"})
+	if err != nil || res.ImageSize == "HD" {
+		t.Fatalf("auto plan = %+v, %v", res, err)
+	}
+}
+
+func TestStitchTilesRefusesATileChangedMidway(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(512, 384, 12)
+	src := filepath.Join(t.TempDir(), "swap.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edits := fakeEdits(t, e, truth, 4, res)
+	path, data, err := e.store.Open(edits[0].Image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Once every tile is aligned, another process replaces tile 1.
+	ctx := WithProgress(context.Background(), func(msg string, _, _ float64) {
+		if msg == fmt.Sprintf("aligned %d/%d tiles", len(edits), len(edits)) {
+			if err := os.WriteFile(path, encode(t, scene(cfg.Width, cfg.Height, 77)), 0o600); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	if _, err := e.svc.StitchTiles(ctx, StitchTilesRequest{Job: res.Job, Tiles: edits}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "changed while stitch_tiles") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, _, err := e.store.Open("swap-upscaled.png"); err == nil {
+		t.Fatal("a stitch with a changed tile must not save its output")
+	}
+}
+
+func TestStitchTilesRequiresProvenance(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(512, 384, 13)
+	src := filepath.Join(t.TempDir(), "meta.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edits := fakeEdits(t, e, truth, 4, res)
+	// Without its provenance tile_image would take the result for a new
+	// first pass, so the stitch fails rather than report it.
+	meta := filepath.Join(e.store.Dir(), ".meta")
+	if err := os.RemoveAll(meta); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(meta, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits})
+	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Hint, ".meta") || !strings.Contains(ae.Message, "provenance") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, _, err := e.store.Open("meta-upscaled.png"); err == nil {
+		t.Fatal("a stitched image without provenance must not be left behind")
 	}
 }

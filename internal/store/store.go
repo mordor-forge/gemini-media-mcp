@@ -73,7 +73,22 @@ func (s *Store) Dir() string { return s.dir }
 
 // Save writes data under a unique name. kind is a short prefix (image, video,
 // speech, music); name is an optional caller-chosen base name; ext has no dot.
+// Provenance is best-effort.
 func (s *Store) Save(kind, name, ext string, data []byte, mimeType string, prov *Provenance) (*Asset, error) {
+	return s.save(kind, name, ext, data, mimeType, prov, false)
+}
+
+// SaveWithProvenance is Save for an asset whose provenance a later step
+// relies on: when the sidecar cannot be written, the asset is removed and
+// the error returned.
+func (s *Store) SaveWithProvenance(kind, name, ext string, data []byte, mimeType string, prov *Provenance) (*Asset, error) {
+	if prov == nil {
+		return nil, errors.New("SaveWithProvenance needs a provenance record")
+	}
+	return s.save(kind, name, ext, data, mimeType, prov, true)
+}
+
+func (s *Store) save(kind, name, ext string, data []byte, mimeType string, prov *Provenance, required bool) (*Asset, error) {
 	if len(data) == 0 {
 		return nil, errors.New("refusing to save empty media")
 	}
@@ -134,7 +149,10 @@ func (s *Store) Save(kind, name, ext string, data []byte, mimeType string, prov 
 		if prov.CreatedAt.IsZero() {
 			prov.CreatedAt = s.now().UTC()
 		}
-		_ = s.writeProvenance(a.Name, prov) // provenance is best-effort
+		if err := s.writeProvenance(a.Name, prov); err != nil && required {
+			_ = os.Remove(path)
+			return nil, fmt.Errorf("recording provenance for %s in %s: %w", a.Name, filepath.Join(s.dir, metaDir), err)
+		}
 	}
 	return a, nil
 }

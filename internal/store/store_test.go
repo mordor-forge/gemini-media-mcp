@@ -76,6 +76,31 @@ func TestSaveUniqueNamesAndProvenance(t *testing.T) {
 	}
 }
 
+func TestSaveWithProvenanceRequiresTheSidecar(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A file where the sidecar directory belongs makes every sidecar fail.
+	if err := os.WriteFile(filepath.Join(s.Dir(), metaDir), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data := pngBytes(t, 4, 4)
+	prov := &Provenance{Tool: "stitch_tiles"}
+	if a, err := s.Save("image", "loose", "png", data, "image/png", prov); err != nil || a.Name != "loose.png" {
+		t.Fatalf("Save = %+v, %v; provenance is best-effort there", a, err)
+	}
+	if _, err := s.SaveWithProvenance("image", "strict", "png", data, "image/png", prov); err == nil || !strings.Contains(err.Error(), "provenance") {
+		t.Fatalf("SaveWithProvenance err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.Dir(), "strict.png")); !os.IsNotExist(err) {
+		t.Fatalf("the asset must be removed when its provenance fails: %v", err)
+	}
+	if _, err := s.SaveWithProvenance("image", "none", "png", data, "image/png", nil); err == nil {
+		t.Fatal("SaveWithProvenance without a record must fail")
+	}
+}
+
 func TestOpenRejectsTraversal(t *testing.T) {
 	s, _ := New(t.TempDir())
 	for _, bad := range []string{URIScheme + "../etc/passwd", "../x", URIScheme + ".meta", ""} {

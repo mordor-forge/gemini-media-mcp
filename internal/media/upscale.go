@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -218,10 +219,17 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	if !m.Capabilities.Edit {
 		return nil, apperr.Invalidf("%s cannot edit images; use nb2 or pro", m.ID)
 	}
+	sizes := editSizes(m)
+	if len(sizes) == 0 {
+		return nil, apperr.Invalidf("the catalog lists no output sizes for %s that tile_image can plan with (512, 1K, 2K, 4K, ...); pick nb2 or pro", m.ID)
+	}
 	size := strings.ToUpper(strings.TrimSpace(req.ImageSize))
 	if size != "" {
 		if _, err := m.Validate(catalog.Params{"imageSize": size, "referenceImages": "2"}, s.backend()); err != nil {
 			return nil, err
+		}
+		if imageSizePixels(size) == 0 {
+			return nil, apperr.Invalidf("tile_image cannot tell how many pixels imageSize %s has; omit imageSize to plan automatically, or use one of %s", size, strings.Join(sizes, ", "))
 		}
 	}
 	ratios := tiles.ParseRatios(m.Capabilities.AspectRatios)
@@ -283,7 +291,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	mode, grid, planNote := "grid", req.Grid, ""
 	if len(req.Regions) > 0 {
 		if size == "" {
-			size = largestEditSize(m)
+			size = largestEditSize(sizes)
 		}
 		mode = "regions"
 		regions := make([]tiles.Region, len(req.Regions))
@@ -296,15 +304,15 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		}
 		planned, err = tiles.Regions(pw, ph, regions, padding, ratios)
 	} else if pass == 1 && (grid == 0 || size == "") {
-		grids, sizes := []int{grid}, []string{size}
+		grids, try := []int{grid}, sizes
 		if grid == 0 {
 			grids = []int{1, 2, 3, 4}
 		}
-		if size == "" {
-			sizes = editSizes(m)
+		if size != "" {
+			try = []string{size}
 		}
 		var p *tilePlan
-		if p, err = s.autoPlan(m, location, pw, ph, max(outW, outH), padding, ratios, grids, sizes); err == nil {
+		if p, err = s.autoPlan(m, location, pw, ph, max(outW, outH), padding, ratios, grids, try); err == nil {
 			grid, size, planned, planNote = p.grid, p.size, p.tiles, p.note
 		}
 	} else {
@@ -312,7 +320,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 			grid = 3
 		}
 		if size == "" {
-			size = largestEditSize(m)
+			size = largestEditSize(sizes)
 		}
 		planned, err = tiles.Grid(pw, ph, grid, padding, ratios)
 	}
@@ -639,6 +647,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	type aligned struct {
 		a    tiles.Alignment
 		w, h int
+		sum  string // sha256 of the bytes aligned, checked when reloaded
 		err  error
 	}
 	results := make([]aligned, len(job.Tiles))
@@ -660,12 +669,12 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 			if ctx.Err() != nil {
 				return // reported after the wait
 			}
-			tile, err := s.loadTile(ref, t.Tile)
+			tile, sum, err := s.loadTile(ref, t.Tile)
 			if err != nil {
 				results[i].err = err
 				return
 			}
-			results[i] = aligned{a: tiles.Align(plan, t.Box, tile, opt), w: tile.Bounds().Dx(), h: tile.Bounds().Dy()}
+			results[i] = aligned{a: tiles.Align(plan, t.Box, tile, opt), w: tile.Bounds().Dx(), h: tile.Bounds().Dy(), sum: sum}
 			mu.Lock()
 			done++
 			progress(ctx, fmt.Sprintf("aligned %d/%d tiles", done, len(edited)), float64(done), total*2)
@@ -677,8 +686,13 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		return nil, requestStopped(err, "stitch_tiles", "an 8K stitch takes 10-30 s")
 	}
 
+	// source is a placed tile's file, reloaded for painting.
+	type source struct {
+		ref, sum string
+		tile     int
+	}
 	var placements []tiles.Placement
-	var sources []string
+	var sources []source
 	native := math.Inf(1)
 	for i, t := range job.Tiles {
 		ref, ok := edited[t.Tile]
@@ -695,7 +709,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 			rep.ScaleX, rep.ScaleY = round4(a.ScaleX), round4(a.ScaleY)
 			rep.ShiftX, rep.ShiftY = round1(a.ShiftX*sx), round1(a.ShiftY*sy)
 			placements = append(placements, tiles.Placement{Box: t.Box, Align: a})
-			sources = append(sources, ref)
+			sources = append(sources, source{ref: ref, sum: results[i].sum, tile: t.Tile})
 			// Rendered pixels per tiled-image pixel, along the sparser axis.
 			native = math.Min(native, math.Min(float64(results[i].w)/(a.ScaleX*float64(t.Box.W)), float64(results[i].h)/(a.ScaleY*float64(t.Box.H))))
 		}
@@ -723,7 +737,13 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 			if ctx.Err() != nil {
 				return
 			}
-			tile, err := s.loadTile(sources[i], 0)
+			src := sources[i]
+			tile, sum, err := s.loadTile(src.ref, src.tile)
+			if err == nil && sum != src.sum {
+				// Its alignment and color match belong to the old pixels.
+				err = &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("tile %d (%s) changed while stitch_tiles was running", src.tile, src.ref),
+					Hint: "Call stitch_tiles again once nothing is writing to the tile files."}
+			}
 			if err != nil {
 				next <- prepared{err: err}
 				return
@@ -775,14 +795,17 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	}
 	inputs := []string{job.Image}
 	for _, src := range sources {
-		inputs = append(inputs, provenanceRef(src))
+		inputs = append(inputs, provenanceRef(src.ref))
 	}
-	asset, err := s.store.Save("image", name, "png", data, "image/png", &store.Provenance{
+	// tile_image reads the pass, original and reference back from the
+	// provenance, so a stitched image without it is not reported.
+	asset, err := s.store.SaveWithProvenance("image", name, "png", data, "image/png", &store.Provenance{
 		Tool: "stitch_tiles", Model: job.Model, Inputs: inputs,
 		Params: map[string]any{"pass": job.Pass, "name": job.Name, "original": job.Original, "reference": job.Reference, "job": req.Job, "nativeLongEdge": res.NativeLongEdge},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("saving the stitched image: %w", err)
+		return nil, &apperr.Error{Kind: apperr.Unknown, Message: "saving the stitched image: " + err.Error(),
+			Hint: "Make the output directory and its .meta folder writable (with free space), then call stitch_tiles again with the same job and tiles; it costs nothing.", Cause: err}
 	}
 	res.File = *asset
 
@@ -911,28 +934,21 @@ func nativeLongEdge(ts []tiles.Tile, size string, pw, ph int) int {
 	return int(math.Round(native * float64(max(pw, ph))))
 }
 
-// editSizes are the output sizes worth planning with (512 is too small to
-// add detail).
+// editSizes are the model's output sizes worth planning with: those whose
+// pixel count is known, above 512 (too small to add detail).
 func editSizes(m *catalog.Model) []string {
 	var out []string
 	for _, s := range m.Capabilities.ImageSizes {
-		if s != "512" {
+		if imageSizePixels(s) > 512*512 {
 			out = append(out, s)
 		}
-	}
-	if len(out) == 0 {
-		out = []string{"4K"}
 	}
 	return out
 }
 
-// largestEditSize is the model's largest output size (4K when unknown).
-func largestEditSize(m *catalog.Model) string {
-	sizes := editSizes(m)
-	if slices.Contains(sizes, "4K") {
-		return "4K"
-	}
-	return sizes[len(sizes)-1]
+// largestEditSize is the size in sizes with the most pixels.
+func largestEditSize(sizes []string) string {
+	return slices.MaxFunc(sizes, func(a, b string) int { return imageSizePixels(a) - imageSizePixels(b) })
 }
 
 // detailPoints picks the 100% crops returned for inspection.
@@ -989,16 +1005,18 @@ func (s *Service) loadLocal(ref, what string) (*store.Input, error) {
 	return in, nil
 }
 
-func (s *Service) loadTile(ref string, index int) (image.Image, error) {
-	what := "tile"
-	if index > 0 {
-		what = fmt.Sprintf("tile %d", index)
-	}
+// loadTile decodes edited tile index and returns the sha256 of its bytes.
+func (s *Service) loadTile(ref string, index int) (image.Image, string, error) {
+	what := fmt.Sprintf("tile %d", index)
 	in, err := s.loadLocal(ref, what)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return decodeImage(in, what, maxTilePixels)
+	img, err := decodeImage(in, what, maxTilePixels)
+	if err != nil {
+		return nil, "", err
+	}
+	return img, sha(in.Data), nil
 }
 
 // provenanceRef is ref as recorded in provenance: inline data is named by
@@ -1092,17 +1110,19 @@ func fitLong(w, h, long int) (int, int) {
 	return max(int(math.Round(float64(w)*float64(long)/float64(h))), 1), long
 }
 
-// imageSizePixels is the approximate pixel count of an output size.
+// imageSizePixels is the approximate pixel count of an output size named as
+// in the catalog: a square side in pixels ("512") or in multiples of 1024
+// ("1K", "4K"). It is 0 for any other name, which no plan may use.
 func imageSizePixels(size string) int {
-	switch size {
-	case "512":
-		return 512 * 512
-	case "2K":
-		return 2048 * 2048
-	case "4K":
-		return 4096 * 4096
+	side := 0
+	if k, ok := strings.CutSuffix(size, "K"); ok {
+		if n, err := strconv.Atoi(k); err == nil && n > 0 && n <= 16 {
+			side = n * 1024
+		}
+	} else if n, err := strconv.Atoi(size); err == nil && n > 0 && n <= maxLongEdge {
+		side = n
 	}
-	return 1024 * 1024
+	return side * side
 }
 
 func rejectSummary(rs []TileReport) string {

@@ -161,7 +161,7 @@ Tool errors read `[kind] message` followed by `Hint: ...`. Follow the hint.
 
 | Kind | Do |
 |------|----|
-| `invalid` from `tile_image` | Fix the argument: `grid` 2-4, `padding` 0.05-0.5, regions inside the image, `longEdge` 1024-16384 and at most 70 MP. |
+| `invalid` from `tile_image` | Fix the argument: `grid` 1-4, `padding` 0.05-0.5, regions inside the image, `longEdge` 1024-16384 and at most 70 MP. |
 | `invalid` from `stitch_tiles` | Use the `job` uri from `tile_image` and tile numbers from its list. If the tiled image changed, run `tile_image` again. |
 | `safety` on a tile | Usually a close crop of a person. Retry once with a neutral prompt (drop adjectives about the body); if it repeats, leave that tile out and say so. |
 | `quota`, `unavailable` | Send fewer edits in parallel and retry once. |
