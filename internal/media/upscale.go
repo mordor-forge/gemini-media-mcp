@@ -83,6 +83,7 @@ type PlannedTile struct {
 	Label       string      `json:"label"`
 	Box         tiles.Box   `json:"box" jsonschema:"Crop in pixels of the tiled image"`
 	AspectRatio string      `json:"aspectRatio" jsonschema:"Pass it as edit_image aspectRatio so the tile comes back with the crop's shape"`
+	Outside     bool        `json:"outside,omitempty" jsonschema:"The crop extends past the image to reach a supported shape; that part is mirrored and discarded when stitching"`
 	Crop        store.Asset `json:"crop" jsonschema:"Pass its uri as edit_image image"`
 }
 
@@ -97,6 +98,8 @@ type TileImageResult struct {
 	Job            string        `json:"job" jsonschema:"Pass it to stitch_tiles"`
 	Pass           int           `json:"pass"`
 	Mode           string        `json:"mode" jsonschema:"grid or regions"`
+	Grid           int           `json:"grid,omitempty" jsonschema:"Grid size used (grid mode): 1 is the whole image as one tile"`
+	PlanNote       string        `json:"planNote,omitempty" jsonschema:"Why this grid and imageSize were chosen, when picked automatically"`
 	Image          Size          `json:"image" jsonschema:"Size of the tiled image"`
 	Output         Size          `json:"output" jsonschema:"Size stitch_tiles will produce"`
 	NativeLongEdge int           `json:"nativeLongEdge,omitempty" jsonschema:"About how many pixels of model-rendered detail the output's long edge carries if every tile comes back at imageSize; beyond that the output is interpolated"`
@@ -152,12 +155,8 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	if padding < 0.05 || padding > 0.5 {
 		return nil, apperr.Invalidf("padding must be between 0.05 and 0.5 (got %g)", req.Padding)
 	}
-	grid := req.Grid
-	if grid == 0 {
-		grid = 3
-	}
-	if len(req.Regions) == 0 && (grid < 2 || grid > maxGrid) {
-		return nil, apperr.Invalidf("grid must be between 2 and %d (got %d)", maxGrid, req.Grid)
+	if req.Grid < 0 || req.Grid > maxGrid {
+		return nil, apperr.Invalidf("grid must be between 1 and %d (got %d), or omitted to plan automatically", maxGrid, req.Grid)
 	}
 	if len(req.Regions) > maxRegions {
 		return nil, apperr.Invalidf("at most %d regions per pass (got %d); split them over two passes", maxRegions, len(req.Regions))
@@ -172,14 +171,10 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		return nil, apperr.Invalidf("%s cannot edit images; use nb2 or pro", m.ID)
 	}
 	size := strings.ToUpper(strings.TrimSpace(req.ImageSize))
-	if size == "" {
-		size = "4K"
-		if len(m.Capabilities.ImageSizes) > 0 && !slices.Contains(m.Capabilities.ImageSizes, size) {
-			size = m.Capabilities.ImageSizes[len(m.Capabilities.ImageSizes)-1]
+	if size != "" {
+		if _, err := m.Validate(catalog.Params{"imageSize": size, "referenceImages": "2"}, s.backend()); err != nil {
+			return nil, err
 		}
-	}
-	if _, err := m.Validate(catalog.Params{"imageSize": size, "referenceImages": "2"}, s.backend()); err != nil {
-		return nil, err
 	}
 	ratios := tiles.ParseRatios(m.Capabilities.AspectRatios)
 	if len(ratios) == 0 {
@@ -237,8 +232,11 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	}
 
 	var planned []tiles.Tile
-	mode := "grid"
+	mode, grid, planNote := "grid", req.Grid, ""
 	if len(req.Regions) > 0 {
+		if size == "" {
+			size = largestEditSize(m)
+		}
 		mode = "regions"
 		regions := make([]tiles.Region, len(req.Regions))
 		for i, rg := range req.Regions {
@@ -249,7 +247,25 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 			regions[i] = tiles.Region{X: rg.X, Y: rg.Y, W: rg.Width, H: rg.Height, Label: label}
 		}
 		planned, err = tiles.Regions(pw, ph, regions, padding, ratios)
+	} else if pass == 1 && (grid == 0 || size == "") {
+		grids, sizes := []int{grid}, []string{size}
+		if grid == 0 {
+			grids = []int{1, 2, 3, 4}
+		}
+		if size == "" {
+			sizes = editSizes(m)
+		}
+		var p *tilePlan
+		if p, err = s.autoPlan(m, location, pw, ph, max(outW, outH), padding, ratios, grids, sizes); err == nil {
+			grid, size, planned, planNote = p.grid, p.size, p.tiles, p.note
+		}
 	} else {
+		if grid == 0 {
+			grid = 3
+		}
+		if size == "" {
+			size = largestEditSize(m)
+		}
 		planned, err = tiles.Grid(pw, ph, grid, padding, ratios)
 	}
 	if err != nil {
@@ -299,7 +315,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 
 	progress(ctx, fmt.Sprintf("cutting %d crops", len(planned)), 0, float64(len(planned)))
 	res := &TileImageResult{
-		Pass: pass, Mode: mode, Image: Size{pw, ph}, Output: Size{outW, outH},
+		Pass: pass, Mode: mode, PlanNote: planNote, Image: Size{pw, ph}, Output: Size{outW, outH},
 		Reference: refAsset, Model: m.ID, ImageSize: size, Warnings: warnings,
 	}
 	job := tileJob{
@@ -328,11 +344,8 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		if err != nil {
 			return nil, fmt.Errorf("saving crop %d: %w", t.Index, err)
 		}
-		res.Tiles = append(res.Tiles, PlannedTile{Tile: t.Index, Label: t.Label, Box: t.Box, AspectRatio: t.AspectRatio, Crop: *a})
+		res.Tiles = append(res.Tiles, PlannedTile{Tile: t.Index, Label: t.Label, Box: t.Box, AspectRatio: t.AspectRatio, Outside: t.Outside, Crop: *a})
 		job.Tiles = append(job.Tiles, jobTile{Tile: t.Index, Label: t.Label, Box: t.Box, Core: t.Core, AspectRatio: t.AspectRatio, Crop: a.URI})
-		if t.Stretched {
-			res.Warnings = append(res.Warnings, fmt.Sprintf("tile %d (%s): no supported aspect ratio fits this crop, so the edit comes back with another shape and stitch_tiles will likely reject it; use a finer grid or adjust the region", t.Index, t.Label))
-		}
 		// Output pixels per tiled-image pixel, if the tile comes back at size.
 		outPx := float64(imageSizePixels(size))
 		tw := math.Sqrt(outPx * float64(t.Box.W) / float64(t.Box.H))
@@ -341,6 +354,9 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 			res.Warnings = append(res.Warnings, fmt.Sprintf("region %d (%s) is %dx%d px: at %s the model renders it at only about %.1fx (and sees the crop at %d px at most), so it adds little detail; use tighter regions, about a third of the image's long side or less", t.Index, t.Label, t.Box.W, t.Box.H, size, tw/float64(t.Box.W), maxCropPixels))
 		}
 		progress(ctx, fmt.Sprintf("%d/%d crops saved", i+1, len(planned)), float64(i+1), float64(len(planned)))
+	}
+	if mode == "grid" {
+		res.Grid = grid
 	}
 	if mode == "grid" && !math.IsInf(native, 1) {
 		res.NativeLongEdge = int(math.Round(native * float64(max(pw, ph))))
@@ -712,6 +728,94 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	return res, nil
 }
 
+// tilePlan is a grid and edit size chosen by autoPlan.
+type tilePlan struct {
+	grid   int
+	size   string
+	tiles  []tiles.Tile
+	native int // model-rendered long edge if every tile comes back at size
+	cost   float64
+	note   string
+}
+
+// autoPlan picks the cheapest grid and edit size whose tiles carry at least
+// target pixels of model-rendered detail along the long edge, or the most
+// detailed plan when none reaches it.
+func (s *Service) autoPlan(m *catalog.Model, location string, pw, ph, target int, padding float64, ratios []tiles.Ratio, grids []int, sizes []string) (*tilePlan, error) {
+	var best *tilePlan
+	var lastErr error
+	meets := func(p *tilePlan) bool { return float64(p.native) >= 0.97*float64(target) }
+	for _, g := range grids {
+		for _, size := range sizes {
+			planned, err := tiles.Grid(pw, ph, g, padding, ratios)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			p := &tilePlan{grid: g, size: size, tiles: planned, native: nativeLongEdge(planned, size, pw, ph)}
+			p.cost = float64(len(planned)) * m.EstimateImage(size, 1, 1200, 2, s.backend(), location).USD
+			switch {
+			case best == nil:
+				best = p
+			case meets(p) && !meets(best), meets(p) && meets(best) && (p.cost < best.cost-1e-9 || math.Abs(p.cost-best.cost) < 1e-9 && p.native > best.native):
+				best = p
+			case !meets(p) && !meets(best) && (p.native > best.native || p.native == best.native && p.cost < best.cost):
+				best = p
+			}
+		}
+	}
+	if best == nil {
+		return nil, lastErr
+	}
+	tilesWord := "tiles"
+	if len(best.tiles) == 1 {
+		tilesWord = "tile"
+	}
+	best.note = fmt.Sprintf("%d %s at %s (grid %d), the cheapest plan whose detail covers the %d px target", len(best.tiles), tilesWord, best.size, best.grid, target)
+	if !meets(best) {
+		best.note = fmt.Sprintf("%d %s at %s (grid %d), the most detailed plan available; it falls short of the %d px target", len(best.tiles), tilesWord, best.size, best.grid, target)
+	}
+	return best, nil
+}
+
+// nativeLongEdge is about how many pixels of model-rendered detail the long
+// edge of a pw x ph image carries if every tile comes back at size.
+func nativeLongEdge(ts []tiles.Tile, size string, pw, ph int) int {
+	native := math.Inf(1)
+	for _, t := range ts {
+		tw := math.Sqrt(float64(imageSizePixels(size)) * float64(t.Box.W) / float64(t.Box.H))
+		native = math.Min(native, tw/float64(t.Box.W))
+	}
+	if math.IsInf(native, 1) {
+		return 0
+	}
+	return int(math.Round(native * float64(max(pw, ph))))
+}
+
+// editSizes are the output sizes worth planning with (512 is too small to
+// add detail).
+func editSizes(m *catalog.Model) []string {
+	var out []string
+	for _, s := range m.Capabilities.ImageSizes {
+		if s != "512" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"4K"}
+	}
+	return out
+}
+
+// largestEditSize is the model's largest output size (4K when unknown).
+func largestEditSize(m *catalog.Model) string {
+	sizes := editSizes(m)
+	if slices.Contains(sizes, "4K") {
+		return "4K"
+	}
+	return sizes[len(sizes)-1]
+}
+
 // detailPoints picks the 100% crops returned for inspection.
 func detailPoints(asked []DetailPoint, job tileJob, ps []tiles.Placement) []DetailPoint {
 	if len(asked) > 0 {
@@ -738,7 +842,8 @@ func detailPoints(asked []DetailPoint, job tileJob, ps []tiles.Placement) []Deta
 				out = append(out, DetailPoint{X: float64(x) / float64(job.Width), Y: float64(y) / float64(job.Height)})
 			}
 		}
-	} else {
+	}
+	if len(out) == 0 {
 		for _, p := range ps {
 			out = append(out, DetailPoint{
 				X: (float64(p.Box.X) + float64(p.Box.W)/2) / float64(job.Width),
@@ -809,20 +914,27 @@ func normalizeRGBA(img image.Image) image.Image {
 
 // cropImage copies box out of img, downscaled so its long side is at most
 // maxPx (0 = no limit).
+// Parts of box outside the image are mirrored (see tiles.Crop).
 func cropImage(img image.Image, box tiles.Box, maxPx int) image.Image {
-	o := img.Bounds().Min
-	src := image.Rect(box.X, box.Y, box.X1(), box.Y1()).Add(o)
+	b := img.Bounds()
 	w, h := box.W, box.H
 	if maxPx > 0 && max(w, h) > maxPx {
 		w, h = fitLong(w, h, maxPx)
 	}
-	dst := image.NewRGBA(image.Rect(0, 0, w, h))
-	if w == box.W && h == box.H {
-		draw.Draw(dst, dst.Bounds(), img, src.Min, draw.Src)
-	} else {
-		draw.CatmullRom.Scale(dst, dst.Bounds(), img, src, draw.Src, nil)
+	if box.X >= 0 && box.Y >= 0 && box.X1() <= b.Dx() && box.Y1() <= b.Dy() {
+		src := image.Rect(box.X, box.Y, box.X1(), box.Y1()).Add(b.Min)
+		if w == box.W && h == box.H {
+			dst := image.NewRGBA(image.Rect(0, 0, w, h))
+			draw.Draw(dst, dst.Bounds(), img, src.Min, draw.Src)
+			return dst
+		}
+		return tiles.Resize(img, src, w, h)
 	}
-	return dst
+	c := tiles.Crop(img, box)
+	if w == box.W && h == box.H {
+		return c
+	}
+	return tiles.Resize(c, c.Rect, w, h)
 }
 
 func encodePNG(img image.Image) ([]byte, error) {

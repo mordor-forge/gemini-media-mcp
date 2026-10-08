@@ -42,8 +42,8 @@ func TestGridCoversImageWithSupportedRatios(t *testing.T) {
 			if !b.contains(tl.Core) {
 				t.Fatalf("%dx%d tile %s: box %+v misses core %+v", w, h, tl.Label, b, tl.Core)
 			}
-			if tl.Stretched {
-				t.Fatalf("%dx%d tile %s: no supported ratio fit", w, h, tl.Label)
+			if tl.Outside {
+				t.Fatalf("%dx%d tile %s: extends past the image", w, h, tl.Label)
 			}
 			// Within a pixel of the named ratio.
 			want := ratioOf(t, tl.AspectRatio)
@@ -78,16 +78,17 @@ func TestSnapShrinksWhenGrowingCannotFit(t *testing.T) {
 		t.Fatal(err)
 	}
 	tl := ts[0]
-	if tl.Stretched || tl.AspectRatio != "16:9" || tl.Box.H != 1000 || !tl.Box.contains(tl.Core) {
+	if tl.Outside || tl.AspectRatio != "16:9" || tl.Box.H != 1000 || !tl.Box.contains(tl.Core) {
 		t.Fatalf("tile = %+v", tl)
 	}
-	// When even shrinking cannot keep the region, the tile is marked stretched.
+	// When even shrinking cannot keep the region, the tile grows past the
+	// border with the least added area: 16:9 adds 63 rows above and below.
 	ts, _ = Regions(2000, 1000, []Region{{X: 0, Y: 0, W: 1, H: 1}}, 0.2, nb2Ratios)
-	if !ts[0].Stretched || ts[0].Box != (Box{0, 0, 2000, 1000}) || ts[0].AspectRatio != "16:9" {
+	if !ts[0].Outside || ts[0].Box != (Box{0, -62, 2000, 1125}) || ts[0].AspectRatio != "16:9" {
 		t.Fatalf("tile = %+v", ts[0])
 	}
-	if _, err := Grid(2000, 1000, 1, 0.2, nb2Ratios); err == nil {
-		t.Fatal("a 1x1 grid should be refused")
+	if ts, err := Grid(2000, 1000, 1, 0.2, nb2Ratios); err != nil || ts[0].Box != (Box{0, -62, 2000, 1125}) {
+		t.Fatalf("1x1 grid = %+v %v", ts, err)
 	}
 }
 
@@ -360,5 +361,56 @@ func TestRegionPaintsOverBaseWithFeather(t *testing.T) {
 	}
 	if d := meanAbsDiff(c.Img, before, image.Rect(tl.Box.X+30, tl.Box.Y+30, tl.Box.X1()-30, tl.Box.Y1()-30)); d > 4 {
 		t.Fatalf("region interior differs by %.2f after color matching", d)
+	}
+}
+
+func TestCropMirrorsOutsideTheImage(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 4, 2))
+	for x := range 4 {
+		img.SetRGBA(x, 0, color.RGBA{uint8(10 * x), 0, 0, 255})
+		img.SetRGBA(x, 1, color.RGBA{uint8(10 * x), 100, 0, 255})
+	}
+	c := Crop(img, Box{X: -2, Y: -1, W: 8, H: 4})
+	// Columns -2,-1 mirror to 1,0; 4,5 mirror to 3,2. Row -1 mirrors to 0, row 2 to 1.
+	wantR := []uint8{10, 0, 0, 10, 20, 30, 30, 20}
+	for x, r := range wantR {
+		if got := c.RGBAAt(x, 0); got.R != r || got.G != 0 {
+			t.Fatalf("column %d row -1: %+v, want R %d G 0", x, got, r)
+		}
+	}
+	if got := c.RGBAAt(2, 3); got.G != 100 {
+		t.Fatalf("row 2 should mirror row 1: %+v", got)
+	}
+}
+
+func TestStitchSingleTileThatExtendsPastTheImage(t *testing.T) {
+	const k = 4
+	g := truth(1024, 512, 6) // 2:1 fits no ratio exactly
+	plan := scaled(g, 256, 128)
+	ts, err := Grid(256, 128, 1, 0.2, nb2Ratios)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tl := ts[0]
+	if !tl.Outside {
+		t.Fatalf("tile = %+v, want it to extend past the image", tl)
+	}
+	// What a model sees and returns: the mirrored crop, re-rendered larger.
+	src := Crop(g, Box{X: tl.Box.X * k, Y: tl.Box.Y * k, W: tl.Box.W * k, H: tl.Box.H * k})
+	tile := scaled(src, tl.Box.W*k*5/4, tl.Box.H*k*5/4)
+	a := Align(plan, tl.Box, tile, Options{})
+	if a.Status != Placed || a.Match < 0.9 {
+		t.Fatalf("align = %+v", a)
+	}
+	ps := []Placement{{Box: tl.Box, Align: a}}
+	Feathers(ps, 256, 128, 0.2)
+	if ps[0].Border != [4]bool{true, true, true, true} {
+		t.Fatalf("borders = %v", ps[0].Border)
+	}
+	c := NewCanvas(plan, 1024, 512)
+	c.Reserve(ps)
+	c.Paint(c.Prepare(ps[0], tile))
+	if got, base := meanAbsDiff(c.Img, g, g.Bounds()), meanAbsDiff(scaled(plan, 1024, 512), g, g.Bounds()); got > base*0.7 {
+		t.Fatalf("single-tile error %.2f not clearly below interpolation %.2f", got, base)
 	}
 }

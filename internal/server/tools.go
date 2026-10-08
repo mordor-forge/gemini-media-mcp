@@ -44,8 +44,8 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:  "tile_image",
 		Title: "Tile image for upscaling",
-		Description: "Upscale past 4K, step 1: cut an image into overlapping crops shaped to the edit model's aspect ratios: a grid, or regions (faces, hands, text) for a refinement pass. Free and local; reports the cost of editing every tile. " +
-			"Step 2: edit_image each crop (image = crop, the tile's aspectRatio, imageSize 4K; referenceImages = [reference] on the first pass). Step 3: stitch_tiles. The model invents plausible detail; it does not recover the original's.",
+		Description: "Upscale step 1: cut an image into crops shaped to the edit model's aspect ratios. longEdge sets the target (1K-16K, default 8K); with grid and imageSize omitted it picks the cheapest plan that covers it (one tile up to about 4K, a 2x2-4x4 grid beyond). regions re-render faces or text in a later pass. Free and local; reports the edit cost. " +
+			"Step 2: edit_image each crop as the result says. Step 3: stitch_tiles. Detail is invented, not recovered.",
 		Annotations: withTitle(processing, "Tile image for upscaling"),
 	}, s.handleTileImage)
 
@@ -170,6 +170,9 @@ func (s *Server) handleTileImage(ctx context.Context, req *mcp.CallToolRequest, 
 		head += fmt.Sprintf(" At %s the tiles carry about %d px of model detail along the long edge.", res.ImageSize, res.NativeLongEdge)
 	}
 	lines := []string{head}
+	if res.PlanNote != "" {
+		lines = append(lines, "Plan: "+res.PlanNote+".")
+	}
 	if res.Reference != nil {
 		lines = append(lines, "Reference for every edit: "+res.Reference.URI)
 	} else {

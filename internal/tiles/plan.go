@@ -68,9 +68,10 @@ type Tile struct {
 	// AspectRatio is the supported ratio the crop was snapped to; request it
 	// from the editing model so the tile comes back as a scaled crop.
 	AspectRatio string `json:"aspectRatio"`
-	// Stretched is set when no supported ratio fit; the returned tile is
-	// stretched slightly to the box.
-	Stretched bool `json:"stretched,omitempty"`
+	// Outside is set when the crop extends past the image (no supported
+	// ratio fits inside it): the outside is filled by mirroring the image
+	// and discarded when stitching.
+	Outside bool `json:"outside,omitempty"`
 }
 
 // Region is a requested area in fractions (0-1) of the image.
@@ -84,10 +85,11 @@ const MinTilePixels = 16
 
 // Grid plans an n x n grid over a w x h image. Each cell is padded by padding
 // (a fraction of the cell size) on every side that is not on the image
-// border, then grown to the nearest supported aspect ratio.
+// border, then grown to the nearest supported aspect ratio. A 1 x 1 grid is
+// the whole image as one tile.
 func Grid(w, h, n int, padding float64, ratios []Ratio) ([]Tile, error) {
-	if n < 2 {
-		return nil, fmt.Errorf("grid must be at least 2 (a single tile is a plain edit_image call)")
+	if n < 1 {
+		return nil, fmt.Errorf("grid must be at least 1")
 	}
 	if w/n < MinTilePixels || h/n < MinTilePixels {
 		return nil, fmt.Errorf("a %dx%d image is too small for a %dx%d grid", w, h, n, n)
@@ -147,17 +149,19 @@ func pad(core Box, padding float64, w, h int) Box {
 }
 
 func plan(core, padded Box, w, h int, ratios []Ratio) Tile {
-	box, name, ok := snap(padded, core, w, h, ratios)
-	return Tile{Box: box, Core: core, AspectRatio: name, Stretched: !ok}
+	box, name := snap(padded, core, w, h, ratios)
+	img := Box{W: w, H: h}
+	return Tile{Box: box, Core: core, AspectRatio: name, Outside: !img.contains(box)}
 }
 
 // snap returns a box containing core with one of the supported ratios. It
-// prefers growing the padded box (least added area), then shrinking it while
-// keeping core covered, and as a last resort keeps the padded box and reports
-// the nearest ratio with ok=false.
-func snap(p, core Box, w, h int, ratios []Ratio) (Box, string, bool) {
+// prefers growing the padded box inside the image (least added area), then
+// shrinking it while keeping core covered, and as a last resort grows it past
+// the image border (the caller mirrors the image there). With no ratios it
+// returns the padded box unchanged.
+func snap(p, core Box, w, h int, ratios []Ratio) (Box, string) {
 	if len(ratios) == 0 {
-		return p, "", false
+		return p, ""
 	}
 	best, name, bestArea := Box{}, "", math.MaxInt
 	for _, r := range ratios {
@@ -176,7 +180,7 @@ func snap(p, core Box, w, h int, ratios []Ratio) (Box, string, bool) {
 		}
 	}
 	if name != "" {
-		return best, name, true
+		return best, name
 	}
 	bestArea = 0
 	for _, r := range ratios {
@@ -195,9 +199,23 @@ func snap(p, core Box, w, h int, ratios []Ratio) (Box, string, bool) {
 		}
 	}
 	if name != "" {
-		return best, name, true
+		return best, name
 	}
-	return p, nearest(p.ratio(), ratios), false
+	// Grow past the border, centered on the padded box.
+	bestArea = math.MaxInt
+	for _, r := range ratios {
+		bw, bh := p.W, p.H
+		if p.ratio() < r.Value {
+			bw = int(math.Round(float64(bh) * r.Value))
+		} else {
+			bh = int(math.Round(float64(bw) / r.Value))
+		}
+		bw, bh = max(bw, p.W), max(bh, p.H)
+		if a := bw * bh; a < bestArea {
+			best, name, bestArea = Box{X: p.X + (p.W-bw)/2, Y: p.Y + (p.H-bh)/2, W: bw, H: bh}, r.Name, a
+		}
+	}
+	return best, name
 }
 
 // place centers a bw x bh box on around and moves it inside bounds.
@@ -207,16 +225,6 @@ func place(around Box, bw, bh int, bounds Box) Box {
 	x = min(max(x, bounds.X), bounds.X1()-bw)
 	y = min(max(y, bounds.Y), bounds.Y1()-bh)
 	return Box{X: x, Y: y, W: bw, H: bh}
-}
-
-func nearest(v float64, ratios []Ratio) string {
-	best, d := "", math.Inf(1)
-	for _, r := range ratios {
-		if dd := math.Abs(math.Log(v / r.Value)); dd < d {
-			best, d = r.Name, dd
-		}
-	}
-	return best
 }
 
 func clampf(v, lo, hi float64) float64 { return math.Min(math.Max(v, lo), hi) }

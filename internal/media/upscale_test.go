@@ -119,7 +119,7 @@ func TestTileAndStitchTwoPasses(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: srcPath, LongEdge: 1024})
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: srcPath, LongEdge: 1024, Grid: 3, ImageSize: "4K"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestTileImageValidation(t *testing.T) {
 	for _, req := range []TileImageRequest{
 		{},
 		{Image: src, Grid: 5},
-		{Image: src, Grid: 1},
+		{Image: src, Grid: -1},
 		{Image: src, Padding: 0.7},
 		{Image: src, LongEdge: 20000},
 		{Image: src, LongEdge: 16384}, // 16384 x 12288 is far over the pixel cap
@@ -303,5 +303,42 @@ func TestTileImageWarnsAboutLargeRegions(t *testing.T) {
 	w := strings.Join(res.Warnings, " ")
 	if !strings.Contains(w, "region 1 (everything)") || strings.Contains(w, "region 2") {
 		t.Fatalf("warnings = %v", res.Warnings)
+	}
+}
+
+func TestTileImagePlansAutomatically(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	for _, c := range []struct {
+		w, h, long, grid int
+		size             string
+	}{
+		{256, 256, 1024, 1, "1K"},
+		{512, 384, 2048, 1, "2K"},
+		{432, 768, 4096, 1, "4K"},
+		{1024, 683, 8192, 2, "4K"},  // 2x2 of 4K tiles carries about 8,350 px
+		{1024, 683, 10000, 3, "4K"}, // beyond that, 3x3
+		{900, 500, 1024, 1, "1K"},   // 1.8:1 fits no ratio: the tile extends past the image
+	} {
+		img := image.NewRGBA(image.Rect(0, 0, c.w, c.h))
+		for i := range img.Pix {
+			img.Pix[i] = uint8(i * 13)
+		}
+		src := filepath.Join(t.TempDir(), "in.png")
+		if err := os.WriteFile(src, encode(t, img), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, LongEdge: c.long})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.Grid != c.grid || res.ImageSize != c.size || len(res.Tiles) != c.grid*c.grid || res.PlanNote == "" || res.NativeLongEdge < c.long*97/100 {
+			t.Errorf("%dx%d to %d: grid %d size %s, %d tiles, native %d, note %q", c.w, c.h, c.long, res.Grid, res.ImageSize, len(res.Tiles), res.NativeLongEdge, res.PlanNote)
+		}
+		if c.w == 900 {
+			tl := res.Tiles[0]
+			if !tl.Outside || tl.Box.Y >= 0 || tl.Crop.Width != tl.Box.W || tl.Crop.Height != tl.Box.H {
+				t.Errorf("900x500 tile = %+v", tl)
+			}
+		}
 	}
 }

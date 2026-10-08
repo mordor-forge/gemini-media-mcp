@@ -147,3 +147,40 @@ func to8(v float32) uint8 {
 	}
 	return uint8(v + 0.5)
 }
+
+// Crop copies box out of img. Parts of box outside the image are filled by
+// mirroring the image across its border (see Tile.Outside).
+func Crop(img image.Image, b Box) *image.RGBA {
+	src := asRGBA(img, img.Bounds())
+	w, h := src.Rect.Dx(), src.Rect.Dy()
+	dst := image.NewRGBA(image.Rect(0, 0, b.W, b.H))
+	for y := range b.H {
+		srow := src.Pix[mirror(b.Y+y, h)*src.Stride:]
+		drow := dst.Pix[y*dst.Stride:]
+		if b.X >= 0 && b.X1() <= w {
+			copy(drow[:4*b.W], srow[4*b.X:4*b.X1()])
+			continue
+		}
+		for x := range b.W {
+			sx := mirror(b.X+x, w)
+			copy(drow[4*x:4*x+4], srow[4*sx:4*sx+4])
+		}
+	}
+	return dst
+}
+
+// mirror reflects index i into [0, n).
+func mirror(i, n int) int {
+	if n <= 1 {
+		return 0
+	}
+	p := 2 * n
+	i %= p
+	if i < 0 {
+		i += p
+	}
+	if i >= n {
+		i = p - 1 - i
+	}
+	return i
+}

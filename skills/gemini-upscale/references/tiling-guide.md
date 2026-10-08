@@ -12,6 +12,7 @@ How `tile_image` and `stitch_tiles` work, how to pick settings, and a complete w
 
 ## How the tiles are cut
 
+- **Single tile (targets up to about 4K):** the whole image, grown to the nearest supported ratio. When no ratio fits inside the image, the crop extends past the border; that part is filled by mirroring the image and is discarded when stitching.
 - **Grid (pass 1):**
   - `grid: 3` splits the image into 3 x 3 cells.
   - Each cell is padded by `padding` (20% of the cell) on every side that is not on the image border.
@@ -27,7 +28,8 @@ Keep the tile's `aspectRatio` in the `edit_image` call. A wrong ratio is the mos
 
 | Situation | Setting |
 |-----------|---------|
-| Normal photo to 8K | `grid: 3`, `padding: 0.2`, `longEdge: 8192` (defaults) |
+| Any target | Omit `grid` and `imageSize`: `tile_image` picks the cheapest plan that covers `longEdge` and explains it in `planNote` |
+| Normal photo to 8K | Usually 2x2 or 3x3 tiles at 4K, depending on the shape |
 | Output beyond ~9K, or a panorama | `grid: 4` (16 tiles, about $2 per pass on nb2) |
 | Very small source (under ~600 px) | Consider `longEdge: 4096`. Nearly all detail will be invented, so say so. |
 | Busy scene with many small subjects | `grid: 4`: smaller tiles keep subjects coherent |

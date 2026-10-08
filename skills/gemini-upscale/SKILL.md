@@ -1,6 +1,6 @@
 ---
 name: gemini-upscale
-description: Upscales photos past the 4K limit of a single edit (8K by default) with the gemini-media MCP server. It cuts the image into overlapping crops, re-renders each at 4K with Nano Banana 2.1 using the whole photo as context, aligns and blends them into one large PNG, then optionally re-renders a few regions to fix defects such as mismatched eyes. Use it when the user wants to upscale, enlarge or add detail to a photo for print, wallpapers or large screens, even if they never mention Gemini. Limits - it invents plausible detail rather than recovering the original, so faces, eyes, small text and textures can change; it is unsuitable for forensic, archival, evidence or product-label work; a run costs about $1.10-1.90 on nb2 at 8K and takes a few minutes.
+description: Upscales photos and images to a target size from 1K up to 8K (the default) and beyond with the gemini-media MCP server. It plans the cheapest set of crops that covers the target (one tile up to about 4K, a grid of 4K tiles beyond), re-renders each with Nano Banana 2.1 using the whole photo as context, aligns and blends them into one large PNG, then optionally re-renders a few regions to fix defects such as mismatched eyes. Use it when the user wants to upscale, enlarge or add detail to a photo for print, wallpapers or large screens, even if they never mention Gemini. Limits - it invents plausible detail rather than recovering the original, so faces, eyes, small text and textures can change; it is unsuitable for forensic, archival, evidence or product-label work; a run costs about $0.04 at 1K to $0.50-1.20 at 8K on nb2.
 license: Apache-2.0
 compatibility: Requires the gemini-media MCP server v1.1 or later (tile_image and stitch_tiles tools) with a Gemini API key or Vertex AI project.
 metadata:
@@ -9,9 +9,14 @@ metadata:
   mcp-server: gemini-media
 ---
 
-# Gemini Upscale (tiled, past 4K)
+# Gemini Upscale (any size, tiled past 4K)
 
-A single `edit_image` call tops out at 4K. This skill goes further. It cuts the photo into overlapping tiles, has the model re-render each tile at 4K with the full photo as context, and stitches the tiles into one 8K image. That single pass already fills every pixel of an 8K output with model-rendered detail. A second pass re-renders a few regions, and only to fix visible defects.
+This skill takes an image to a target long edge, from 1K up to 8K or beyond:
+
+- **Up to about 4K:** `tile_image` plans a single tile, re-rendered at 1K, 2K or 4K. `stitch_tiles` still checks the framing, matches color and returns the exact target size.
+- **Beyond 4K:** the image is cut into overlapping tiles, each re-rendered at 4K with the full photo as context, and the tiles are stitched into one image.
+
+That first pass already fills every output pixel with model-rendered detail. A second pass re-renders a few regions, and only to fix visible defects.
 
 **What it is and isn't.** This is generative enhancement. The model draws plausible pores, hair strands, fabric weave and foliage that were never in the file. Expect a sharper, more detailed image that is not a faithful record:
 
@@ -22,8 +27,8 @@ Say this plainly to the user. Refuse or warn for evidence, forensics, archival r
 
 ## Quick start
 
-1. **Choices.** If the user has not said, ask once: "Output 8K (8192 px long edge) or another size?" Default to `nb2` (Nano Banana 2.1). `pro` costs about twice as much per tile.
-2. **Plan pass 1.** Call `gemini-media:tile_image` with `image` (the photo) and `longEdge` if not 8192. The result lists the tiles, a `reference` image (first pass only), the `job`, and the cost of editing every tile.
+1. **Choices.** If the user has not said, ask once: "What size: 1K, 2K, 4K or 8K (long edge)?" A print or wallpaper usually wants 8K, a web or social image 2K. Default to `nb2` (Nano Banana 2.1). `pro` costs about twice as much per tile.
+2. **Plan pass 1.** Call `gemini-media:tile_image` with `image` (the photo) and `longEdge` (1024, 2048, 4096 or 8192; any value 1024-16384 works). Leave `grid` and `imageSize` out: the tool picks the cheapest plan that covers the target and explains it in `planNote`. The result lists the tiles, a `reference` image (first pass only), the `job`, and the cost of editing every tile.
 3. **Budget.** Estimate the whole run before spending anything:
    - pass 1 costs what `tile_image` reports;
    - allow one or two retries and an optional fix pass of 1-4 regions, each at the same per-tile price.
@@ -33,7 +38,7 @@ Say this plainly to the user. Refuse or warn for evidence, forensics, archival r
    - `image`: the tile's `crop.uri`;
    - `referenceImages`: `[reference.uri]` on the first pass only;
    - `aspectRatio`: the tile's `aspectRatio`;
-   - `imageSize`: the plan's `imageSize` (4K);
+   - `imageSize`: the plan's `imageSize` (1K, 2K or 4K);
    - `model`: the plan's `model`;
    - `prompt`: the tile prompt below (the refinement prompt on later passes).
 5. **Stitch.** Call `gemini-media:stitch_tiles` with the `job` and `tiles: [{tile, image: <edit result uri>}, ...]`. Read the report:
@@ -138,12 +143,14 @@ Use `details` to ask for 100% crops anywhere else. At most 2 targeted retries pe
 
 - `tile_image` returns the cost of editing every tile once. Regions in a fix pass cost the same per tile. Example on nb2 at 4K, about $0.12 per tile:
 
-  | Run at 8K | Total |
-  |-----------|-------|
-  | Pass 1 (9 tiles) with one or two retries | about $1.10-1.40 |
-  | Optional fix pass, 1-4 regions | about $0.12-0.50 more |
+  | Target | Typical plan | Pass 1 |
+  |--------|--------------|--------|
+  | 1K | 1 tile at 1K | about $0.04 |
+  | 2K | 1 tile at 2K | about $0.05 |
+  | 4K | 1 tile at 4K | about $0.12 |
+  | 8K | 2x2 or 3x3 tiles at 4K | about $0.50-1.12 |
 
-  `pro` is about twice that, and `grid: 4` (16 tiles) about $2 for pass 1.
+  Allow one or two retries, plus about $0.12 per region if a fix pass is needed. `pro` is about twice that.
 - Tell the user the total before the first edit. One approval covers the run. If an `edit_image` call still fails with `[confirmation]`, retry it with `approvedCostUsd` set to that call's quoted amount; the run approval covers it. Never set `approvedCostUsd` without the user's approval of the run.
 - `[budget]` means a cap was hit mid-run. Stop and report how many tiles are done. The job file and finished edits stay on disk: once the budget allows, edit the remaining tiles and stitch with all of them.
 - Do not "test" on a few tiles and then redo them all. Tiles are independent, so every finished tile counts.

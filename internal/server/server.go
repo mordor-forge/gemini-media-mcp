@@ -24,7 +24,7 @@ Workflow tips:
 - Chain outputs: pass a previous result's uri (or path) as image/referenceImages/images input.
 - Video is asynchronous: generate_video, extend_video and edit_video return a jobId; call get_video (waitSeconds ~45) until state is completed. Veo takes 1-3 minutes, Omni 1-5.
 - edit_video changes a finished clip or a short video file from an instruction (model omni).
-- Upscaling past 4K: tile_image cuts crops, edit_image re-renders each at 4K, stitch_tiles blends them (8K by default).
+- Upscaling (any target from 1K to 8K and beyond): tile_image plans the crops, edit_image re-renders each, stitch_tiles blends them.
 - Every call costs money. Results report cost; estimate_cost compares options before expensive calls (4K images, 1080p/4k or standard-tier video). If a call is rejected for confirmation, ask the user, then retry with approvedCostUsd.
 - list_models shows current models, aliases, supported parameters and prices; retired models are redirected automatically with a warning.`
 

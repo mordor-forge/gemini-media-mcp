@@ -76,7 +76,7 @@ To run it in Docker instead: `docker run -i --rm --user "$(id -u):$(id -g)" -e G
 |---|---|
 | `generate_image` | Text-to-image with up to 14 reference images, 1K–4K, many aspect ratios, 1–4 variations, optional Google Search grounding |
 | `edit_image` | Change an existing image (add/remove/restyle/relight/outpaint) while keeping the rest |
-| `tile_image` | Cut an image into overlapping crops shaped to the edit model's aspect ratios: a grid, or regions such as faces. Step 1 of an upscale past 4K. Free and local |
+| `tile_image` | Step 1 of an upscale to any target size (1K–16K): plan the cheapest crops that cover it, shaped to the edit model's aspect ratios (one tile up to about 4K, a grid beyond, or regions such as faces). Free and local |
 | `stitch_tiles` | Align the edited tiles with the image, match their color, blend the overlaps and save one large PNG (8K by default). Free and local |
 | `generate_video` | Clip with native audio from text, a first frame, first+last frames, or reference images: Veo (4–8 s, up to 3 references) or Gemini Omni Flash (`omni`: 3–10 s, 360p drafts to 4K, up to 10 references). Returns a `jobId` |
 | `get_video` | Wait for a job (long-poll, default 45 s); downloads the video when done. Safe to repeat |
@@ -102,7 +102,7 @@ The [`skills/`](skills) directory contains [Agent Skills](https://agentskills.io
 | `gemini-speech` | Voiceovers, narration, two-speaker dialogue, voice and style selection |
 | `gemini-music` | Clips and full songs with structure, lyrics and tempo |
 | `gemini-media-production` | Multi-asset projects (storyboard → keyframes → video → voiceover → music → ffmpeg assembly) with a budget plan |
-| `gemini-upscale` | Upscaling photos past 4K (8K by default): one tile at a time with Nano Banana 2.1, then stitched, with an optional fix pass for defects such as mismatched eyes. About $1.10–1.90 per photo at 8K. It invents plausible detail rather than recovering it, so it is not for forensic or archival use |
+| `gemini-upscale` | Upscaling photos to 1K, 2K, 4K or 8K: one tile up to 4K, a grid of 4K tiles stitched together beyond that, with an optional fix pass for defects such as mismatched eyes. About $0.04 at 1K to $0.50–1.20 at 8K. It invents plausible detail rather than recovering it, so it is not for forensic or archival use |
 
 Plugin installs (Claude Code, Codex, Gemini CLI, VS Code) include the skills. To install them in any Agent Skills–compatible agent, run `npx skills add mordor-forge/gemini-media-mcp`, or copy the folders into `.agents/skills/` or `~/.claude/skills/`.
 
