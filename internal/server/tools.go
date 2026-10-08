@@ -19,6 +19,8 @@ var (
 	polling = &mcp.ToolAnnotations{DestructiveHint: boolPtr(false), IdempotentHint: true, OpenWorldHint: boolPtr(true)}
 	// local: read-only, no external calls.
 	local = &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: boolPtr(false)}
+	// processing: writes new files from local image processing; free, no external calls.
+	processing = &mcp.ToolAnnotations{DestructiveHint: boolPtr(false), OpenWorldHint: boolPtr(false)}
 )
 
 func (s *Server) registerTools() {
@@ -38,6 +40,22 @@ func (s *Server) registerTools() {
 			"Accepts extra reference images to insert or match. Say what must stay unchanged. Saves a new file; the original is kept.",
 		Annotations: withTitle(generative, "Edit image"),
 	}, s.handleEditImage)
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:  "tile_image",
+		Title: "Tile image for upscaling",
+		Description: "Upscale past 4K, step 1: cut an image into overlapping crops shaped to the edit model's aspect ratios: a grid, or regions (faces, hands, text) for a refinement pass. Free and local; reports the cost of editing every tile. " +
+			"Step 2: edit_image each crop (image = crop, referenceImages = [reference], the tile's aspectRatio, imageSize 4K). Step 3: stitch_tiles. The model invents plausible detail; it does not recover the original's.",
+		Annotations: withTitle(processing, "Tile image for upscaling"),
+	}, s.handleTileImage)
+
+	mcp.AddTool(s.mcp, &mcp.Tool{
+		Name:  "stitch_tiles",
+		Title: "Stitch upscaled tiles",
+		Description: "Upscale step 3: align each edited tile from tile_image with the image, match its broad color, blend the overlaps and save one large PNG (default 8192 px long edge). Free and local. " +
+			"Reports tiles it rejected (their area keeps the prior pixels) and returns a preview plus 100% crops of the seams to inspect.",
+		Annotations: withTitle(processing, "Stitch upscaled tiles"),
+	}, s.handleStitchTiles)
 
 	mcp.AddTool(s.mcp, &mcp.Tool{
 		Name:  "generate_video",
@@ -139,6 +157,69 @@ func (s *Server) handleEditImage(ctx context.Context, req *mcp.CallToolRequest, 
 		return nil, nil, toolError(err)
 	}
 	return imageToolResult("Edited", res), res, nil
+}
+
+func (s *Server) handleTileImage(ctx context.Context, req *mcp.CallToolRequest, in media.TileImageRequest) (*mcp.CallToolResult, *media.TileImageResult, error) {
+	res, err := s.svc.TileImage(withProgress(ctx, req), in)
+	if err != nil {
+		return nil, nil, toolError(err)
+	}
+	head := fmt.Sprintf("Cut the %dx%d image into %d tiles (pass %d, %s); stitch_tiles will produce %dx%d.",
+		res.Image.Width, res.Image.Height, len(res.Tiles), res.Pass, res.Mode, res.Output.Width, res.Output.Height)
+	if res.NativeLongEdge > 0 {
+		head += fmt.Sprintf(" At %s the tiles carry about %d px of model detail along the long edge.", res.ImageSize, res.NativeLongEdge)
+	}
+	lines := []string{head, "Reference for every edit: " + res.Reference.URI}
+	for _, t := range res.Tiles {
+		lines = append(lines, fmt.Sprintf("Tile %d %s (aspectRatio %s): %s", t.Tile, t.Label, t.AspectRatio, t.Crop.URI))
+	}
+	lines = append(lines,
+		fmt.Sprintf("Editing every tile once with %s at %s: ~$%.2f (%s).", res.Model, res.ImageSize, res.Cost.USD, res.Cost.Breakdown),
+		"Job: "+res.Job,
+		"Next: "+res.Next)
+	lines = append(lines, warningLines(res.Warnings)...)
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: joinLines(lines)}}}, res, nil
+}
+
+func (s *Server) handleStitchTiles(ctx context.Context, req *mcp.CallToolRequest, in media.StitchTilesRequest) (*mcp.CallToolResult, *media.StitchResult, error) {
+	res, err := s.svc.StitchTiles(withProgress(ctx, req), in)
+	if err != nil {
+		return nil, nil, toolError(err)
+	}
+	counts := map[string]int{}
+	for _, t := range res.Tiles {
+		counts[t.Status]++
+	}
+	lines := []string{
+		"Stitched image: " + fileLine(res.File),
+		fmt.Sprintf("Pass %d: %d placed, %d rejected, %d unedited.", res.Pass, counts["placed"], counts["rejected"], counts["unedited"]),
+	}
+	if res.NativeLongEdge > 0 {
+		lines = append(lines, fmt.Sprintf("About %d px of model-rendered detail along the long edge.", res.NativeLongEdge))
+	}
+	for _, t := range res.Tiles {
+		switch t.Status {
+		case "placed":
+			line := fmt.Sprintf("Tile %d %s: placed (match %.2f, shift %.1f,%.1f px, scale %.3f x %.3f)", t.Tile, t.Label, t.Match, t.ShiftX, t.ShiftY, t.ScaleX, t.ScaleY)
+			if t.Note != "" {
+				line += "; " + t.Note
+			}
+			lines = append(lines, line)
+		case "rejected":
+			lines = append(lines, fmt.Sprintf("Tile %d %s: rejected, prior pixels kept: %s", t.Tile, t.Label, t.Note))
+		}
+	}
+	content := []mcp.Content{}
+	if len(res.Previews) > 0 {
+		lines = append(lines, "Previews: the whole image first, then "+strings.Join(res.Details, "; ")+".")
+	}
+	lines = append(lines, "Next: "+res.Next)
+	lines = append(lines, warningLines(res.Warnings)...)
+	content = append(content, &mcp.TextContent{Text: joinLines(lines)}, resourceLink(res.File))
+	for _, p := range res.Previews {
+		content = append(content, &mcp.ImageContent{Data: p, MIMEType: "image/jpeg"})
+	}
+	return &mcp.CallToolResult{Content: content}, res, nil
 }
 
 func (s *Server) handleGenerateVideo(ctx context.Context, req *mcp.CallToolRequest, in media.VideoRequest) (*mcp.CallToolResult, *media.VideoJob, error) {

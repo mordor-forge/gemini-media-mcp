@@ -74,7 +74,7 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"edit_image", "edit_video", "estimate_cost", "extend_video", "generate_image", "generate_music", "generate_speech", "generate_video", "get_config", "get_usage", "get_video", "list_models"}
+	want := []string{"edit_image", "edit_video", "estimate_cost", "extend_video", "generate_image", "generate_music", "generate_speech", "generate_video", "get_config", "get_usage", "get_video", "list_models", "stitch_tiles", "tile_image"}
 	var got []string
 	for _, tool := range res.Tools {
 		got = append(got, tool.Name)
@@ -271,7 +271,7 @@ func TestHTTPHandler(t *testing.T) {
 	}
 	defer func() { _ = cs.Close() }()
 	tools, err := cs.ListTools(context.Background(), nil)
-	if err != nil || len(tools.Tools) != 12 {
+	if err != nil || len(tools.Tools) != 14 {
 		t.Fatalf("tools over HTTP: %v %v", err, tools)
 	}
 	out, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "generate_image", Arguments: map[string]any{"prompt": "x"}})

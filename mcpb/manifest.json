@@ -52,6 +52,14 @@
       "description": "Change an existing image with an instruction while keeping the rest"
     },
     {
+      "name": "tile_image",
+      "description": "Cut an image into overlapping crops for upscaling past 4K (free, local)"
+    },
+    {
+      "name": "stitch_tiles",
+      "description": "Align and blend edited tiles into one large PNG, 8K by default (free, local)"
+    },
+    {
       "name": "generate_video",
       "description": "Start a Veo or Gemini Omni video clip with native audio (asynchronous)"
     },

@@ -1,0 +1,290 @@
+package tiles
+
+import (
+	"image"
+	"math"
+	"runtime"
+	"sync"
+)
+
+// Placement is an aligned tile ready to paint.
+type Placement struct {
+	Box   Box
+	Align Alignment
+	// Feather is the blend width of each side (left, top, right, bottom) in
+	// plan-image pixels; 0 means a hard edge.
+	Feather [4]float64
+	// Border marks sides on the image border: the tile is extended to the
+	// canvas edge there instead of blending into the base.
+	Border [4]bool
+}
+
+// Feathers sets Feather and Border for each placement. frac is the blend
+// width as a fraction of the tile's shorter side; next to a neighboring tile
+// it is limited to half the overlap, so that across every overlap at least
+// one tile is fully opaque and the base never shows through a seam.
+func Feathers(ps []Placement, w, h int, frac float64) {
+	for i := range ps {
+		b := ps[i].Box
+		f := frac * float64(min(b.W, b.H))
+		ps[i].Border = [4]bool{b.X <= 0, b.Y <= 0, b.X1() >= w, b.Y1() >= h}
+		for side := range 4 {
+			if ps[i].Border[side] {
+				ps[i].Feather[side] = 0
+				continue
+			}
+			ps[i].Feather[side] = f
+			if d, ok := neighborDepth(ps, i, side); ok {
+				ps[i].Feather[side] = math.Min(f, d/2)
+			}
+		}
+	}
+}
+
+// neighborDepth is how far the closest-fitting neighbor overlaps tile i
+// across side (left, top, right, bottom). Only neighbors that cover at least
+// a quarter of that side count.
+func neighborDepth(ps []Placement, i, side int) (float64, bool) {
+	b := ps[i].Box
+	depth, found := math.Inf(1), false
+	for j := range ps {
+		if j == i {
+			continue
+		}
+		o := ps[j].Box
+		var d, along, length int
+		switch side {
+		case 0: // left: o extends past b's left edge into b
+			if o.X >= b.X || o.X1() <= b.X {
+				continue
+			}
+			d, along, length = min(o.X1(), b.X1())-b.X, overlap(o.Y, o.Y1(), b.Y, b.Y1()), b.H
+		case 1:
+			if o.Y >= b.Y || o.Y1() <= b.Y {
+				continue
+			}
+			d, along, length = min(o.Y1(), b.Y1())-b.Y, overlap(o.X, o.X1(), b.X, b.X1()), b.W
+		case 2:
+			if o.X1() <= b.X1() || o.X >= b.X1() {
+				continue
+			}
+			d, along, length = b.X1()-max(o.X, b.X), overlap(o.Y, o.Y1(), b.Y, b.Y1()), b.H
+		case 3:
+			if o.Y1() <= b.Y1() || o.Y >= b.Y1() {
+				continue
+			}
+			d, along, length = b.Y1()-max(o.Y, b.Y), overlap(o.X, o.X1(), b.X, b.X1()), b.W
+		}
+		if 4*along < length {
+			continue
+		}
+		depth, found = math.Min(depth, float64(d)), true
+	}
+	return depth, found
+}
+
+func overlap(a0, a1, b0, b1 int) int { return max(0, min(a1, b1)-max(a0, b0)) }
+
+// weightScale is the fixed-point unit of the weight buffer.
+const weightScale = 1024
+
+// Canvas is the output image being assembled. Tiles are blended as a
+// weighted average; the base keeps whatever weight the tiles leave
+// (1 - their total, floored at 0), so it shows only where no tile reaches.
+type Canvas struct {
+	Img    *image.RGBA
+	w, h   int
+	sx, sy float64 // canvas pixels per plan pixel
+	wt     []uint16
+}
+
+// NewCanvas scales base (the plan image) to w x h. When base is already an
+// *image.RGBA of that size it is used in place, so finish aligning against
+// it before painting.
+func NewCanvas(base image.Image, w, h int) *Canvas {
+	pb := base.Bounds()
+	c := &Canvas{w: w, h: h, sx: float64(w) / float64(pb.Dx()), sy: float64(h) / float64(pb.Dy())}
+	if rgba, ok := base.(*image.RGBA); ok && pb == image.Rect(0, 0, w, h) && rgba.Stride == 4*w {
+		c.Img = rgba
+	} else {
+		c.Img = Resize(base, pb, w, h)
+	}
+	return c
+}
+
+// footprint is a placement's extent on the canvas.
+type footprint struct {
+	x0, y0, x1, y1 float64 // where the tile maps (canvas px)
+	px0, py0       int     // painted area (tile extended to borders), exclusive max:
+	px1, py1       int
+	fl, ft, fr, fb float64 // feathers in canvas px
+}
+
+func (c *Canvas) footprint(p Placement) footprint {
+	b, a := p.Box, p.Align
+	cx := float64(b.X) + float64(b.W)/2 + a.ShiftX
+	cy := float64(b.Y) + float64(b.H)/2 + a.ShiftY
+	hw, hh := a.ScaleX*float64(b.W)/2, a.ScaleY*float64(b.H)/2
+	f := footprint{
+		x0: (cx - hw) * c.sx, x1: (cx + hw) * c.sx, y0: (cy - hh) * c.sy, y1: (cy + hh) * c.sy,
+		fl: p.Feather[0] * c.sx, ft: p.Feather[1] * c.sy, fr: p.Feather[2] * c.sx, fb: p.Feather[3] * c.sy,
+	}
+	f.px0, f.py0 = int(math.Floor(f.x0)), int(math.Floor(f.y0))
+	f.px1, f.py1 = int(math.Ceil(f.x1)), int(math.Ceil(f.y1))
+	if p.Border[0] {
+		f.px0 = 0
+	}
+	if p.Border[1] {
+		f.py0 = 0
+	}
+	if p.Border[2] {
+		f.px1 = c.w
+	}
+	if p.Border[3] {
+		f.py1 = c.h
+	}
+	f.px0, f.py0 = max(f.px0, 0), max(f.py0, 0)
+	f.px1, f.py1 = min(f.px1, c.w), min(f.py1, c.h)
+	return f
+}
+
+// weight is the blend weight (0-1) of the placement at canvas pixel (x, y).
+func (f *footprint) weight(p *Placement, x, y int) float64 {
+	cx, cy := float64(x)+0.5, float64(y)+0.5
+	return side(p.Border[0], cx-f.x0, f.fl) * side(p.Border[1], cy-f.y0, f.ft) *
+		side(p.Border[2], f.x1-cx, f.fr) * side(p.Border[3], f.y1-cy, f.fb)
+}
+
+func side(border bool, dist, feather float64) float64 {
+	switch {
+	case border:
+		return 1
+	case dist <= 0:
+		return 0
+	case feather <= 0 || dist >= feather:
+		return 1
+	}
+	t := dist / feather
+	return t * t * (3 - 2*t)
+}
+
+// Reserve records the weights of every placement that will be painted, so
+// the base gets only the weight the tiles leave. Call it once, before Paint.
+func (c *Canvas) Reserve(ps []Placement) {
+	c.wt = make([]uint16, c.w*c.h)
+	for i := range ps {
+		p := &ps[i]
+		f := c.footprint(*p)
+		rows(f.py0, f.py1, func(y int) {
+			for x := f.px0; x < f.px1; x++ {
+				i := y*c.w + x
+				c.wt[i] = uint16(min(uint32(c.wt[i])+uint32(math.Round(f.weight(p, x, y)*weightScale)), math.MaxUint16))
+			}
+		})
+	}
+	for i, a := range c.wt {
+		c.wt[i] = uint16(max(weightScale-int(a), 0))
+	}
+}
+
+// Prepared is a tile resampled to its place on the canvas. Preparing reads
+// nothing from the canvas, so the next tile can be prepared while another
+// is painted.
+type Prepared struct {
+	p   Placement
+	f   footprint
+	src *image.RGBA
+}
+
+// Prepare resamples tile (the model's output for p) to its footprint.
+func (c *Canvas) Prepare(p Placement, tile image.Image) *Prepared {
+	f := c.footprint(p)
+	sw := max(int(math.Round(f.x1-f.x0)), 1)
+	sh := max(int(math.Round(f.y1-f.y0)), 1)
+	return &Prepared{p: p, f: f, src: Resize(tile, tile.Bounds(), sw, sh)}
+}
+
+// Paint blends a prepared tile into the canvas. Call Reserve first with
+// every placement that will be painted.
+func (c *Canvas) Paint(pp *Prepared) {
+	if c.wt == nil {
+		c.Reserve([]Placement{pp.p})
+	}
+	p, f, src := pp.p, pp.f, pp.src
+	sw, sh := src.Rect.Dx(), src.Rect.Dy()
+	kx, ky := float64(sw)/(f.x1-f.x0), float64(sh)/(f.y1-f.y0)
+	b := p.Box
+	rows(f.py0, f.py1, func(y int) {
+		v := (float64(y)+0.5-f.y0)*ky - 0.5
+		nv := ((float64(y)+0.5)/c.sy - float64(b.Y)) / float64(b.H)
+		for x := f.px0; x < f.px1; x++ {
+			q := uint32(math.Round(f.weight(&p, x, y) * weightScale))
+			if q == 0 {
+				continue
+			}
+			i := y*c.w + x
+			wn := uint32(c.wt[i]) + q
+			a := float32(q) / float32(wn)
+			c.wt[i] = uint16(min(wn, math.MaxUint16))
+			u := (float64(x)+0.5-f.x0)*kx - 0.5
+			px := sampleRGBA(src, u, v)
+			off := p.Align.Color.At(((float64(x)+0.5)/c.sx-float64(b.X))/float64(b.W), nv)
+			d := c.Img.Pix[4*i : 4*i+4]
+			for ch := range 3 {
+				t := min(max(px[ch]+off[ch], 0), 255)
+				d[ch] = uint8(math.Round(float64(float32(d[ch]) + (t-float32(d[ch]))*a)))
+			}
+			d[3] = uint8(math.Round(float64(float32(d[3]) + (px[3]-float32(d[3]))*a)))
+		}
+	})
+}
+
+// Finish releases the weight buffer and returns the assembled image.
+func (c *Canvas) Finish() *image.RGBA {
+	c.wt = nil
+	return c.Img
+}
+
+// sampleRGBA bilinearly samples img at pixel coordinates (u, v), clamping
+// to the edges.
+func sampleRGBA(img *image.RGBA, u, v float64) [4]float32 {
+	w, h := img.Rect.Dx(), img.Rect.Dy()
+	u = math.Min(math.Max(u, 0), float64(w-1))
+	v = math.Min(math.Max(v, 0), float64(h-1))
+	x0, y0 := int(u), int(v)
+	x1, y1 := min(x0+1, w-1), min(y0+1, h-1)
+	ax, ay := float32(u-float64(x0)), float32(v-float64(y0))
+	p00 := img.Pix[y0*img.Stride+4*x0:]
+	p10 := img.Pix[y0*img.Stride+4*x1:]
+	p01 := img.Pix[y1*img.Stride+4*x0:]
+	p11 := img.Pix[y1*img.Stride+4*x1:]
+	var out [4]float32
+	for ch := range 4 {
+		top := float32(p00[ch])*(1-ax) + float32(p10[ch])*ax
+		bot := float32(p01[ch])*(1-ax) + float32(p11[ch])*ax
+		out[ch] = top*(1-ay) + bot*ay
+	}
+	return out
+}
+
+// rows runs fn for each y in [y0, y1) across CPUs.
+func rows(y0, y1 int, fn func(y int)) {
+	n := y1 - y0
+	if n <= 0 {
+		return
+	}
+	workers := min(runtime.GOMAXPROCS(0), n)
+	var wg sync.WaitGroup
+	chunk := (n + workers - 1) / workers
+	for start := y0; start < y1; start += chunk {
+		end := min(start+chunk, y1)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for y := start; y < end; y++ {
+				fn(y)
+			}
+		}()
+	}
+	wg.Wait()
+}
