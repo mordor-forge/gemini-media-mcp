@@ -228,6 +228,9 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	if size != "" && imageSizePixels(size) == 0 {
 		return nil, apperr.Invalidf("tile_image cannot tell how many pixels imageSize %s has; omit imageSize to plan automatically, or use one of %s", size, strings.Join(sizes, ", "))
 	}
+	if size != "" && !stitchable(size) {
+		return nil, apperr.Invalidf("imageSize %s tiles (about %d megapixels) are larger than stitch_tiles accepts (%d); omit imageSize to plan automatically, or use one of %s", size, imageSizePixels(size)/1_000_000, maxTilePixels/1_000_000, strings.Join(sizes, ", "))
+	}
 	ratios := tiles.ParseRatios(m.Capabilities.AspectRatios)
 	if len(ratios) == 0 {
 		return nil, apperr.Invalidf("the catalog lists no aspect ratios for %s, so tiles cannot be shaped for it; pick nb2 or pro", m.ID)
@@ -946,15 +949,22 @@ func nativeLongEdge(ts []tiles.Tile, size string, pw, ph int) int {
 }
 
 // editSizes are the model's output sizes worth planning with: those whose
-// pixel count is known, above 512 (too small to add detail).
+// pixel count is known, above 512 (too small to add detail) and that
+// stitch_tiles can load.
 func editSizes(m *catalog.Model) []string {
 	var out []string
 	for _, s := range m.Capabilities.ImageSizes {
-		if imageSizePixels(s) > 512*512 {
+		if imageSizePixels(s) > 512*512 && stitchable(s) {
 			out = append(out, s)
 		}
 	}
 	return out
+}
+
+// stitchable reports whether tiles edited at size fit stitch_tiles' decode
+// limit, with room for the aspect ratios that come back slightly larger.
+func stitchable(size string) bool {
+	return imageSizePixels(size)*5/4 <= maxTilePixels
 }
 
 // largestEditSize is the size in sizes with the most pixels.

@@ -30,10 +30,16 @@ func Feathers(ps []Placement, w, h int, frac float64) {
 		rs[i] = ps[i].extent()
 	}
 	for i := range ps {
-		b := ps[i].Box
+		b, r := ps[i].Box, rs[i]
 		f := frac * float64(min(b.W, b.H))
-		ps[i].Border = [4]bool{b.X <= 0, b.Y <= 0, b.X1() >= w, b.Y1() >= h}
+		// A tile cut against an edge of the image covers it out to that
+		// edge, unless alignment moved it inward by more than half a pixel:
+		// stretching it would smear its outer pixels, so the uncovered
+		// strip keeps the base, faded in over about its width.
+		atEdge := [4]bool{b.X <= 0, b.Y <= 0, b.X1() >= w, b.Y1() >= h}
+		gap := [4]float64{r.x0, r.y0, float64(w) - r.x1, float64(h) - r.y1}
 		for side := range 4 {
+			ps[i].Border[side] = atEdge[side] && gap[side] <= 0.5
 			if ps[i].Border[side] {
 				ps[i].Feather[side] = 0
 				continue
@@ -41,6 +47,8 @@ func Feathers(ps []Placement, w, h int, frac float64) {
 			ps[i].Feather[side] = f
 			if d, ok := neighborDepth(rs, i, side); ok {
 				ps[i].Feather[side] = math.Min(f, d/2)
+			} else if atEdge[side] {
+				ps[i].Feather[side] = math.Min(f, math.Max(gap[side], 1))
 			}
 		}
 	}

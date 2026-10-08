@@ -490,3 +490,36 @@ func TestPrepareResamplesOnlyWhatLandsOnTheCanvas(t *testing.T) {
 		}
 	}
 }
+
+// A tile cut against the image's edge but aligned inward is not stretched
+// out to the edge: the strip it no longer covers keeps the base.
+func TestBorderTileMovedInwardKeepsTheBase(t *testing.T) {
+	plan := scaled(truth(512, 384, 9), 128, 96)
+	box := Box{X: 0, Y: 0, W: 128, H: 96}
+	ps := []Placement{{Box: box, Align: Alignment{ScaleX: 1, ScaleY: 1, ShiftX: 6}}}
+	Feathers(ps, 128, 96, 0.2)
+	if ps[0].Border != [4]bool{false, true, true, true} || ps[0].Feather[0] != 6 {
+		t.Fatalf("border %v feather %v, want the left side open with a 6 px feather", ps[0].Border, ps[0].Feather)
+	}
+	red := image.NewRGBA(image.Rect(0, 0, 512, 384))
+	for i := 0; i < len(red.Pix); i += 4 {
+		red.Pix[i], red.Pix[i+3] = 255, 255
+	}
+	base := NewCanvas(plan, 512, 384)
+	c := NewCanvas(plan, 512, 384)
+	c.Reserve(ps)
+	c.Paint(c.Prepare(ps[0], red))
+	// 6 plan px is 24 output px: there, nothing but the base.
+	if d := meanAbsDiff(c.Img, base.Img, image.Rect(0, 0, 24, 384)); d != 0 {
+		t.Fatalf("the uncovered strip differs from the base by %.2f", d)
+	}
+	if px := c.Img.RGBAAt(300, 200); px != (color.RGBA{255, 0, 0, 255}) {
+		t.Fatalf("inside the tile: %v", px)
+	}
+	// Half a pixel or less still reaches the edge.
+	ps[0].Align.ShiftX = 0.4
+	Feathers(ps, 128, 96, 0.2)
+	if !ps[0].Border[0] {
+		t.Fatal("a 0.4 px shift should still cover the edge")
+	}
+}

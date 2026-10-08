@@ -584,10 +584,11 @@ func TestImageSizesComeFromTheCatalog(t *testing.T) {
 		}
 	}
 	m := &catalog.Model{Capabilities: catalog.Capabilities{ImageSizes: []string{"512", "1K", "8K", "4K", "HD"}}}
-	if got := editSizes(m); !slices.Equal(got, []string{"1K", "8K", "4K"}) {
+	// 8K tiles (67 MP) are more than stitch_tiles decodes.
+	if got := editSizes(m); !slices.Equal(got, []string{"1K", "4K"}) {
 		t.Fatalf("editSizes = %v", got)
 	}
-	if got := largestEditSize(editSizes(m)); got != "8K" {
+	if got := largestEditSize([]string{"1K", "6K", "2K"}); got != "6K" {
 		t.Fatalf("largestEditSize = %s", got)
 	}
 
@@ -595,7 +596,7 @@ func TestImageSizesComeFromTheCatalog(t *testing.T) {
 	// and automatic planning leaves it out.
 	e := newEnv(t, nil, spend.Budget{})
 	override := filepath.Join(t.TempDir(), "override.yaml")
-	if err := os.WriteFile(override, []byte("models:\n  - id: gemini-nano-banana-2.1\n    capabilities:\n      imageSizes: [\"1K\", \"2K\", \"4K\", \"HD\"]\n"), 0o600); err != nil {
+	if err := os.WriteFile(override, []byte("models:\n  - id: gemini-nano-banana-2.1\n    capabilities:\n      imageSizes: [\"1K\", \"2K\", \"4K\", \"8K\", \"HD\"]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	src, err := catalog.NewSource(override, nil, nil)
@@ -613,8 +614,11 @@ func TestImageSizesComeFromTheCatalog(t *testing.T) {
 	if _, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: img, Model: "nb2", ImageSize: "HD"}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "omit imageSize") {
 		t.Fatalf("unknown size: err = %v", err)
 	}
+	if _, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: img, Model: "nb2", ImageSize: "8K"}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "larger than stitch_tiles accepts") {
+		t.Fatalf("8K: err = %v", err)
+	}
 	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: img, Model: "nb2"})
-	if err != nil || res.ImageSize == "HD" {
+	if err != nil || res.ImageSize == "8K" || res.ImageSize == "HD" {
 		t.Fatalf("auto plan = %+v, %v", res, err)
 	}
 }
