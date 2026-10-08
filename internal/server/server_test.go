@@ -189,7 +189,12 @@ func TestVideoToolsRoundTrip(t *testing.T) {
 	if job.State != jobs.StateWorking || job.JobID == "" {
 		t.Fatalf("job = %+v", job)
 	}
-	res, err = cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "get_video", Arguments: map[string]any{"jobId": job.JobID, "waitSeconds": 0}})
+	// The default video model on the Gemini API is Omni, which answers in
+	// the background.
+	if job.Model != "gemini-omni-1.1-flash" {
+		t.Fatalf("default video model = %s", job.Model)
+	}
+	res, err = cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "get_video", Arguments: map[string]any{"jobId": job.JobID, "waitSeconds": 10}})
 	if err != nil || res.IsError {
 		t.Fatalf("get_video: %v %+v", err, res)
 	}

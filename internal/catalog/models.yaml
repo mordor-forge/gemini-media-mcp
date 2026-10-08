@@ -7,7 +7,7 @@
 #
 # Prices are USD list prices (paid tier, standard/on-demand) and are used for
 # estimates only. Authoritative spend lives in AI Studio / Cloud Billing.
-version: "2026-10-07"
+version: "2026-10-08"
 sources:
   - https://ai.google.dev/gemini-api/docs/models
   - https://ai.google.dev/gemini-api/docs/models/gemini-nano-banana-2.1
@@ -24,9 +24,16 @@ sources:
 
 defaults:
   image: gemini-nano-banana-2.1
-  video: veo-3.1-lite-generate-preview
+  video: gemini-omni-1.1-flash
   speech: gemini-3.8-flash-tts
   music: lyria-3-clip-preview
+
+# Per-backend defaults, for media types whose default above is not offered
+# on that backend. A default set in the server config applies everywhere.
+backendDefaults:
+  vertex:
+    video: veo-3.1-lite-generate-preview
+    speech: gemini-2.5-flash-preview-tts
 
 models:
   # ---------------------------------------------------------------- images
@@ -152,9 +159,10 @@ models:
     mediaType: image
     status: deprecated
     released: "2025-10-02"
-    shutdown: "2026-10-02"
+    shutdown: "2027-03-15"
+    backendShutdown: {gemini-api: "2026-10-02"}
     replacement: gemini-nano-banana-2.1
-    summary: Legacy first-generation model. Shuts down on the Gemini API on 2026-10-02 (Vertex AI on 2027-03-15).
+    summary: Legacy first-generation model. Shut down on the Gemini API on 2026-10-02; Vertex AI keeps it until 2027-03-15.
     backends: [gemini-api, vertex]
     vertexLocations: [global, us-central1]
     capabilities:
@@ -198,9 +206,9 @@ models:
     mediaType: video
     status: ga
     released: "2026-08-27"
-    summary: Generates, edits and extends clips with native audio. 3-10 s, 360p drafts to 4K, first/last frames, up to 10 reference images, conversational edits of earlier clips, extension to 40 s. Strong prompt adherence and readable text in video. About Veo Fast's price at 720p.
+    summary: Default video model on the Gemini API. Generates, edits and extends clips with native audio. 3-10 s, 360p drafts to 4K, first/last frames, up to 10 reference images, conversational edits of earlier clips, extension to 40 s. Strong prompt adherence and readable text in video. About Veo Fast's price at 720p.
     backends: [gemini-api]
-    capabilities:
+    capabilities: &omni
       aspectRatios: ["16:9", "9:16"]
       resolutions: ["360p", "720p", "1080p", "4k"]
       durations: [3, 4, 5, 6, 7, 8, 9, 10]
@@ -217,7 +225,7 @@ models:
         - when: {lastFrame: ["*"]}
           require: {image: ["*"]}
           message: lastFrame requires a first-frame image
-    pricing:
+    pricing: &omniPricing
       asOf: "2026-10-07"
       source: https://ai.google.dev/gemini-api/docs/pricing
       perSecond: {360p: 0.034, 720p: 0.1014, 1080p: 0.152, 4k: 0.304}
@@ -228,6 +236,21 @@ models:
       - 720p bills 5,792 video tokens per second ($0.10/s); 360p is about a third of that. The 1080p and 4K rates are third-party estimates (both are upscaled from 720p); costs are reconciled from the usage the API reports.
       - Vertex AI offers it as gemini-omni-1.1-flash-preview (global, Preview); this server calls it on the Gemini API only.
       - Editing or extending uploaded videos is unavailable in the EEA, Switzerland, the UK and some US states; input videos must be 10 seconds or shorter.
+      - Google's migration target for the Veo 3.1 previews, which leave the Gemini API on 2026-10-22.
+
+  - id: gemini-omni-flash-preview
+    title: Gemini Omni Flash (preview)
+    family: omni
+    mediaType: video
+    status: deprecated
+    shutdown: "2026-10-22"
+    replacement: gemini-omni-1.1-flash
+    summary: Preview of Gemini Omni, replaced by the GA gemini-omni-1.1-flash. Shuts down on the Gemini API on 2026-10-22.
+    backends: [gemini-api]
+    capabilities: *omni
+    pricing: *omniPricing
+    notes:
+      - Capabilities and prices are assumed to match gemini-omni-1.1-flash; the API rejects what the preview does not support.
 
   - id: veo-3.1-lite-generate-preview
     vertexId: veo-3.1-lite-generate-001
@@ -235,9 +258,11 @@ models:
     title: Veo 3.1 Lite
     family: veo
     mediaType: video
-    status: preview
+    status: ga
     released: "2026-04-02"
-    summary: Cheapest Veo for drafts and social clips; 720p/1080p, native audio. No 4K, reference images or extension.
+    backendShutdown: {gemini-api: "2026-10-22"}
+    fallback: gemini-omni-1.1-flash
+    summary: Default video model on Vertex AI (Gemini Enterprise Agent Platform). Cheapest Veo for drafts and social clips; 720p/1080p, native audio. No 4K, reference images or extension. Leaves the Gemini API on 2026-10-22.
     backends: [gemini-api, vertex]
     vertexLocations: [us-central1]
     capabilities: &veoLite
@@ -266,6 +291,7 @@ models:
       perSecondNoAudio: {720p: 0.03, 1080p: 0.05}
     notes:
       - seed and generateAudio are only accepted on Vertex AI.
+      - Google deprecated the Veo 3.1 previews on the Gemini API, effective 2026-10-22 (AI Studio notice, 2026-10-08). The GA -001 models stay on Gemini Enterprise Agent Platform (formerly Vertex AI), the vertex backend. On the Gemini API the server warns until then and uses gemini-omni-1.1-flash after.
 
   - id: veo-3.1-fast-generate-preview
     vertexId: veo-3.1-fast-generate-001
@@ -273,9 +299,11 @@ models:
     title: Veo 3.1 Fast
     family: veo
     mediaType: video
-    status: preview
+    status: ga
     released: "2025-10-15"
-    summary: Best value for production clips; up to 4K, reference images ("ingredients"), first/last frame and extension.
+    backendShutdown: {gemini-api: "2026-10-22"}
+    fallback: gemini-omni-1.1-flash
+    summary: Best-value Veo for production clips; up to 4K, reference images ("ingredients"), first/last frame and extension. Leaves the Gemini API on 2026-10-22; stays on Vertex AI (Gemini Enterprise Agent Platform).
     backends: [gemini-api, vertex]
     vertexLocations: [us-central1]
     capabilities: &veoFull
@@ -314,6 +342,7 @@ models:
     notes:
       - Extension adds 7s per step (up to 148s total), 720p only, and needs a Veo video generated in the last 2 days.
       - seed and generateAudio are only accepted on Vertex AI.
+      - Google deprecated the Veo 3.1 previews on the Gemini API, effective 2026-10-22 (AI Studio notice, 2026-10-08). The GA -001 models stay on Gemini Enterprise Agent Platform (formerly Vertex AI), the vertex backend. On the Gemini API the server warns until then and uses gemini-omni-1.1-flash after.
 
   - id: veo-3.1-generate-preview
     vertexId: veo-3.1-generate-001
@@ -321,9 +350,11 @@ models:
     title: Veo 3.1
     family: veo
     mediaType: video
-    status: preview
+    status: ga
     released: "2025-10-15"
-    summary: Highest-quality Veo for hero shots and final renders; same features as Fast at about 3-4x the price.
+    backendShutdown: {gemini-api: "2026-10-22"}
+    fallback: gemini-omni-1.1-flash
+    summary: Highest-quality Veo for hero shots and final renders; same features as Fast at about 3-4x the price. Leaves the Gemini API on 2026-10-22; stays on Vertex AI (Gemini Enterprise Agent Platform).
     backends: [gemini-api, vertex]
     vertexLocations: [us-central1]
     capabilities: *veoFull
@@ -332,6 +363,8 @@ models:
       source: https://ai.google.dev/gemini-api/docs/pricing
       perSecond: {720p: 0.40, 1080p: 0.40, 4k: 0.60}
       perSecondNoAudio: {720p: 0.20, 1080p: 0.20, 4k: 0.40}
+    notes:
+      - Google deprecated the Veo 3.1 previews on the Gemini API, effective 2026-10-22 (AI Studio notice, 2026-10-08). The GA -001 models stay on Gemini Enterprise Agent Platform (formerly Vertex AI), the vertex backend. On the Gemini API the server warns until then and uses gemini-omni-1.1-flash after.
 
   - id: veo-3.0-generate-001
     family: veo

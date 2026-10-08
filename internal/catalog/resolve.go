@@ -20,22 +20,23 @@ type Resolved struct {
 }
 
 // Resolve maps an alias, model ID or empty string (use the default) to a
-// callable model for mediaType on backend. Retired models are redirected to
-// their replacement and models missing on the backend to their fallback,
-// with warnings the caller should surface. Unknown IDs are passed through
+// callable model for mediaType on backend (an empty name picks the backend's
+// default). Retired models are redirected to their replacement, and models
+// missing on the backend, or past their shutdown date there, to their
+// fallback, with warnings the caller should surface. Unknown IDs are passed through
 // when their family can be inferred, so newly launched models work before
 // the catalog is updated.
 func (c *Catalog) Resolve(name, mediaType, backend string, now time.Time) (*Resolved, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		name = c.Defaults[mediaType]
+		name = c.DefaultFor(mediaType, backend)
 	}
 	m, ok := c.Lookup(name)
 	if !ok {
-		return c.resolveUnknown(name, mediaType, backend)
+		return c.resolveUnknown(name, mediaType, backend, now)
 	}
 	if m.MediaType != mediaType {
-		return nil, apperr.Invalidf("model %q generates %s, not %s; use the %s tool or one of: %s", name, m.MediaType, mediaType, toolFor(m.MediaType), strings.Join(c.Names(mediaType, now), ", "))
+		return nil, apperr.Invalidf("model %q generates %s, not %s; use the %s tool or one of: %s", name, m.MediaType, mediaType, toolFor(m.MediaType), strings.Join(c.Names(mediaType, backend, now), ", "))
 	}
 
 	r := &Resolved{Known: true}
@@ -54,33 +55,105 @@ func (c *Catalog) Resolve(name, mediaType, backend string, now time.Time) (*Reso
 			m = next
 			continue
 		}
-		if !m.SupportsBackend(backend) {
-			next, ok := c.Lookup(m.Fallback)
-			if !ok {
-				return nil, &apperr.Error{Kind: apperr.NotFound, Message: fmt.Sprintf("model %s is not available on the %s backend", m.ID, backend), Hint: "Call list_models to see models for this backend."}
+		if !m.OfferedOn(backend, now) {
+			// A passed backend shutdown redirects like a retirement on that
+			// backend: to the fallback, else the replacement.
+			ended := m.SupportsBackend(backend)
+			target := m.Fallback
+			if ended && target == "" {
+				target = m.Replacement
 			}
-			r.Warnings = append(r.Warnings, fmt.Sprintf("%s is not available on %s; using %s", m.ID, backend, next.ID))
+			msg := fmt.Sprintf("%s is not available on %s", m.ID, backend)
+			if ended {
+				msg = fmt.Sprintf("%s shut down on %s on %s", m.ID, backendName(backend), m.BackendShutdown[backend])
+			}
+			next, ok := c.Lookup(target)
+			if !ok {
+				if !ended {
+					msg = fmt.Sprintf("%s is not available on the %s backend", m.ID, backend)
+				}
+				return nil, &apperr.Error{Kind: apperr.NotFound, Message: "model " + msg + c.elsewhere(m, backend, now), Hint: "Call list_models to see models for this backend."}
+			}
+			r.Warnings = append(r.Warnings, msg+"; using "+next.ID+c.elsewhere(m, backend, now))
 			m = next
 			continue
 		}
 		break
 	}
-	if m.EffectiveStatus(now) == StatusDeprecated {
-		msg := fmt.Sprintf("%s is deprecated", m.ID)
-		if m.Shutdown != "" {
-			msg += " and shuts down on " + m.Shutdown
-		}
-		if m.Replacement != "" {
-			msg += "; switch to " + m.Replacement
-		}
-		r.Warnings = append(r.Warnings, msg)
+	if m.StatusOn(backend, now) == StatusDeprecated {
+		r.Warnings = append(r.Warnings, c.deprecation(m, backend, now))
 	}
 	r.Model = m
 	r.APIID = m.APIID(backend)
 	return r, nil
 }
 
-func (c *Catalog) resolveUnknown(name, mediaType, backend string) (*Resolved, error) {
+// deprecation words the warning for a deprecated model on backend.
+func (c *Catalog) deprecation(m *Model, backend string, now time.Time) string {
+	if d := m.BackendShutdown[backend]; d != "" {
+		msg := fmt.Sprintf("%s is deprecated on %s and shuts down there on %s", m.ID, backendName(backend), d)
+		if to := firstNonEmpty(m.Fallback, m.Replacement); to != "" {
+			msg += "; switch to " + c.label(to)
+		}
+		return msg + c.elsewhere(m, backend, now)
+	}
+	msg := m.ID + " is deprecated"
+	if m.Shutdown != "" {
+		msg += " and shuts down on " + m.Shutdown
+	}
+	if m.Replacement != "" {
+		msg += "; switch to " + c.label(m.Replacement)
+	}
+	return msg
+}
+
+// elsewhere names the other backends that still offer m, as a clause to
+// append to a warning ("" when there are none).
+func (c *Catalog) elsewhere(m *Model, backend string, now time.Time) string {
+	if m.BackendShutdown[backend] == "" {
+		return ""
+	}
+	var other []string
+	for _, b := range m.Backends {
+		if b != backend && m.OfferedOn(b, now) {
+			other = append(other, fmt.Sprintf("%s on the %s backend (%s)", m.APIID(b), b, backendName(b)))
+		}
+	}
+	if len(other) == 0 {
+		return ""
+	}
+	return ". It stays available as " + strings.Join(other, " and as ")
+}
+
+// label is a model ID with its first alias, e.g. "gemini-omni-1.1-flash (omni)".
+func (c *Catalog) label(id string) string {
+	if m, ok := c.Lookup(id); ok && len(m.Aliases) > 0 {
+		return m.ID + " (" + m.Aliases[0] + ")"
+	}
+	return id
+}
+
+// backendName is the product name of a backend for messages.
+func backendName(backend string) string {
+	switch backend {
+	case "gemini-api":
+		return "the Gemini API"
+	case "vertex":
+		return "Gemini Enterprise Agent Platform, formerly Vertex AI"
+	}
+	return backend
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (c *Catalog) resolveUnknown(name, mediaType, backend string, now time.Time) (*Resolved, error) {
 	lower := strings.ToLower(strings.TrimPrefix(name, "models/"))
 	switch {
 	case strings.HasPrefix(lower, "imagen"):
@@ -88,7 +161,7 @@ func (c *Catalog) resolveUnknown(name, mediaType, backend string) (*Resolved, er
 	}
 	family, mt := InferFamily(lower)
 	if family == "" {
-		return nil, apperr.Invalidf("unknown %s model %q; known models and aliases: %s", mediaType, name, strings.Join(c.Names(mediaType, time.Now()), ", "))
+		return nil, apperr.Invalidf("unknown %s model %q; known models and aliases: %s", mediaType, name, strings.Join(c.Names(mediaType, backend, now), ", "))
 	}
 	if mt != mediaType {
 		return nil, apperr.Invalidf("model %q looks like a %s model; use the %s tool", name, mt, toolFor(mt))
@@ -120,10 +193,13 @@ func InferFamily(id string) (family, mediaType string) {
 	return "", ""
 }
 
-// Names lists active model IDs and aliases for a media type.
-func (c *Catalog) Names(mediaType string, now time.Time) []string {
+// Names lists the model IDs and aliases of a media type offered on backend.
+func (c *Catalog) Names(mediaType, backend string, now time.Time) []string {
 	var out []string
-	for _, m := range c.List(mediaType, false, now) {
+	for _, m := range c.List(mediaType, backend, false, now) {
+		if !m.OfferedOn(backend, now) {
+			continue
+		}
 		label := m.ID
 		if len(m.Aliases) > 0 {
 			label += " (" + strings.Join(m.Aliases, ", ") + ")"

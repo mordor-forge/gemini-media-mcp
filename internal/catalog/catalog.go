@@ -52,7 +52,10 @@ type Catalog struct {
 	Version  string            `yaml:"version" json:"version"`
 	Sources  []string          `yaml:"sources" json:"sources,omitempty"`
 	Defaults map[string]string `yaml:"defaults" json:"defaults"`
-	Models   []*Model          `yaml:"models" json:"models"`
+	// BackendDefaults replaces Defaults on one backend (backend -> media
+	// type -> model), for media types whose default is not offered there.
+	BackendDefaults map[string]map[string]string `yaml:"backendDefaults" json:"backendDefaults,omitempty"`
+	Models          []*Model                     `yaml:"models" json:"models"`
 
 	byName map[string]*Model
 }
@@ -69,6 +72,11 @@ type Model struct {
 	Released    string   `yaml:"released" json:"released,omitempty"`
 	Shutdown    string   `yaml:"shutdown" json:"shutdown,omitempty"`
 	Replacement string   `yaml:"replacement" json:"replacement,omitempty"`
+	// BackendShutdown holds earlier shutdown dates on single backends
+	// (backend -> YYYY-MM-DD), e.g. a preview that leaves the Gemini API
+	// while its GA version stays on Vertex AI. The model is deprecated on
+	// that backend until the date and not offered there after it.
+	BackendShutdown map[string]string `yaml:"backendShutdown" json:"backendShutdown,omitempty"`
 	// Fallback is used instead when the model is not offered on the active backend.
 	Fallback        string       `yaml:"fallback" json:"fallback,omitempty"`
 	Backends        []string     `yaml:"backends" json:"backends,omitempty"`
@@ -215,9 +223,9 @@ func (c *Catalog) Lookup(name string) (*Model, bool) {
 	return m, ok
 }
 
-// List returns models, optionally filtered by media type, sorted with
-// defaults first, then GA before preview, then by ID.
-func (c *Catalog) List(mediaType string, includeInactive bool, now time.Time) []*Model {
+// List returns models, optionally filtered by media type, sorted with the
+// backend's defaults first, then GA before preview, then by ID.
+func (c *Catalog) List(mediaType, backend string, includeInactive bool, now time.Time) []*Model {
 	var out []*Model
 	for _, m := range c.Models {
 		if mediaType != "" && m.MediaType != mediaType {
@@ -229,10 +237,10 @@ func (c *Catalog) List(mediaType string, includeInactive bool, now time.Time) []
 		out = append(out, m)
 	}
 	rank := func(m *Model) int {
-		if c.IsDefault(m) {
+		if c.IsDefault(m, backend) {
 			return 0
 		}
-		switch m.EffectiveStatus(now) {
+		switch m.StatusOn(backend, now) {
 		case StatusGA:
 			return 1
 		case StatusPreview:
@@ -254,22 +262,54 @@ func (c *Catalog) List(mediaType string, includeInactive bool, now time.Time) []
 	return out
 }
 
-// IsDefault reports whether m is the default for its media type.
-func (c *Catalog) IsDefault(m *Model) bool {
-	d, ok := c.Lookup(c.Defaults[m.MediaType])
+// DefaultFor returns the default model name for mediaType on backend.
+func (c *Catalog) DefaultFor(mediaType, backend string) string {
+	if d := c.BackendDefaults[backend][mediaType]; d != "" {
+		return d
+	}
+	return c.Defaults[mediaType]
+}
+
+// setDefault makes name the default for mediaType on every backend.
+func (c *Catalog) setDefault(mediaType, name string) {
+	if c.Defaults == nil {
+		c.Defaults = map[string]string{}
+	}
+	c.Defaults[mediaType] = name
+	for _, d := range c.BackendDefaults {
+		delete(d, mediaType)
+	}
+}
+
+// IsDefault reports whether m is the default for its media type on backend.
+func (c *Catalog) IsDefault(m *Model, backend string) bool {
+	d, ok := c.Lookup(c.DefaultFor(m.MediaType, backend))
 	return ok && d == m
 }
 
 // ShutdownTime parses the shutdown date (end of that day, UTC).
 func (m *Model) ShutdownTime() (time.Time, bool) {
-	if m.Shutdown == "" {
+	return parseDate(m.Shutdown)
+}
+
+func parseDate(s string) (time.Time, bool) {
+	if s == "" {
 		return time.Time{}, false
 	}
-	t, err := time.Parse("2006-01-02", m.Shutdown)
+	t, err := time.Parse("2006-01-02", s)
 	if err != nil {
 		return time.Time{}, false
 	}
 	return t.Add(24*time.Hour - time.Second), true
+}
+
+// ShutdownOn returns the shutdown date that applies on backend: the
+// backend's own date when set, otherwise the model's.
+func (m *Model) ShutdownOn(backend string) string {
+	if d := m.BackendShutdown[backend]; d != "" {
+		return d
+	}
+	return m.Shutdown
 }
 
 // EffectiveStatus accounts for shutdown dates that have passed.
@@ -280,9 +320,47 @@ func (m *Model) EffectiveStatus(now time.Time) string {
 	return m.Status
 }
 
-// Active reports whether the model can still be called.
+// StatusOn is EffectiveStatus on one backend: a backend shutdown date makes
+// the model deprecated there until the date and retired after it.
+func (m *Model) StatusOn(backend string, now time.Time) string {
+	st := m.EffectiveStatus(now)
+	if t, ok := parseDate(m.BackendShutdown[backend]); ok && st != StatusRetired {
+		if now.After(t) {
+			return StatusRetired
+		}
+		return StatusDeprecated
+	}
+	return st
+}
+
+// Active reports whether the model can still be called on some backend.
 func (m *Model) Active(now time.Time) bool {
 	return m.EffectiveStatus(now) != StatusRetired
+}
+
+// OfferedOn reports whether the model can be called on backend at now.
+func (m *Model) OfferedOn(backend string, now time.Time) bool {
+	return m.SupportsBackend(backend) && m.StatusOn(backend, now) != StatusRetired
+}
+
+// BackendSummary lists the backends offering the model, with backend
+// shutdown dates, e.g. "gemini-api until 2026-10-22, vertex".
+func (m *Model) BackendSummary(now time.Time) string {
+	if len(m.Backends) == 0 {
+		return "all"
+	}
+	parts := make([]string, 0, len(m.Backends))
+	for _, b := range m.Backends {
+		switch d := m.BackendShutdown[b]; {
+		case d == "":
+			parts = append(parts, b)
+		case m.OfferedOn(b, now):
+			parts = append(parts, b+" until "+d)
+		default:
+			parts = append(parts, b+" ended "+d)
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // SupportsBackend reports whether the model is offered on backend.

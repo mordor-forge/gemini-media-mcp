@@ -95,9 +95,11 @@ Use an alias or a full model ID. Run `gemini-media-mcp models` for the built-in 
 | Media | Aliases (default first) |
 |---|---|
 | Image | `nb2` (Nano Banana 2.1, default), `pro` (Nano Banana Pro: highest fidelity), `nb2-lite` (cheapest inputs) |
-| Video | `lite` (cheapest Veo), `omni` (Gemini Omni Flash: prompt adherence, editing, extension to 40 s; Gemini API only), `fast` (Veo 4K, references, extension), `standard` (highest Veo quality) |
+| Video | `omni` (Gemini Omni Flash, default on the Gemini API: prompt adherence, editing, extension to 40 s; Gemini API only), `lite` (cheapest Veo, default on Vertex AI), `fast` (Veo 4K, references, extension), `standard` (highest Veo quality) |
 | Speech | `tts` (Gemini 3.8 Flash TTS), `tts-lite`, `tts-2.5`, `tts-pro` |
 | Music | `clip` (30 s), `full` (Lyria 3.5 songs) |
+
+**Veo on the Gemini API.** Google is shutting down the Veo 3.1 previews (and the `gemini-omni-flash-preview` model) on the Gemini API on 2026-10-22. Until then `lite`, `fast` and `standard` still work there with a deprecation warning; after it the server uses `omni` instead and says so. Veo 3.1 stays available on Vertex AI, now called Gemini Enterprise Agent Platform (`veo-3.1-*-generate-001`): to keep using it, run the server against a Google Cloud project: `GOOGLE_CLOUD_PROJECT` plus `gcloud auth application-default login`, and `GEMINI_MEDIA_BACKEND=vertex` if an API key is also set (see [Configuration](#configuration)).
 
 **Updating or adding a model without waiting for a release.** Create a YAML file and point `GEMINI_MEDIA_CATALOG` at it. The server merges it with the built-in catalog by `id` and reloads it automatically:
 
@@ -129,7 +131,7 @@ Settings are layered: built-in defaults < config file < environment < flags. The
 | `GEMINI_MEDIA_STATE_DIR` | `stateDir` | `$XDG_STATE_HOME/gemini-media-mcp`, else `~/.local/state/gemini-media-mcp` (Linux) or the config directory | Spend ledger and video jobs |
 | `GEMINI_MEDIA_BUDGET_SESSION_USD` / `_DAILY_USD` / `_MONTHLY_USD` | `budget.*Usd` | none | Spend caps (estimated) |
 | `GEMINI_MEDIA_CONFIRM_ABOVE_USD` | `budget.confirmAboveUsd` | none | Calls above this need `approvedCostUsd` |
-| `GEMINI_MEDIA_IMAGE_MODEL` / `_VIDEO_MODEL` / `_SPEECH_MODEL` / `_MUSIC_MODEL` / `GEMINI_MEDIA_VOICE` | `defaults.*` | catalog | Default models and voice |
+| `GEMINI_MEDIA_IMAGE_MODEL` / `_VIDEO_MODEL` / `_SPEECH_MODEL` / `_MUSIC_MODEL` / `GEMINI_MEDIA_VOICE` | `defaults.*` | catalog | Default models and voice (a model set here is the default on both backends) |
 | `GEMINI_MEDIA_CATALOG` | `catalogFile` | – | Catalog override file (hot-reloaded) |
 | `GEMINI_MEDIA_INPUT_DIRS` | `inputDirs` | – | Extra directories inputs may be read from (HTTP mode) |
 | `GEMINI_MEDIA_ALLOW_ANY_INPUT_PATH` | `allowAnyInputPath` | `true` on stdio, `false` on HTTP | Read input files from anywhere on disk |

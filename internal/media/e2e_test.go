@@ -5,7 +5,8 @@
 //
 //	GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=... go test -tags=e2e ./internal/media/ -run E2E -v -timeout 30m
 //
-// Set GEMINI_MEDIA_E2E_VIDEO=1 to include video, GEMINI_MEDIA_E2E_OMNI=1 to
+// Set GEMINI_MEDIA_E2E_VIDEO=1 to include a Veo clip (Vertex AI only after
+// Veo leaves the Gemini API on 2026-10-22), GEMINI_MEDIA_E2E_OMNI=1 to
 // include a Gemini Omni clip and an edit of it (about $0.30), and
 // GEMINI_MEDIA_E2E_OUTPUT_DIR=<dir> to keep the generated files for review
 // (otherwise they go to a temporary directory that is deleted). Vertex AI
@@ -120,6 +121,9 @@ func TestE2E_Video(t *testing.T) {
 	s := liveService(t)
 	if os.Getenv("GEMINI_MEDIA_E2E_VIDEO") != "1" {
 		t.Skip("set GEMINI_MEDIA_E2E_VIDEO=1 to run the video test (~$0.20)")
+	}
+	if r, _, _, err := s.resolve("lite", catalog.Video); err != nil || r.Model.Family != catalog.FamilyVeo {
+		t.Skip("Veo is not offered on this backend (it left the Gemini API on 2026-10-22); run with Vertex AI credentials")
 	}
 	job, err := s.GenerateVideo(context.Background(), VideoRequest{Prompt: "Gentle ocean waves rolling onto a sandy beach at sunset, soft wave sounds", Model: "lite", DurationSeconds: 4})
 	if err != nil {

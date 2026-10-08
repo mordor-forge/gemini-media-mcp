@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "make a short clip of waves crashing on black sand at sunset, with seagull sounds",
-      "expected_output": "Calls gemini-media:generate_video with default lite, 720p, 16:9, a prompt covering subject, action, camera and explicit audio cues (waves, seagulls). Then calls gemini-media:get_video with waitSeconds around 45 repeatedly until state is completed (no sleeping, no resubmitting), and reports the saved path/uri and cost. Is honest that it cannot watch the video.",
+      "expected_output": "Calls gemini-media:generate_video with the default model (omni on the Gemini API, lite on Vertex AI), 720p or a 360p omni draft, 16:9, a prompt covering subject, action, camera and explicit audio cues (waves, seagulls). Then calls gemini-media:get_video with waitSeconds around 45 repeatedly until state is completed (no sleeping, no resubmitting), and reports the saved path/uri and cost. Is honest that it cannot watch the video.",
       "files": []
     },
     {
@@ -28,7 +28,7 @@
     {
       "id": 5,
       "prompt": "Unattended run, nobody will be around to answer: produce a 9:16, 6-second teaser of a neon-lit city street in the rain for our app store listing.",
-      "expected_output": "Does not ask questions. Uses lite, 720p, aspectRatio 9:16, durationSeconds 6, a prompt with camera move and ambient sound. Stays under the confirmation threshold without setting approvedCostUsd, polls get_video until completed, and reports prompt, parameters, path, cost and what a fast/1080p version would cost.",
+      "expected_output": "Does not ask questions. Uses the default model (omni on the Gemini API, lite on Vertex AI) at 720p, or omni at 360p, aspectRatio 9:16, durationSeconds 6, a prompt with camera move and ambient sound. Stays under the confirmation threshold without setting approvedCostUsd, polls get_video until completed, and reports prompt, parameters, path, cost and what a fast/1080p version would cost.",
       "files": []
     },
     {

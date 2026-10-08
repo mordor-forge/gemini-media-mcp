@@ -355,7 +355,7 @@ func TestVideoFilteredIsNotBilled(t *testing.T) {
 	e.api.OpResult = func(name string) *genai.GenerateVideosOperation {
 		return &genai.GenerateVideosOperation{Name: name, Done: true, Response: &genai.GenerateVideosResponse{RAIMediaFilteredCount: 1, RAIMediaFilteredReasons: []string{"celebrity"}}}
 	}
-	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", WaitSeconds: 10})
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite", WaitSeconds: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +518,7 @@ func TestListModelsLiveAndEstimates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if est.Estimate.USD != 4.8 || !est.NeedsConfirm || len(est.Alternatives) != 3 {
+	if est.Estimate.USD != 4.8 || !est.NeedsConfirm || len(est.Alternatives) != 4 || len(est.Warnings) != 1 || !strings.Contains(est.Warnings[0], "2026-10-22") {
 		t.Fatalf("estimate = %+v", est)
 	}
 	for _, a := range est.Alternatives {
@@ -630,7 +630,7 @@ func TestBilledOutputThatCannotBeSavedIsStillCharged(t *testing.T) {
 func TestUndownloadableVideoStopsRetryingAndSettles(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	e.api.DownloadErr = genai.APIError{Code: 404, Message: "file expired"}
-	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,7 +657,7 @@ func TestUndownloadableVideoStopsRetryingAndSettles(t *testing.T) {
 	// Transient download errors are retried on later calls, up to a limit.
 	e2 := newEnv(t, nil, spend.Budget{})
 	e2.api.DownloadErr = genai.APIError{Code: 503, Message: "busy"}
-	job, _ = e2.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	job, _ = e2.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite"})
 	for i := 0; i < maxDownloadAttempts; i++ {
 		got, _ = e2.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
 	}
@@ -670,7 +670,7 @@ func TestCanceledWaitKeepsTheHandle(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	e.api.OpDoneAfter = 100
 	e.svc.sleep = func(context.Context, time.Duration) error { return context.Canceled }
-	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", WaitSeconds: 60})
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite", WaitSeconds: 60})
 	if err != nil || job.JobID == "" || job.State != jobs.StateWorking {
 		t.Fatalf("a canceled wait must still return the job handle: %+v %v", job, err)
 	}
@@ -691,7 +691,7 @@ func TestCanceledDownloadStaysRecoverable(t *testing.T) {
 			return ctx.Err()
 		}
 	}
-	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -716,7 +716,7 @@ func TestCanceledDownloadStaysRecoverable(t *testing.T) {
 	// A download that fails because it was canceled or timed out is retried
 	// on the next call and does not use up an attempt.
 	e2 := newEnv(t, nil, spend.Budget{})
-	job, _ = e2.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	job, _ = e2.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite"})
 	for _, interruption := range []error{context.Canceled, context.DeadlineExceeded, context.Canceled, context.DeadlineExceeded} {
 		e2.api.DownloadErr = interruption
 		got, _ = e2.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
@@ -739,13 +739,14 @@ func TestCanceledDownloadStaysRecoverable(t *testing.T) {
 // queueing behind another call that holds the job (regression).
 func TestWaitBoundsUpstreamRequestsAndLocks(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
-	e.svc.now, e.svc.sleep = time.Now, sleepCtx
 	e.api.OpDoneAfter = 1000
-	e.api.PollHook = func(ctx context.Context) error { return sleepCtx(ctx, 3*time.Second) }
-	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	// Started at the test clock, while Veo is still offered on the Gemini API.
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.svc.now, e.svc.sleep = time.Now, sleepCtx
+	e.api.PollHook = func(ctx context.Context) error { return sleepCtx(ctx, 3*time.Second) }
 	start := time.Now()
 	got, _ := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(1)})
 	if d := time.Since(start); d > 2*time.Second {
