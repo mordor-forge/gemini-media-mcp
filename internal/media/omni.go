@@ -410,10 +410,12 @@ func (s *Service) runOmni(ctx context.Context, job *jobs.Job, ireq *google.Inter
 	if actual != nil && status == spend.StatusOK {
 		job.CostUSD, job.CostBasis = actual.USD, actual.Basis
 	}
+	// Settle the spend before publishing the finished job: a caller that
+	// sees it finished may read usage right away.
+	s.recordOutcome(job.LedgerID, status, actual, job.Error, usage, "", assetPaths(job.Outputs)...)
 	if err := s.jobs.Put(job); err != nil {
 		s.log.Error("saving video job failed", "job", job.ID, "err", err)
 	}
-	s.recordOutcome(job.LedgerID, status, actual, job.Error, usage, "", assetPaths(job.Outputs)...)
 }
 
 // downloadOmni fetches the clip, retrying transient failures: the video is
