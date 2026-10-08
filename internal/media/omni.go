@@ -441,13 +441,15 @@ func (s *Service) downloadOmni(ctx context.Context, result *google.InteractionRe
 }
 
 // recordOutcome finalizes a pending ledger entry. Unbilled outcomes cost $0;
-// billed ones keep the estimate unless usage priced them.
+// billed ones keep the estimate unless usage priced them. An entry already
+// finalized is left alone: a worker that settled it but stopped before
+// saving its job must not lose its cost and output paths to the recovery.
 func (s *Service) recordOutcome(ledgerID, status string, actual *catalog.Estimate, errText string, usage *google.Usage, fallbackErr string, outputs ...string) {
 	if ledgerID == "" {
 		return
 	}
 	e, ok := s.ledger.Get(ledgerID)
-	if !ok {
+	if !ok || e.Status != spend.StatusPending {
 		return
 	}
 	e.Status = status
