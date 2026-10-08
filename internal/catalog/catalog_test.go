@@ -569,6 +569,8 @@ func TestOverrideErrors(t *testing.T) {
 		"defaults:\n  image: omni\n":                                                                 "generates video",
 		"backendDefaults:\n  vertex: {video: omni}\n":                                                "not offered on vertex",
 		"backendDefaults:\n  vertexai: {video: lite}\n":                                              "the backends are",
+		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backends: [auto]\n":    "the backends are",
+		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backends: [\"\"]\n":    "the backends are",
 		"models:\n  - id: veo-3.1-generate-preview\n    backendShutdown: {gemini_api: 2026-10-22}\n": "not one of its backends",
 		"models:\n  - id: gemini-2.5-flash-image\n    backendShutdown: {vertex: \"2027-04-01\"}\n":   "after the model's shutdown 2027-03-15",
 	} {

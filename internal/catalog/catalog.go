@@ -201,6 +201,13 @@ func (c *Catalog) index() error {
 		if m.Status == "" {
 			m.Status = StatusPreview
 		}
+		// An unknown backend would never match a request, and an unresolved
+		// one ("auto") would make StatusOn recurse.
+		for _, b := range m.Backends {
+			if !knownBackend(b) {
+				return fmt.Errorf("catalog: %s: backends lists %q; the backends are gemini-api and vertex", m.ID, b)
+			}
+		}
 		// A date that does not parse would silently keep the model offered.
 		if _, ok := parseDate(m.Shutdown); m.Shutdown != "" && !ok {
 			return fmt.Errorf("catalog: %s: shutdown %q is not a YYYY-MM-DD date", m.ID, m.Shutdown)
