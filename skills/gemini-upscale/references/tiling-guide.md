@@ -60,7 +60,7 @@ tile_image(image: "~/Pictures/portrait.jpg")
      tile 1 r1c1 (aspectRatio 3:2) gemini-media://files/portrait-p1-t1-r1c1.png ...
      editing every tile once with gemini-nano-banana-2.1 at 4K: ~$1.12
 
-# Tell the user: pass 1 ~$1.12, pass 2 ~$0.50-1.00, total about $1.60-2.10. Approved.
+# Tell the user: about $1.10-1.40 with retries, plus about $0.12-0.50 if a fix pass is needed. Approved.
 
 edit_image(image: ".../portrait-p1-t1-r1c1.png", referenceImages: [".../portrait-reference.png"],
            aspectRatio: "3:2", imageSize: "4K", model: "nb2",
@@ -69,23 +69,29 @@ edit_image(image: ".../portrait-p1-t1-r1c1.png", referenceImages: [".../portrait
 
 stitch_tiles(job: ".../portrait-p1-tiles.json",
              tiles: [{tile: 1, image: ".../portrait-p1-t1-r1c1-edit.png"}, ... 9 entries])
-  -> portrait-upscaled.png 8192x5461; 9 placed (match 0.86-0.95)
+  -> portrait-upscaled.png 8192x5461; 9 placed (match 0.98-1.00)
 
-# Inspect preview and corner details. Choose pass-2 regions from the preview:
+# The preview shows one hazel and one brown iris: the eyes fell in different tiles.
 tile_image(image: "gemini-media://files/portrait-upscaled.png", regions: [
-  {x: 0.42, y: 0.12, width: 0.22, height: 0.30, label: "face"},
-  {x: 0.30, y: 0.05, width: 0.45, height: 0.35, label: "hair"},
-  {x: 0.35, y: 0.45, width: 0.40, height: 0.35, label: "shoulder"},
-  {x: 0.05, y: 0.55, width: 0.25, height: 0.30, label: "hand"}])
-  -> 4 tiles (pass 2, regions); output keeps 8192x5461; no reference on refinement passes
+  {x: 0.30, y: 0.30, width: 0.40, height: 0.12, label: "eyes"}])
+  -> 1 tile (pass 2, regions); warning: no resolution to gain, fixes only; no reference
 
-edit_image(image: ".../portrait-p2-t1-face.png", aspectRatio: <tile's>, imageSize: "4K",
-           prompt: "<refinement prompt> + Skin and Eyes clauses")   # no referenceImages
-... x4, stitch_tiles(job: ".../portrait-p2-tiles.json", tiles: [...])
+edit_image(image: ".../portrait-p2-t1-eyes.png", aspectRatio: <tile's>, imageSize: "4K",
+           prompt: "<refinement prompt> + Skin clause + 'Both eyes have the same dark brown iris color'")
+stitch_tiles(job: ".../portrait-p2-tiles.json", tiles: [{tile: 1, image: ".../portrait-p2-t1-eyes-edit.png"}])
   -> portrait-upscaled-p2.png
 ```
 
-Deliver `portrait-upscaled-p2.png` with its size, about 10,700 px of model detail, 13 tiles and the total cost. Describe the added detail as AI-reconstructed.
+Deliver `portrait-upscaled-p2.png` with its size, about 10,700 px of model detail, 10 tiles and the total cost. Describe the added detail as AI-reconstructed.
+
+## Do later passes add detail?
+
+Only when pass 1 left the output under-filled. `nativeLongEdge` is the long edge in pixels that the stitched tiles render with model detail:
+
+- **It exceeds the output's long edge** (9-11K for a 3 x 3 grid of 4K tiles, against an 8K output). Every output pixel is already model-rendered. A region re-rendered at a closer crop is scaled back down onto the same pixels, so it can change *what* is drawn but not add detail.
+  - In a live test, four tight regions re-rendered at 2.4x were indistinguishable from pass 1 at 100%.
+  - A region holding both eyes did fix two mismatched irises.
+- **It is below the output's long edge** (`longEdge` 16384, or 2K tiles). The output is interpolated beyond it, and tight regions add real detail where they land.
 
 ## Troubleshooting
 
@@ -94,7 +100,7 @@ Deliver `portrait-upscaled-p2.png` with its size, about 10,700 px of model detai
 | A tile is rejected with "different shape" | `aspectRatio` was missing or wrong in `edit_image`. Retry with the tile's ratio. |
 | A tile is rejected with "does not match" | The model reframed, zoomed or redrew the crop. Retry with the field-of-view sentence first in the prompt (see the skill). With `pro`, try `nb2`. |
 | Every refinement tile is rejected and the edits show the whole photo | `referenceImages` was sent on a refinement pass. Edit each crop alone. |
-| A refinement region comes back no sharper | The region is too large (`tile_image` warned). Use regions about a third of the image's long side or smaller. |
+| A refinement region comes back no sharper | Expected at 8K, where pass 1 already rendered full-resolution detail (see above). In a detail pass, the region is too large (`tile_image` warned): use regions about a third of the image's long side or smaller. |
 | Doubled edges in a detail crop | Local drift inside a tile (the note "part of the tile differs"). Retry that tile; if it persists, cover the area with a smaller region in the next pass. |
 | Color steps between tiles | `colorMatch` was off, or a tile changed the lighting. Keep `colorMatch` on and stress "no relighting". |
 | Two irises differ | The eyes were in different tiles or regions. Re-render one region holding both eyes in the next pass. |

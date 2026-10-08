@@ -1,6 +1,6 @@
 ---
 name: gemini-upscale
-description: Upscales photos past the 4K limit of a single edit (8K by default) with the gemini-media MCP server. It cuts the image into overlapping crops, re-renders each at 4K with Nano Banana 2.1 using the whole photo as context, aligns and blends them into one large PNG, then optionally refines faces, hands, text or fabrics in further passes. Use it when the user wants to upscale, enlarge or add detail to a photo for print, wallpapers or large screens, even if they never mention Gemini. Limits - it invents plausible detail rather than recovering the original, so faces, eyes, small text and textures can change; it is unsuitable for forensic, archival, evidence or product-label work; a run costs about $1.60-3 on nb2 and takes several minutes.
+description: Upscales photos past the 4K limit of a single edit (8K by default) with the gemini-media MCP server. It cuts the image into overlapping crops, re-renders each at 4K with Nano Banana 2.1 using the whole photo as context, aligns and blends them into one large PNG, then optionally re-renders a few regions to fix defects such as mismatched eyes. Use it when the user wants to upscale, enlarge or add detail to a photo for print, wallpapers or large screens, even if they never mention Gemini. Limits - it invents plausible detail rather than recovering the original, so faces, eyes, small text and textures can change; it is unsuitable for forensic, archival, evidence or product-label work; a run costs about $1.10-1.90 on nb2 at 8K and takes a few minutes.
 license: Apache-2.0
 compatibility: Requires the gemini-media MCP server v1.1 or later (tile_image and stitch_tiles tools) with a Gemini API key or Vertex AI project.
 metadata:
@@ -11,7 +11,7 @@ metadata:
 
 # Gemini Upscale (tiled, past 4K)
 
-A single `edit_image` call tops out at 4K. This skill goes further. It cuts the photo into overlapping tiles, has the model re-render each tile at 4K with the full photo as context, and stitches the tiles into one 8K image. Refinement passes then re-render faces, hands, text or materials at a closer crop.
+A single `edit_image` call tops out at 4K. This skill goes further. It cuts the photo into overlapping tiles, has the model re-render each tile at 4K with the full photo as context, and stitches the tiles into one 8K image. That single pass already fills every pixel of an 8K output with model-rendered detail. A second pass re-renders a few regions, and only to fix visible defects.
 
 **What it is and isn't.** This is generative enhancement. The model draws plausible pores, hair strands, fabric weave and foliage that were never in the file. Expect a sharper, more detailed image that is not a faithful record:
 
@@ -22,11 +22,11 @@ Say this plainly to the user. Refuse or warn for evidence, forensics, archival r
 
 ## Quick start
 
-1. **Choices.** If the user has not said, ask once: "2 passes (recommended) or 3? Output 8K (8192 px long edge) or another size?" Default to `nb2` (Nano Banana 2.1). `pro` costs about twice as much per tile.
+1. **Choices.** If the user has not said, ask once: "Output 8K (8192 px long edge) or another size?" Default to `nb2` (Nano Banana 2.1). `pro` costs about twice as much per tile.
 2. **Plan pass 1.** Call `gemini-media:tile_image` with `image` (the photo) and `longEdge` if not 8192. The result lists the tiles, a `reference` image (first pass only), the `job`, and the cost of editing every tile.
 3. **Budget.** Estimate the whole run before spending anything:
    - pass 1 costs what `tile_image` reports;
-   - each later pass costs 4-8 tiles at the same per-tile price.
+   - allow one or two retries and an optional fix pass of 1-4 regions, each at the same per-tile price.
 
    Tell the user the total and get approval (see Cost and approvals).
 4. **Edit every tile** with `gemini-media:edit_image`, issuing the calls in parallel if your client can:
@@ -39,8 +39,8 @@ Say this plainly to the user. Refuse or warn for evidence, forensics, archival r
 5. **Stitch.** Call `gemini-media:stitch_tiles` with the `job` and `tiles: [{tile, image: <edit result uri>}, ...]`. Read the report:
    - retry rejected tiles at most twice each;
    - inspect the preview and the 100% detail crops.
-6. **Pass 2:** call `tile_image` with `image` set to the stitched `file.uri` and 4-8 tight `regions` (Choosing regions below). Edit each crop **on its own, without `referenceImages`**, using the refinement prompt, then stitch again. The server carries the original and the output size over from pass 1.
-7. **Pass 3 (only if asked):** use tighter regions on the pass-2 result, such as the eyes together, the lips, the fingers or a label.
+6. **Fix pass (only for visible defects).** Run it if the preview or the details show something wrong, such as two different iris colors or garbled hands, teeth or text. Call `tile_image` with `image` set to the stitched `file.uri` and 1-4 `regions` around the defects (Choosing regions below). Edit each crop **on its own, without `referenceImages`**, using the refinement prompt, then stitch again. The server carries the original and the output size over from pass 1. At 8K this pass replaces content but adds no resolution, and `tile_image` says so.
+7. **More passes add resolution only** when pass 1 did not fill the output, that is when you see the warning "interpolated beyond about N px" (for example `longEdge` 16384, or tiles below 4K). Then use 4-8 tight regions.
 8. **Deliver** (Delivering below).
 
 ## Tools
@@ -84,7 +84,7 @@ Clauses, each added only when that material is visible in the crop:
 
 The same prompt goes to every tile in a pass, except for the material clauses. Keep the wording identical across tiles so neighbors render alike. More guidance and a worked example: [references/tiling-guide.md](references/tiling-guide.md).
 
-## The refinement prompt (pass 2 and 3)
+## The refinement prompt (later passes)
 
 On refinement passes, send the crop alone. The crop already carries the identity, colors and light from pass 1. In live tests, sending a whole-photo reference next to a close-up made the model redraw the whole photo in 4 of 5 tiles, and `stitch_tiles` rejected them all. Use this text plus the same clauses, with "image 2" replaced by a description: for example "Both eyes have the same dark brown iris color", or "Keep exactly the letters shown".
 
@@ -98,15 +98,18 @@ beautification, relighting, halos, ringing, over-sharpening, embossed, crosshatc
 repeating texture and synthetic grain.
 ```
 
-## Choosing regions (pass 2 and 3)
+## Choosing regions (later passes)
 
 Look at the stitched preview, then pass `regions` as fractions of the image (`x`, `y`, `width`, `height` from the top-left, 0-1) with a short `label`:
 
-- **Pass 2:** pick 4-8 regions with high information, such as each face or head, hands, hair masses, textured clothing, a product or signage.
-- **Pass 3:** pick tighter features, such as the eyes, lips, nose, fingers, jewelry, label text or fine fabric.
+- **Fix pass (the usual case at 8K):** pick regions around defects only, such as both eyes when their colors differ, a garbled hand, misshapen teeth or a broken line of text.
+  - Pass 1 with 4K tiles already renders about 10,000 px of detail for an 8,192 px output.
+  - In testing, four tight regions re-rendered at 2.4x came back no sharper than pass 1.
+  - Re-rendering an area that looks fine only spends money and risks drift.
+- **Detail pass (only after an "interpolated beyond" warning):** pick 4-8 high-information regions, such as faces, hands, hair masses, textured clothing or signage.
 - **Skip low-information areas:** sky, blurred background and plain walls only waste money.
 - **Matching features:** put both eyes in one region rather than one per eye, so the irises are re-rendered together and stay alike. Do the same for earrings and pairs of hands.
-- **Size:** keep each region to about a third of the image's long side or less. The model renders each crop at 4K from an input of at most 2048 px, so a larger region comes back no sharper than pass 1: in testing, a region spanning 74% of the width only evened out the eye color. `tile_image` warns about such regions; tighten them before spending.
+- **Size:** keep each region to about a third of the image's long side or less. The model sees each crop at 2048 px at most, so in a detail pass a larger region comes back no sharper. `tile_image` warns about such regions. A fix region can be larger when the defect needs it, for example both eyes.
 - **Padding:** `tile_image` adds 20% context around each region and grows it to a supported aspect ratio. Draw regions tight around the feature.
 - **Without image previews:** if your client cannot show images, you cannot choose regions. Stop after pass 1, or ask the user where the important details are.
 
@@ -133,14 +136,14 @@ Use `details` to ask for 100% crops anywhere else. At most 2 targeted retries pe
 
 ## Cost and approvals
 
-- `tile_image` returns the cost of editing every tile once. Add 4-8 tiles per later pass at the same per-tile price, and allow about 20% for retries. Example on nb2 at 4K, about $0.12 per tile:
+- `tile_image` returns the cost of editing every tile once. Regions in a fix pass cost the same per tile. Example on nb2 at 4K, about $0.12 per tile:
 
-  | Passes | Total |
-  |--------|-------|
-  | 2 | about $1.60-2.10 |
-  | 3 | about $2.10-3.10 |
+  | Run at 8K | Total |
+  |-----------|-------|
+  | Pass 1 (9 tiles) with one or two retries | about $1.10-1.40 |
+  | Optional fix pass, 1-4 regions | about $0.12-0.50 more |
 
-  `pro` is about twice that.
+  `pro` is about twice that, and `grid: 4` (16 tiles) about $2 for pass 1.
 - Tell the user the total before the first edit. One approval covers the run. If an `edit_image` call still fails with `[confirmation]`, retry it with `approvedCostUsd` set to that call's quoted amount; the run approval covers it. Never set `approvedCostUsd` without the user's approval of the run.
 - `[budget]` means a cap was hit mid-run. Stop and report how many tiles are done. The job file and finished edits stay on disk: once the budget allows, edit the remaining tiles and stitch with all of them.
 - Do not "test" on a few tiles and then redo them all. Tiles are independent, so every finished tile counts.
@@ -175,8 +178,8 @@ Call the added detail "reconstructed" or "AI-generated", never "recovered". Each
 
 ## Interaction mode
 
-- **With a user present:** ask the passes and size question once if unspecified, state the cost, and show the pass-1 preview before spending on pass 2.
-- **Autonomous:** default to 2 passes at 8K on nb2. Proceed only if `get_usage` shows the budget covers the estimate. Never set `approvedCostUsd` yourself. Retry at most twice per tile. Finish with the delivery report, including rejected tiles.
+- **With a user present:** ask the size question once if unspecified and state the cost. Show the pass-1 result and propose a fix pass only for defects you can name.
+- **Autonomous:** run one pass at 8K on nb2, plus a fix pass of at most 4 regions only for clear defects. Proceed only if `get_usage` shows the budget covers the estimate. Never set `approvedCostUsd` yourself. Retry at most twice per tile. Finish with the delivery report, including rejected tiles.
 
 ## Chaining
 

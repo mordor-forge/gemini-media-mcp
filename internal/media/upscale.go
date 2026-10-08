@@ -125,6 +125,7 @@ type tileJob struct {
 	Reference   string    `json:"reference"`
 	Model       string    `json:"model"`
 	ImageSize   string    `json:"imageSize"`
+	PrevNative  int       `json:"prevNativeLongEdge,omitempty"`
 	Tiles       []jobTile `json:"tiles"`
 	CreatedAt   time.Time `json:"createdAt"`
 }
@@ -197,9 +198,11 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 
 	// A stitch_tiles result carries the pass, original and reference.
 	pass, original, reference, jobName := 1, strings.TrimSpace(req.Original), "", ""
+	prevNative := 0 // model-rendered long edge the image already carries
 	if name, ok := s.outputName(req.Image); ok {
 		if p, err := s.store.Provenance(name); err == nil && p.Tool == "stitch_tiles" {
 			pass = intParam(p.Params, "pass") + 1
+			prevNative = intParam(p.Params, "nativeLongEdge")
 			jobName, _ = p.Params["name"].(string)
 			if original == "" {
 				original, _ = p.Params["original"].(string)
@@ -302,7 +305,13 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	job := tileJob{
 		Version: 1, Pass: pass, Mode: mode, Name: name, Image: imageRef, ImageSHA256: sha(in.Data),
 		Width: pw, Height: ph, OutWidth: outW, OutHeight: outH,
-		Original: original, Reference: reference, Model: m.ID, ImageSize: size, CreatedAt: s.now().UTC(),
+		Original: original, Reference: reference, Model: m.ID, ImageSize: size, PrevNative: prevNative, CreatedAt: s.now().UTC(),
+	}
+	// When the image already holds model-rendered detail at its full
+	// resolution, re-rendering regions can fix content but not add detail.
+	saturated := prevNative >= max(pw, ph)
+	if saturated {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("this image already carries model-rendered detail at full resolution (about %d px for its %d px long edge), so a refinement pass adds no resolution: use it only to fix visible defects (mismatched eyes, garbled hands or text) with a few targeted regions", prevNative, max(pw, ph)))
 	}
 	native := math.Inf(1)
 	for i, t := range planned {
@@ -328,7 +337,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		outPx := float64(imageSizePixels(size))
 		tw := math.Sqrt(outPx * float64(t.Box.W) / float64(t.Box.H))
 		native = math.Min(native, tw/float64(t.Box.W))
-		if mode == "regions" && tw/float64(t.Box.W) < minRegionGain {
+		if mode == "regions" && !saturated && tw/float64(t.Box.W) < minRegionGain {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("region %d (%s) is %dx%d px: at %s the model renders it at only about %.1fx (and sees the crop at %d px at most), so it adds little detail; use tighter regions, about a third of the image's long side or less", t.Index, t.Label, t.Box.W, t.Box.H, size, tw/float64(t.Box.W), maxCropPixels))
 		}
 		progress(ctx, fmt.Sprintf("%d/%d crops saved", i+1, len(planned)), float64(i+1), float64(len(planned)))
@@ -350,7 +359,11 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	}
 	res.Job = ja.URI
 
-	per := m.EstimateImage(size, 1, 1200, 2, s.backend(), location)
+	inputs := 1 // refinement crops are edited alone
+	if refAsset != nil {
+		inputs = 2
+	}
+	per := m.EstimateImage(size, 1, 1200, inputs, s.backend(), location)
 	res.Cost = Cost{
 		EstimatedUSD: round4(per.USD * float64(len(planned))), USD: round4(per.USD * float64(len(planned))),
 		Basis: per.Basis, PriceAsOf: per.PriceAsOf,
@@ -643,6 +656,8 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	}
 	if job.Mode == "grid" && !math.IsInf(native, 1) {
 		res.NativeLongEdge = int(math.Round(native * float64(max(job.Width, job.Height))))
+	} else {
+		res.NativeLongEdge = job.PrevNative // regions do not lower it
 	}
 	inputs := append([]string{job.Image}, sources...)
 	asset, err := s.store.Save("image", name, "png", data, "image/png", &store.Provenance{
@@ -684,6 +699,8 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	case rejected > 0:
 		res.Warnings = append(res.Warnings, fmt.Sprintf("%d tile(s) were rejected and keep the underlying image: %s", rejected, rejectSummary(res.Tiles)))
 		res.Next = "Retry the rejected tiles with edit_image (same crop, reference and aspectRatio; insist on returning exactly the crop's framing), at most twice each, then call stitch_tiles again with every tile. If a tile keeps failing, deliver without it and say so."
+	case job.Pass == 1 && res.NativeLongEdge >= max(job.OutWidth, job.OutHeight):
+		res.Next = fmt.Sprintf("Inspect the preview and the 100%% details for seams, doubling or drift, and for defects such as mismatched eyes or garbled hands or text. The tiles already carry detail at full resolution, so another pass adds no resolution: only to fix a visible defect, call tile_image with image = %s and a few targeted regions, then edit those crops without referenceImages. Otherwise deliver %s.", asset.URI, asset.Path)
 	case job.Pass == 1:
 		res.Next = fmt.Sprintf("Inspect the preview and the 100%% details for seams, doubling or drift. For a refinement pass, call tile_image with image = %s and tight regions (each about a third of the image or less) for faces, hands, text or fine materials, then edit those crops without referenceImages; otherwise deliver %s.", asset.URI, asset.Path)
 	default:

@@ -155,7 +155,7 @@ func TestTileAndStitchTwoPasses(t *testing.T) {
 			t.Fatalf("tile report %+v", tr)
 		}
 	}
-	if len(out.Previews) != 5 || len(out.Details) != 4 {
+	if len(out.Previews) != 5 || len(out.Details) != 4 || !strings.Contains(out.Next, "adds no resolution") {
 		t.Fatalf("%d previews, details %v", len(out.Previews), out.Details)
 	}
 	got := decodeFile(t, out.File.Path)
@@ -176,14 +176,15 @@ func TestTileAndStitchTwoPasses(t *testing.T) {
 	if res2.Pass != 2 || res2.Mode != "regions" || res2.Output != (Size{1024, 768}) || res2.Reference != nil || !strings.Contains(res2.Next, "without referenceImages") {
 		t.Fatalf("pass 2 plan = %+v", res2)
 	}
-	if res2.Tiles[0].Label != "left-eye" || !strings.Contains(strings.Join(res2.Warnings, " "), "longEdge is ignored") || strings.Contains(strings.Join(res2.Warnings, " "), "tighter regions") {
+	if res2.Tiles[0].Label != "left-eye" || !strings.Contains(strings.Join(res2.Warnings, " "), "longEdge is ignored") || strings.Contains(strings.Join(res2.Warnings, " "), "tighter regions") ||
+		!strings.Contains(strings.Join(res2.Warnings, " "), "adds no resolution") || !strings.Contains(res2.Cost.Breakdown, "1 input image") {
 		t.Fatalf("pass 2 tile %+v warnings %v", res2.Tiles[0], res2.Warnings)
 	}
 	out2, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res2.Job, Tiles: fakeEdits(t, e, truth, 1, res2)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out2.Pass != 2 || out2.File.Name != "portrait-upscaled-p2.png" || out2.Tiles[0].Status != "placed" || len(out2.Details) != 1 {
+	if out2.Pass != 2 || out2.File.Name != "portrait-upscaled-p2.png" || out2.Tiles[0].Status != "placed" || len(out2.Details) != 1 || out2.NativeLongEdge != out.NativeLongEdge {
 		t.Fatalf("pass 2 = %+v", out2)
 	}
 }
@@ -282,7 +283,9 @@ func TestStitchTilesErrors(t *testing.T) {
 
 func TestTileImageWarnsAboutLargeRegions(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
-	img := image.NewRGBA(image.Rect(0, 0, 3000, 2000))
+	// At 1K the model renders about 1250 px per crop, so a region spanning
+	// most of a 1200 px image gains almost nothing.
+	img := image.NewRGBA(image.Rect(0, 0, 1200, 800))
 	for i := range img.Pix {
 		img.Pix[i] = uint8(i * 7)
 	}
@@ -290,7 +293,7 @@ func TestTileImageWarnsAboutLargeRegions(t *testing.T) {
 	if err := os.WriteFile(src, encode(t, img), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Regions: []TileRegion{
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, ImageSize: "1K", Regions: []TileRegion{
 		{X: 0.05, Y: 0.05, Width: 0.9, Height: 0.9, Label: "everything"},
 		{X: 0.4, Y: 0.4, Width: 0.15, Height: 0.15, Label: "detail"},
 	}})

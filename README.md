@@ -102,7 +102,7 @@ The [`skills/`](skills) directory contains [Agent Skills](https://agentskills.io
 | `gemini-speech` | Voiceovers, narration, two-speaker dialogue, voice and style selection |
 | `gemini-music` | Clips and full songs with structure, lyrics and tempo |
 | `gemini-media-production` | Multi-asset projects (storyboard → keyframes → video → voiceover → music → ffmpeg assembly) with a budget plan |
-| `gemini-upscale` | Upscaling photos past 4K (8K by default): one tile at a time with Nano Banana 2.1, then stitched, with optional refinement passes on faces, hands or text. About $1.60–3 per photo. It invents plausible detail rather than recovering it, so it is not for forensic or archival use |
+| `gemini-upscale` | Upscaling photos past 4K (8K by default): one tile at a time with Nano Banana 2.1, then stitched, with an optional fix pass for defects such as mismatched eyes. About $1.10–1.90 per photo at 8K. It invents plausible detail rather than recovering it, so it is not for forensic or archival use |
 
 Plugin installs (Claude Code, Codex, Gemini CLI, VS Code) include the skills. To install them in any Agent Skills–compatible agent, run `npx skills add mordor-forge/gemini-media-mcp`, or copy the folders into `.agents/skills/` or `~/.claude/skills/`.
 

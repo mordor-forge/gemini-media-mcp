@@ -263,7 +263,7 @@ Everything except the model calls is deterministic image processing, so it lives
 - Live testing shaped the workflow:
   - On a 121 px portrait taken to 8K, all nine pass-1 tiles aligned with matches of 0.98-1.00, after one tile the model had zoomed out was rejected and retried.
   - Refinement passes send the crop alone. Next to a close-up, the whole-photo reference made the model redraw the whole photo, which `stitch_tiles` rejected.
-  - `tile_image` warns about regions too large to gain detail.
+  - With 4K tiles, pass 1 already renders about 10,000 px of detail for an 8K output. Tight regions re-rendered at 2.4x came back no sharper, so later passes fix content (a pair of mismatched irises) but add resolution only when the output exceeds what pass 1 renders. The skill therefore runs one pass plus targeted fixes, not the 2-3 passes of the original workflow. `tile_image` reports when an image is already saturated, and otherwise warns about regions too large to gain detail.
 - Both tools are free and make no network calls. The agent runs the paid `edit_image` calls in between, in parallel, under the usual budgets and approvals. The `gemini-upscale` skill holds the prompt, region choice and review loop. It states that the added detail is invented, not recovered.
 
 ## 3. What I deliberately did not do (follow-ups)
