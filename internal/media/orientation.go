@@ -3,6 +3,8 @@ package media
 import (
 	"encoding/binary"
 	"image"
+
+	"golang.org/x/image/draw"
 )
 
 // jpegOrientation returns the EXIF orientation (1-8) stored in a JPEG, or 1
@@ -73,23 +75,28 @@ func tiffOrientation(t []byte) int {
 }
 
 // orient returns img as it should be displayed for an EXIF orientation:
-// 2-4 mirror or turn it in place, 5-8 swap its width and height.
+// 2-4 mirror or turn it in place, 5-8 swap its width and height. Rows are
+// converted a band at a time, so a decoded JPEG is never copied whole
+// besides the result.
 func orient(img image.Image, o int) image.Image {
 	if o < 2 || o > 8 {
 		return img
 	}
-	src, ok := normalizeRGBA(img).(*image.RGBA)
-	if !ok {
-		return img
-	}
-	w, h := src.Rect.Dx(), src.Rect.Dy()
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
 	ow, oh := w, h
 	if o >= 5 {
 		ow, oh = h, w
 	}
 	dst := image.NewRGBA(image.Rect(0, 0, ow, oh))
+	const bandRows = 256
+	band := image.NewRGBA(image.Rect(0, 0, w, min(bandRows, h)))
 	for y := range h {
-		row := src.Pix[y*src.Stride : y*src.Stride+4*w]
+		if y%bandRows == 0 {
+			draw.Draw(band, band.Rect, img, image.Pt(b.Min.X, b.Min.Y+y), draw.Src)
+		}
+		r := y % bandRows
+		row := band.Pix[r*band.Stride : r*band.Stride+4*w]
 		for x := range w {
 			var dx, dy int
 			switch o {

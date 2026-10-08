@@ -719,3 +719,27 @@ func TestTileImageValidatesTheInputsEachPassSends(t *testing.T) {
 		t.Fatalf("refinement pass: %v", err)
 	}
 }
+
+func TestTileImageReferenceFromASeparateOriginal(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	dir := t.TempDir()
+	img := filepath.Join(dir, "clean.png")
+	if err := os.WriteFile(img, encode(t, scene(320, 640, 15)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The original is a sideways-stored phone JPEG: 64x32 with EXIF 6.
+	orig := filepath.Join(dir, "phone.jpg")
+	if err := os.WriteFile(orig, exifJPEG(t, 6, binary.LittleEndian), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: img, Original: orig, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := res.Reference; r == nil || r.Width != 32 || r.Height != 64 {
+		t.Fatalf("reference = %+v, want the original turned upright (32x64)", r)
+	}
+	if p, err := e.store.Provenance(res.Reference.Name); err != nil || p.Inputs[0] != orig {
+		t.Fatalf("reference provenance = %+v %v", p, err)
+	}
+}

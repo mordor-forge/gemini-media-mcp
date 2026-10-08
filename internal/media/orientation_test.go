@@ -90,3 +90,71 @@ func TestDecodeImageAppliesEXIFOrientation(t *testing.T) {
 		}
 	}
 }
+
+func TestOrientMatchesAPixelMapAcrossBands(t *testing.T) {
+	// A decoded JPEG (YCbCr) taller than one band.
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, scene(70, 600, 21), &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+	src, err := jpeg.Decode(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := src.(*image.YCbCr); !ok {
+		t.Fatalf("decoded %T, want *image.YCbCr", src)
+	}
+	ref := normalizeRGBA(src).(*image.RGBA)
+	w, h := 70, 600
+	for o := 2; o <= 8; o++ {
+		got := orient(src, o).(*image.RGBA)
+		for y := range h {
+			for x := range w {
+				var dx, dy int
+				switch o {
+				case 2:
+					dx, dy = w-1-x, y
+				case 3:
+					dx, dy = w-1-x, h-1-y
+				case 4:
+					dx, dy = x, h-1-y
+				case 5:
+					dx, dy = y, x
+				case 6:
+					dx, dy = h-1-y, x
+				case 7:
+					dx, dy = h-1-y, w-1-x
+				case 8:
+					dx, dy = y, w-1-x
+				}
+				if got.RGBAAt(dx, dy) != ref.RGBAAt(x, y) {
+					t.Fatalf("orientation %d: pixel %d,%d -> %d,%d = %v, want %v", o, x, y, dx, dy, got.RGBAAt(dx, dy), ref.RGBAAt(x, y))
+				}
+			}
+		}
+	}
+}
+
+func TestDecodeShrunkTurnsAfterShrinking(t *testing.T) {
+	// 64x32, left half red, turned clockwise: 32x64 with red on top.
+	in := &store.Input{Data: exifJPEG(t, 6, binary.BigEndian), MIMEType: "image/jpeg", Ref: "x.jpg"}
+	img, err := decodeShrunk(in, "original", maxPlanPixels, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := img.Bounds(); b.Dx() != 8 || b.Dy() != 16 {
+		t.Fatalf("shrunk to %v, want 8x16 (64/4 x 32/4, turned)", b)
+	}
+	if !isRed(img.At(4, 2)) || isRed(img.At(4, 13)) {
+		t.Fatal("the shrunk image is not turned like the original")
+	}
+	// Box averages: a flat block stays exactly its color.
+	flat := image.NewRGBA(image.Rect(0, 0, 9, 7))
+	for i := range flat.Pix {
+		flat.Pix[i] = uint8(40 + i%4*50)
+	}
+	s := shrink(flat, 3)
+	if s.Rect.Dx() != 3 || s.Rect.Dy() != 2 || s.RGBAAt(2, 1) != (color.RGBA{40, 90, 140, 190}) {
+		t.Fatalf("shrink = %v %v", s.Rect, s.RGBAAt(2, 1))
+	}
+}

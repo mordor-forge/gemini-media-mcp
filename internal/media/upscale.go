@@ -15,6 +15,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -236,12 +237,6 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	if err != nil {
 		return nil, err
 	}
-	img, err := decodeImage(in, "image", maxPlanPixels)
-	if err != nil {
-		return nil, err
-	}
-	pw, ph := img.Bounds().Dx(), img.Bounds().Dy()
-
 	// A stitch_tiles result carries the pass, original and reference.
 	pass, original, reference, jobName := 1, strings.TrimSpace(req.Original), "", ""
 	prevNative := 0 // model-rendered long edge the image already carries
@@ -267,6 +262,29 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	}
 	if _, err := m.Validate(catalog.Params{"imageSize": size, "referenceImages": strconv.Itoa(editInputs)}, s.backend()); err != nil {
 		return nil, err
+	}
+
+	// A separate original only feeds the small reference copy: shrink it
+	// before the image is decoded, so the two are never held full size
+	// together.
+	var refSrc image.Image
+	if pass == 1 && original != req.Image {
+		oin, err := s.loadLocal(original, "original")
+		if err != nil {
+			return nil, err
+		}
+		if refSrc, err = decodeShrunk(oin, "original", maxPlanPixels, maxCropPixels); err != nil {
+			return nil, err
+		}
+		runtime.GC() // release its full-size decode before the image's
+	}
+	img, err := decodeImage(in, "image", maxPlanPixels)
+	if err != nil {
+		return nil, err
+	}
+	pw, ph := img.Bounds().Dx(), img.Bounds().Dy()
+	if refSrc == nil {
+		refSrc = img
 	}
 
 	outW, outH := pw, ph
@@ -386,7 +404,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	// reference next to a close-up made the model redraw the whole photo.
 	var refAsset *store.Asset
 	if pass == 1 {
-		if refAsset, err = s.tileReference(original, name, img, imageRef); err != nil {
+		if refAsset, err = s.tileReference(original, name, refSrc); err != nil {
 			return nil, err
 		}
 		reference = refAsset.URI
@@ -496,18 +514,9 @@ func (s *Service) durableRef(ref string, in *store.Input, saveAs string) (string
 }
 
 // tileReference saves the copy of the original sent with every first-pass
-// tile, made from original (or from the already decoded image).
-func (s *Service) tileReference(original, name string, img image.Image, imageRef string) (*store.Asset, error) {
-	src := img
-	if original != imageRef {
-		in, err := s.loadLocal(original, "original")
-		if err != nil {
-			return nil, err
-		}
-		if src, err = decodeImage(in, "original", maxPlanPixels); err != nil {
-			return nil, err
-		}
-	}
+// tile, made from src: the shrunk original, or the image when it is the
+// original.
+func (s *Service) tileReference(original, name string, src image.Image) (*store.Asset, error) {
 	ref := cropImage(src, tiles.Box{W: src.Bounds().Dx(), H: src.Bounds().Dy()}, maxCropPixels)
 	data, err := encodePNG(ref)
 	if err != nil {
@@ -1034,26 +1043,78 @@ func provenanceRef(ref string) string {
 }
 
 // decodeImage decodes an image of at most limit pixels, checked from its
-// header before any pixels are allocated.
+// header before any pixels are allocated, turned by its EXIF orientation.
 func decodeImage(in *store.Input, what string, limit int) (image.Image, error) {
-	if err := requireImage(in, what); err != nil {
+	img, format, err := decodeRaw(in, what, limit)
+	if err != nil {
 		return nil, err
-	}
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(in.Data))
-	if err != nil {
-		return nil, apperr.Invalidf("%s %s: cannot decode %s (%v); use PNG, JPEG or WebP", what, in.Ref, in.MIMEType, err)
-	}
-	if cfg.Width*cfg.Height > limit {
-		return nil, apperr.Invalidf("%s %s is %dx%d; the limit is %d megapixels", what, in.Ref, cfg.Width, cfg.Height, limit/1_000_000)
-	}
-	img, format, err := image.Decode(bytes.NewReader(in.Data))
-	if err != nil {
-		return nil, apperr.Invalidf("%s %s: %v", what, in.Ref, err)
 	}
 	if format == "jpeg" {
 		img = orient(img, jpegOrientation(in.Data))
 	}
 	return img, nil
+}
+
+// decodeShrunk is decodeImage for an image only needed small: it is
+// box-averaged to a long side under 2*maxPx before being turned, a band of
+// rows at a time, so it costs its decoded size once.
+func decodeShrunk(in *store.Input, what string, limit, maxPx int) (image.Image, error) {
+	img, format, err := decodeRaw(in, what, limit)
+	if err != nil {
+		return nil, err
+	}
+	if f := max(img.Bounds().Dx(), img.Bounds().Dy()) / maxPx; f >= 2 {
+		img = shrink(img, f)
+	}
+	if format == "jpeg" {
+		img = orient(img, jpegOrientation(in.Data))
+	}
+	return img, nil
+}
+
+func decodeRaw(in *store.Input, what string, limit int) (image.Image, string, error) {
+	if err := requireImage(in, what); err != nil {
+		return nil, "", err
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(in.Data))
+	if err != nil {
+		return nil, "", apperr.Invalidf("%s %s: cannot decode %s (%v); use PNG, JPEG or WebP", what, in.Ref, in.MIMEType, err)
+	}
+	if cfg.Width*cfg.Height > limit {
+		return nil, "", apperr.Invalidf("%s %s is %dx%d; the limit is %d megapixels", what, in.Ref, cfg.Width, cfg.Height, limit/1_000_000)
+	}
+	img, format, err := image.Decode(bytes.NewReader(in.Data))
+	if err != nil {
+		return nil, "", apperr.Invalidf("%s %s: %v", what, in.Ref, err)
+	}
+	return img, format, nil
+}
+
+// shrink box-averages img by an integer factor f (dropping the last
+// partial block), converting f rows at a time.
+func shrink(img image.Image, f int) *image.RGBA {
+	b := img.Bounds()
+	w, h := b.Dx()/f, b.Dy()/f
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	band := image.NewRGBA(image.Rect(0, 0, w*f, f))
+	sum := make([]uint32, 4*w)
+	div := uint32(f * f)
+	for y := range h {
+		draw.Draw(band, band.Rect, img, image.Pt(b.Min.X, b.Min.Y+y*f), draw.Src)
+		clear(sum)
+		for r := range f {
+			row := band.Pix[r*band.Stride : r*band.Stride+4*w*f]
+			for x := range w * f {
+				s, p := sum[4*(x/f):4*(x/f)+4], row[4*x:4*x+4]
+				s[0], s[1], s[2], s[3] = s[0]+uint32(p[0]), s[1]+uint32(p[1]), s[2]+uint32(p[2]), s[3]+uint32(p[3])
+			}
+		}
+		out := dst.Pix[y*dst.Stride : y*dst.Stride+4*w]
+		for i, v := range sum {
+			out[i] = uint8((v + div/2) / div)
+		}
+	}
+	return dst
 }
 
 // normalizeRGBA returns img as an *image.RGBA at the origin (copying only
