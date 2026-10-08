@@ -936,3 +936,52 @@ func TestTileReferenceShrinksLargeImages(t *testing.T) {
 		t.Fatalf("reference = %dx%d %s", a.Width, a.Height, a.MIMEType)
 	}
 }
+
+// Job files and edited tiles have their own size limits, and an inline job
+// is recorded in provenance by type rather than copied.
+func TestStitchTilesBoundsJobAndTileFiles(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(512, 384, 24)
+	src := filepath.Join(t.TempDir(), "sizes.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edits := fakeEdits(t, e, truth, 4, res)
+	_, jobData, err := e.store.Open(res.Job)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inline := "data:application/json;base64," + base64.StdEncoding.EncodeToString(jobData)
+	out, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: inline, Tiles: edits})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, err := e.store.Provenance(out.File.Name); err != nil || p.Params["job"] != "data:application/json" {
+		t.Fatalf("provenance job = %v (%v)", p.Params["job"], err)
+	}
+
+	padded := filepath.Join(e.store.Dir(), "padded.json")
+	if err := os.WriteFile(padded, append(jobData, bytes.Repeat([]byte(" "), maxJobBytes)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: padded, Tiles: edits}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("padded job: err = %v", err)
+	}
+
+	// A tile with junk appended past its end is refused before it is read.
+	path, tileData, err := e.store.Open(edits[0].Image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(tileData, make([]byte, maxTileBytes)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits}); apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "tile 1") {
+		t.Fatalf("oversized tile file: err = %v", err)
+	}
+}

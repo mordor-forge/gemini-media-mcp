@@ -61,7 +61,12 @@ const (
 	// localInputBytes bounds files read for local processing (not sent to
 	// Google), such as a stitched 8K PNG.
 	localInputBytes = 512 << 20
-	alignWorkers    = 2
+	// maxTileBytes bounds an edited tile's file (a 4K PNG is about 25 MB),
+	// so the tiles decoded in parallel hold little beyond their pixels.
+	maxTileBytes = 64 << 20
+	// maxJobBytes bounds a tile_image job file (a few KB).
+	maxJobBytes  = 1 << 20
+	alignWorkers = 2
 	// minRegionGain is the least output-to-image pixel ratio at which a
 	// refinement region adds visible detail.
 	minRegionGain = 2.0
@@ -433,6 +438,10 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 
 	// stitch_tiles reloads the tiled image, and job files and provenance
 	// record references, so data: URIs are saved and paths made absolute.
+	// Nothing is written once the request is gone.
+	if err := stopped(); err != nil {
+		return nil, err
+	}
 	imageRef, err := s.durableRef(req.Image, in, prefix+"-source")
 	if err != nil {
 		return nil, err
@@ -454,6 +463,9 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	// reference next to a close-up made the model redraw the whole photo.
 	var refAsset *store.Asset
 	if pass == 1 {
+		if err := stopped(); err != nil {
+			return nil, err
+		}
 		if refAsset, err = s.tileReference(original, name, refSrc); err != nil {
 			return nil, err
 		}
@@ -656,7 +668,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	if len(req.Details) > maxDetails {
 		return nil, apperr.Invalidf("at most %d detail points (got %d)", maxDetails, len(req.Details))
 	}
-	jin, err := s.loadLocal(req.Job, "job")
+	jin, err := s.loadLocalMax(req.Job, "job", maxJobBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -899,7 +911,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	asset, err := s.store.SaveWithProvenance("image", name, "png", data, "image/png", &store.Provenance{
 		Tool: "stitch_tiles", Model: job.Model, Inputs: inputs,
 		// tile_image trusts this record only for these exact bytes.
-		Params: map[string]any{"pass": job.Pass, "name": job.Name, "original": job.Original, "reference": job.Reference, "job": req.Job, "nativeLongEdge": res.NativeLongEdge, "sha256": sha(data)},
+		Params: map[string]any{"pass": job.Pass, "name": job.Name, "original": job.Original, "reference": job.Reference, "job": provenanceRef(req.Job), "nativeLongEdge": res.NativeLongEdge, "sha256": sha(data)},
 	})
 	if err != nil {
 		return nil, s.saveFailed("stitch_tiles", "the stitched image", err)
@@ -1106,8 +1118,13 @@ func detailPoints(asked []DetailPoint, job tileJob, ps []tiles.Placement) []Deta
 // loadLocal reads an input for local processing (not sent to Google), with
 // a size limit large enough for stitched images.
 func (s *Service) loadLocal(ref, what string) (*store.Input, error) {
+	return s.loadLocalMax(ref, what, localInputBytes)
+}
+
+// loadLocalMax is loadLocal with its own size limit in bytes.
+func (s *Service) loadLocalMax(ref, what string, maxBytes int64) (*store.Input, error) {
 	pol := s.inputPolicy()
-	pol.MaxBytes = localInputBytes
+	pol.MaxBytes = maxBytes
 	in, err := s.store.LoadInput(ref, pol)
 	if err != nil {
 		return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s: %v", what, err),
@@ -1119,7 +1136,7 @@ func (s *Service) loadLocal(ref, what string) (*store.Input, error) {
 // loadTile decodes edited tile index and returns the sha256 of its bytes.
 func (s *Service) loadTile(ref string, index int) (image.Image, string, error) {
 	what := fmt.Sprintf("tile %d", index)
-	in, err := s.loadLocal(ref, what)
+	in, err := s.loadLocalMax(ref, what, maxTileBytes)
 	if err != nil {
 		return nil, "", err
 	}
