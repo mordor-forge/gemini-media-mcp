@@ -6,8 +6,9 @@ Gemini CLI extension, the Claude Desktop bundle and the Docker image ship their
 own binary and skip that step.
 
 The MCP server is called `gemini-media`; its tools are `generate_image`,
-`edit_image`, `generate_video`, `get_video`, `extend_video`, `edit_video`, `generate_speech`,
-`generate_music`, `list_models`, `estimate_cost`, `get_usage` and `get_config`.
+`edit_image`, `tile_image`, `stitch_tiles`, `generate_video`, `get_video`, `extend_video`,
+`edit_video`, `generate_speech`, `generate_music`, `list_models`, `estimate_cost`, `get_usage`
+and `get_config`.
 
 ## 1. Install the binary
 
@@ -334,7 +335,8 @@ directories listed in `GEMINI_MEDIA_INPUT_DIRS`, unless
 ## Skills only
 
 The skills (`gemini-image`, `gemini-video`, `gemini-speech`, `gemini-music`,
-`gemini-media-production`) teach an agent how to prompt and budget each medium.
+`gemini-media-production`, `gemini-upscale`) teach an agent how to prompt and
+budget each medium.
 Plugins above already include them; for any other agent:
 
 ```sh

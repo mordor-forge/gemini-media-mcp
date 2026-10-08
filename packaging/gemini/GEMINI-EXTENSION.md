@@ -2,8 +2,10 @@
 
 The `gemini-media` MCP server generates images (Nano Banana), video (Veo and
 Gemini Omni, which also edits clips), speech (Gemini TTS) and music (Lyria). Skills in this extension (gemini-image,
-gemini-video, gemini-speech, gemini-music, gemini-media-production) hold the
-detailed prompting guides; activate the matching one before generating.
+gemini-video, gemini-speech, gemini-music, gemini-media-production,
+gemini-upscale) hold the detailed prompting guides; activate the matching one
+before generating. Upscaling past 4K uses `tile_image`, `edit_image` per tile
+and `stitch_tiles` (gemini-upscale).
 
 - Every call costs real money and reports its estimated cost. Use
   `estimate_cost` before expensive requests (4K images, 1080p/4k or
