@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/png"
@@ -12,6 +14,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -283,6 +286,20 @@ func TestStitchTilesErrors(t *testing.T) {
 		t.Fatalf("partial stitch = %+v", out)
 	}
 
+	// A tile passed inline is recorded in provenance by type, not copied.
+	_, tileData, err := e.store.Open(edits[0].Image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inline := append([]StitchTile{{Tile: edits[0].Tile, Image: "data:image/png;base64," + base64.StdEncoding.EncodeToString(tileData)}}, edits[1:]...)
+	out, err = e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: inline, OutputName: "inline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, err := e.store.Provenance(out.File.Name); err != nil || !slices.Contains(p.Inputs, "data:image/png") || strings.Contains(strings.Join(p.Inputs, " "), "base64") {
+		t.Fatalf("provenance inputs = %v (%v)", p.Inputs, err)
+	}
+
 	// A job file with tampered geometry is refused before anything is allocated.
 	_, data, err := e.store.Open(res.Job)
 	if err != nil {
@@ -461,6 +478,24 @@ func TestTileImageRefusesExtremePanoramas(t *testing.T) {
 	}
 	_, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 1, ImageSize: "1K"})
 	if apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "too elongated") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// Tiles are checked against the tile limit from their header, before any
+// pixels are allocated.
+func TestDecodeImageChecksTheLimitFromTheHeader(t *testing.T) {
+	// A PNG that is only a signature and an IHDR chunk claiming 8000x8000.
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:], 8000)
+	binary.BigEndian.PutUint32(ihdr[4:], 8000)
+	ihdr[8], ihdr[9] = 8, 6 // 8-bit RGBA
+	chunk := append([]byte("IHDR"), ihdr...)
+	png := append([]byte("\x89PNG\r\n\x1a\n"), 0, 0, 0, 13)
+	png = append(png, chunk...)
+	png = binary.BigEndian.AppendUint32(png, crc32.ChecksumIEEE(chunk))
+	_, err := decodeImage(&store.Input{Data: png, MIMEType: "image/png", Ref: "big.png"}, "tile 1", maxTilePixels)
+	if apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "limit is 40 megapixels") {
 		t.Fatalf("err = %v", err)
 	}
 }

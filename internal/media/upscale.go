@@ -39,6 +39,9 @@ const (
 	maxCanvasPixels = 70_000_000
 	// maxPlanPixels bounds images tile_image and stitch_tiles decode.
 	maxPlanPixels = 100_000_000
+	// maxTilePixels bounds an edited tile: the model returns at most about
+	// 17 megapixels (4K), and stitch_tiles decodes tiles two at a time.
+	maxTilePixels = 40_000_000
 	// maxCropPixels is the long side of crops and of the reference sent to
 	// the model; the model samples inputs at about 1K, so larger files only
 	// cost upload time and request size.
@@ -210,7 +213,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	if err != nil {
 		return nil, err
 	}
-	img, err := decodeImage(in, "image")
+	img, err := decodeImage(in, "image", maxPlanPixels)
 	if err != nil {
 		return nil, err
 	}
@@ -461,7 +464,7 @@ func (s *Service) tileReference(original, name string, img image.Image, imageRef
 		if err != nil {
 			return nil, err
 		}
-		if src, err = decodeImage(in, "original"); err != nil {
+		if src, err = decodeImage(in, "original", maxPlanPixels); err != nil {
 			return nil, err
 		}
 	}
@@ -543,9 +546,6 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	if len(req.Details) > maxDetails {
 		return nil, apperr.Invalidf("at most %d detail points (got %d)", maxDetails, len(req.Details))
 	}
-	// Stitching holds several hundred MB for a few seconds; hand it back
-	// to the OS afterwards rather than keeping it in a long-lived server.
-	defer debug.FreeOSMemory()
 	jin, err := s.loadLocal(req.Job, "job")
 	if err != nil {
 		return nil, err
@@ -585,10 +585,14 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	if sha(pin.Data) != job.ImageSHA256 {
 		return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s changed after tile_image cut it", job.Image), Hint: "Run tile_image again on the current file."}
 	}
-	plan, err := decodeImage(pin, "tiled image")
+	plan, err := decodeImage(pin, "tiled image", maxPlanPixels)
 	if err != nil {
 		return nil, err
 	}
+	// From here stitching holds several hundred MB for a few seconds; hand
+	// it back to the OS afterwards rather than keeping it in a long-lived
+	// server (not on the cheap rejections above).
+	defer debug.FreeOSMemory()
 	if plan.Bounds().Dx() != job.Width || plan.Bounds().Dy() != job.Height {
 		return nil, apperr.Invalidf("%s is %dx%d, not the %dx%d tile_image cut", job.Image, plan.Bounds().Dx(), plan.Bounds().Dy(), job.Width, job.Height)
 	}
@@ -734,7 +738,10 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		// treating it as saturated.
 		res.NativeLongEdge = 0
 	}
-	inputs := append([]string{job.Image}, sources...)
+	inputs := []string{job.Image}
+	for _, src := range sources {
+		inputs = append(inputs, provenanceRef(src))
+	}
 	asset, err := s.store.Save("image", name, "png", data, "image/png", &store.Provenance{
 		Tool: "stitch_tiles", Model: job.Model, Inputs: inputs,
 		Params: map[string]any{"pass": job.Pass, "name": job.Name, "original": job.Original, "reference": job.Reference, "job": req.Job, "nativeLongEdge": res.NativeLongEdge},
@@ -955,10 +962,24 @@ func (s *Service) loadTile(ref string, index int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return decodeImage(in, what)
+	return decodeImage(in, what, maxTilePixels)
 }
 
-func decodeImage(in *store.Input, what string) (image.Image, error) {
+// provenanceRef is ref as recorded in provenance: inline data is named by
+// its type, like store inputs, rather than copied.
+func provenanceRef(ref string) string {
+	if mime, ok := strings.CutPrefix(ref, "data:"); ok {
+		if i := strings.IndexAny(mime, ";,"); i >= 0 {
+			mime = mime[:i]
+		}
+		return "data:" + mime
+	}
+	return ref
+}
+
+// decodeImage decodes an image of at most limit pixels, checked from its
+// header before any pixels are allocated.
+func decodeImage(in *store.Input, what string, limit int) (image.Image, error) {
 	if err := requireImage(in, what); err != nil {
 		return nil, err
 	}
@@ -966,8 +987,8 @@ func decodeImage(in *store.Input, what string) (image.Image, error) {
 	if err != nil {
 		return nil, apperr.Invalidf("%s %s: cannot decode %s (%v); use PNG, JPEG or WebP", what, in.Ref, in.MIMEType, err)
 	}
-	if cfg.Width*cfg.Height > maxPlanPixels {
-		return nil, apperr.Invalidf("%s %s is %dx%d; the limit is %d megapixels", what, in.Ref, cfg.Width, cfg.Height, maxPlanPixels/1_000_000)
+	if cfg.Width*cfg.Height > limit {
+		return nil, apperr.Invalidf("%s %s is %dx%d; the limit is %d megapixels", what, in.Ref, cfg.Width, cfg.Height, limit/1_000_000)
 	}
 	img, format, err := image.Decode(bytes.NewReader(in.Data))
 	if err != nil {

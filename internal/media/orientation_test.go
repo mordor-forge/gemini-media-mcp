@@ -72,7 +72,7 @@ func TestDecodeImageAppliesEXIFOrientation(t *testing.T) {
 		if got := jpegOrientation(data); got != int(c.o) {
 			t.Fatalf("orientation %d read as %d", c.o, got)
 		}
-		img, err := decodeImage(&store.Input{Data: data, MIMEType: "image/jpeg", Ref: "x.jpg"}, "image")
+		img, err := decodeImage(&store.Input{Data: data, MIMEType: "image/jpeg", Ref: "x.jpg"}, "image", maxPlanPixels)
 		if err != nil {
 			t.Fatal(err)
 		}
