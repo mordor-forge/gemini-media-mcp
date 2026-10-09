@@ -1,11 +1,11 @@
 ---
 name: gemini-image
-description: Generates and edits images with Google's Nano Banana models through the gemini-media MCP server - text-to-image, photo edits and retouching, multi-reference composition, product shots, posters, logos and infographics with legible text, stickers and icons, variations, and search-grounded visuals of current events or real places. Use when the user wants to create, draw, design, mock up, restyle, relight, extend or combine pictures, or needs keyframes for a video, even if they never mention Gemini. Not for charts plotted from data, SVG or code-drawn graphics, video clips (gemini-video) or audio.
+description: Generates and edits images with Google's Nano Banana models through the gemini-media MCP server - text-to-image, photo edits and retouching, multi-reference composition, product shots, posters, logos and infographics with legible text, stickers and icons, variations, and search-grounded visuals of current events or real places. Use when the user wants to create, draw, design, mock up, restyle, relight, extend or combine pictures, or needs keyframes for a video, even if they never mention Gemini. Not for charts plotted from data, SVG or code-drawn graphics, upscaling past 4K (gemini-upscale), video clips (gemini-video) or audio.
 license: Apache-2.0
 compatibility: Requires the gemini-media MCP server (https://github.com/mordor-forge/gemini-media-mcp) with a Gemini API key or Vertex AI project.
 metadata:
   author: mordor-forge
-  version: "1.0.0"
+  version: "1.1.0"
   mcp-server: gemini-media
 ---
 
@@ -73,7 +73,7 @@ Prices and capabilities change: call `gemini-media:list_models` (`mediaType: "im
 4. **Generate** with `gemini-media:generate_image`.
 5. **Review** against the intent: requested elements present, text spelled exactly, hands and faces, composition, nothing extra. Read the returned `text` and `warnings`.
 6. **Iterate** with `gemini-media:edit_image`: one specific change per call, and say what must stay unchanged. If quality drifts after three or four edits, regenerate from a refined prompt that folds in what you learned, passing the best result as a reference.
-7. **Finalize.** For a high-resolution master, re-run the winning prompt at `2K`/`4K`, or edit the chosen image with `imageSize` set and "keep everything unchanged" (expect small differences). Deliver path, `uri`, model and cost.
+7. **Finalize.** For a high-resolution master, re-run the winning prompt at `2K`/`4K`, or edit the chosen image with `imageSize` set and "keep everything unchanged" (expect small differences). Past 4K (large prints, 8K), use **gemini-upscale**. Deliver path, `uri`, model and cost.
 
 ## Prompt craft
 
@@ -144,6 +144,7 @@ Never loop on an error that costs money; one retry at most.
 
 - Animate a still or build keyframes for video: **gemini-video** (pass the image `uri` as `image`, `lastFrame` or `referenceImages`; generate keyframes at 16:9 or 9:16 to match the clip).
 - Album art or cover for a track: **gemini-music** (images can also inspire the music).
+- Enlarge a finished image or photo past 4K with added detail: **gemini-upscale**.
 - Multi-asset projects (promo, ad, story video with voiceover and music): **gemini-media-production**.
 
 ## References

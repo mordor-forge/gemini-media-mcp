@@ -73,7 +73,22 @@ func (s *Store) Dir() string { return s.dir }
 
 // Save writes data under a unique name. kind is a short prefix (image, video,
 // speech, music); name is an optional caller-chosen base name; ext has no dot.
+// Provenance is best-effort.
 func (s *Store) Save(kind, name, ext string, data []byte, mimeType string, prov *Provenance) (*Asset, error) {
+	return s.save(kind, name, ext, data, mimeType, prov, false)
+}
+
+// SaveWithProvenance is Save for an asset whose provenance a later step
+// relies on: when the sidecar cannot be written, the asset is removed and
+// the error returned.
+func (s *Store) SaveWithProvenance(kind, name, ext string, data []byte, mimeType string, prov *Provenance) (*Asset, error) {
+	if prov == nil {
+		return nil, errors.New("SaveWithProvenance needs a provenance record")
+	}
+	return s.save(kind, name, ext, data, mimeType, prov, true)
+}
+
+func (s *Store) save(kind, name, ext string, data []byte, mimeType string, prov *Provenance, required bool) (*Asset, error) {
 	if len(data) == 0 {
 		return nil, errors.New("refusing to save empty media")
 	}
@@ -134,7 +149,10 @@ func (s *Store) Save(kind, name, ext string, data []byte, mimeType string, prov 
 		if prov.CreatedAt.IsZero() {
 			prov.CreatedAt = s.now().UTC()
 		}
-		_ = s.writeProvenance(a.Name, prov) // provenance is best-effort
+		if err := s.writeProvenance(a.Name, prov); err != nil && required {
+			_ = os.Remove(path)
+			return nil, fmt.Errorf("recording provenance for %s in %s: %w", a.Name, filepath.Join(s.dir, metaDir), err)
+		}
 	}
 	return a, nil
 }
@@ -188,6 +206,29 @@ func (s *Store) Provenance(name string) (*Provenance, error) {
 // target must still lie inside the output directory, so a link planted there
 // cannot expose other files through resources/read or URI inputs.
 func (s *Store) Open(uriOrName string) (string, []byte, error) {
+	return s.OpenMax(uriOrName, 0)
+}
+
+// OpenMax is Open for a file of at most maxBytes (0 = no limit), checked
+// before the file is read; a larger one is a *TooLargeError.
+func (s *Store) OpenMax(uriOrName string, maxBytes int64) (string, []byte, error) {
+	real, info, err := s.Stat(uriOrName)
+	if err != nil {
+		return "", nil, err
+	}
+	if maxBytes > 0 && info.Size() > maxBytes {
+		return "", nil, &TooLargeError{Ref: uriOrName, Size: info.Size(), Limit: maxBytes}
+	}
+	data, err := os.ReadFile(real)
+	if err != nil {
+		return "", nil, err
+	}
+	return real, data, nil
+}
+
+// Stat resolves a resource URI or bare file name like Open, without reading
+// the file.
+func (s *Store) Stat(uriOrName string) (string, os.FileInfo, error) {
 	name := strings.TrimPrefix(uriOrName, URIScheme)
 	if name == "" || name != filepath.Base(name) || strings.HasPrefix(name, ".") {
 		return "", nil, fmt.Errorf("invalid media name %q", uriOrName)
@@ -206,11 +247,7 @@ func (s *Store) Open(uriOrName string) (string, []byte, error) {
 	if !info.Mode().IsRegular() {
 		return "", nil, fmt.Errorf("%s is not a regular file", uriOrName)
 	}
-	data, err := os.ReadFile(real)
-	if err != nil {
-		return "", nil, err
-	}
-	return real, data, nil
+	return real, info, nil
 }
 
 var slugRe = regexp.MustCompile(`[^a-z0-9._-]+`)

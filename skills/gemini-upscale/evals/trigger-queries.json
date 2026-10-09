@@ -1,0 +1,18 @@
+{
+  "should_trigger": [
+    "upscale this photo to 8k for a canvas print",
+    "can you make ~/Desktop/old-family-photo.jpg bigger and sharper? I want to print it A2",
+    "enhance the detail in my landscape shot, it's only 1600px",
+    "I need a 6000px version of this portrait for a billboard mockup",
+    "turn this 1080p screenshot of my render into a 4k+ wallpaper with more detail",
+    "add more detail to the face and hands in the upscaled image you just made"
+  ],
+  "should_not_trigger": [
+    "make me a 4K poster for our jazz night",
+    "resize these PNGs to 512x512 thumbnails",
+    "remove the person in the background of rome.jpg",
+    "upscale this 720p video to 4k",
+    "compress my photo library to save space",
+    "what resolution do I need to print a 50x70 cm poster at 300 dpi?"
+  ]
+}

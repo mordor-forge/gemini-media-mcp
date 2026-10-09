@@ -29,8 +29,9 @@ Run build, vet, tests and lint before you say a change is done.
 - **E2E tests cost real money.** `internal/media/e2e_test.go` (build tag
   `e2e`) calls Google's paid APIs and needs `GEMINI_MEDIA_E2E=1` plus
   `GEMINI_API_KEY` (or Vertex credentials); the Veo test
-  (`GEMINI_MEDIA_E2E_VIDEO=1`) costs about $0.20 and the Omni test
-  (`GEMINI_MEDIA_E2E_OMNI=1`) about $0.30. Never run them - or any command that generates media - unless the
+  (`GEMINI_MEDIA_E2E_VIDEO=1`) costs about $0.20, the Omni test
+  (`GEMINI_MEDIA_E2E_OMNI=1`) about $0.30 and the tiled upscale
+  (`GEMINI_MEDIA_E2E_UPSCALE=1`) about $0.20. Never run them - or any command that generates media - unless the
   user explicitly asks. `go test ./...` without the tag is free. Live E2E
   runs are local-only; CI only compiles and vets the tagged tests.
 - **stdout is the MCP JSON-RPC channel.** In `serve` (stdio) mode any byte
@@ -63,6 +64,7 @@ internal/store         saving generated files (collision-free names), input-file
 internal/spend         append-only usage ledger (usage.jsonl) and session/daily/monthly budgets
 internal/filelock      cross-process advisory file lock (flock / LockFileEx) guarding the ledger
 internal/jobs          persisted long-running jobs (Veo operations, Omni interactions)
+internal/tiles         tiled upscale: crop planning, tile registration, color matching, blending
 internal/apperr        classified, agent-actionable errors
 internal/version       Version/Commit/Date injected with -ldflags (see .goreleaser.yaml, Dockerfile)
 ```

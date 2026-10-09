@@ -315,6 +315,24 @@ func TestVideoLifecycle(t *testing.T) {
 	}
 }
 
+// A Veo clip made before Veo left the Gemini API is not offered for
+// extension afterwards: the next step points to its last frame instead.
+func TestVeoClipAfterTheGeminiAPIShutdown(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "waves", Model: "fast", WaitSeconds: 30})
+	if err != nil || job.State != jobs.StateCompleted || !strings.Contains(job.Next, "call extend_video") {
+		t.Fatalf("before = %+v %v", job, err)
+	}
+	e.svc.now = func() time.Time { return time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC) }
+	got, err := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
+	if err != nil || strings.Contains(got.Next, "call extend_video") || !strings.Contains(got.Next, "last frame") {
+		t.Fatalf("after = %+v %v", got, err)
+	}
+	if _, err := e.svc.ExtendVideo(context.Background(), ExtendVideoRequest{JobID: job.JobID, Prompt: "more"}); err == nil {
+		t.Fatal("extending after the shutdown must fail")
+	}
+}
+
 func TestVideoValidationAndLegacyOperations(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	if _, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite", Resolution: "4k"}); apperr.KindOf(err) != apperr.Invalid {
@@ -355,7 +373,7 @@ func TestVideoFilteredIsNotBilled(t *testing.T) {
 	e.api.OpResult = func(name string) *genai.GenerateVideosOperation {
 		return &genai.GenerateVideosOperation{Name: name, Done: true, Response: &genai.GenerateVideosResponse{RAIMediaFilteredCount: 1, RAIMediaFilteredReasons: []string{"celebrity"}}}
 	}
-	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", WaitSeconds: 10})
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite", WaitSeconds: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +536,7 @@ func TestListModelsLiveAndEstimates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if est.Estimate.USD != 4.8 || !est.NeedsConfirm || len(est.Alternatives) != 3 {
+	if est.Estimate.USD != 4.8 || !est.NeedsConfirm || len(est.Alternatives) != 4 || len(est.Warnings) != 1 || !strings.Contains(est.Warnings[0], "2026-10-22") {
 		t.Fatalf("estimate = %+v", est)
 	}
 	for _, a := range est.Alternatives {
@@ -630,7 +648,7 @@ func TestBilledOutputThatCannotBeSavedIsStillCharged(t *testing.T) {
 func TestUndownloadableVideoStopsRetryingAndSettles(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	e.api.DownloadErr = genai.APIError{Code: 404, Message: "file expired"}
-	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -657,7 +675,7 @@ func TestUndownloadableVideoStopsRetryingAndSettles(t *testing.T) {
 	// Transient download errors are retried on later calls, up to a limit.
 	e2 := newEnv(t, nil, spend.Budget{})
 	e2.api.DownloadErr = genai.APIError{Code: 503, Message: "busy"}
-	job, _ = e2.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	job, _ = e2.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite"})
 	for i := 0; i < maxDownloadAttempts; i++ {
 		got, _ = e2.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
 	}
@@ -670,7 +688,7 @@ func TestCanceledWaitKeepsTheHandle(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	e.api.OpDoneAfter = 100
 	e.svc.sleep = func(context.Context, time.Duration) error { return context.Canceled }
-	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", WaitSeconds: 60})
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite", WaitSeconds: 60})
 	if err != nil || job.JobID == "" || job.State != jobs.StateWorking {
 		t.Fatalf("a canceled wait must still return the job handle: %+v %v", job, err)
 	}
@@ -691,7 +709,7 @@ func TestCanceledDownloadStaysRecoverable(t *testing.T) {
 			return ctx.Err()
 		}
 	}
-	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -716,7 +734,7 @@ func TestCanceledDownloadStaysRecoverable(t *testing.T) {
 	// A download that fails because it was canceled or timed out is retried
 	// on the next call and does not use up an attempt.
 	e2 := newEnv(t, nil, spend.Budget{})
-	job, _ = e2.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	job, _ = e2.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite"})
 	for _, interruption := range []error{context.Canceled, context.DeadlineExceeded, context.Canceled, context.DeadlineExceeded} {
 		e2.api.DownloadErr = interruption
 		got, _ = e2.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(0)})
@@ -739,13 +757,14 @@ func TestCanceledDownloadStaysRecoverable(t *testing.T) {
 // queueing behind another call that holds the job (regression).
 func TestWaitBoundsUpstreamRequestsAndLocks(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
-	e.svc.now, e.svc.sleep = time.Now, sleepCtx
 	e.api.OpDoneAfter = 1000
-	e.api.PollHook = func(ctx context.Context) error { return sleepCtx(ctx, 3*time.Second) }
-	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x"})
+	// Started at the test clock, while Veo is still offered on the Gemini API.
+	job, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "x", Model: "lite"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.svc.now, e.svc.sleep = time.Now, sleepCtx
+	e.api.PollHook = func(ctx context.Context) error { return sleepCtx(ctx, 3*time.Second) }
 	start := time.Now()
 	got, _ := e.svc.GetVideo(context.Background(), GetVideoRequest{JobID: job.JobID, WaitSeconds: ptr(1)})
 	if d := time.Since(start); d > 2*time.Second {
@@ -841,5 +860,88 @@ func TestUsageWithoutMediaIsRecordedAndBilled(t *testing.T) {
 	}
 	if got := e3.ledger.Summarize("all", 1).Recent[0]; got.Status != spend.StatusOK || got.CostUSD <= 0 || got.Usage == nil {
 		t.Fatalf("speech entry = %+v", got)
+	}
+}
+
+// When a backend has a fallback for a model, list_models names it as the
+// replacement there: it is what a request on that backend switches to.
+func TestListModelsNamesTheBackendFallback(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	override := filepath.Join(t.TempDir(), "override.yaml")
+	yaml := "models:\n" +
+		"  - id: x-video\n    family: veo\n    mediaType: video\n    status: deprecated\n    replacement: veo-3.1-generate-preview\n    fallback: gemini-omni-1.1-flash\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n" +
+		// Past the global shutdown, Resolve follows the replacement.
+		"  - id: x-old\n    family: veo\n    mediaType: video\n    status: deprecated\n    shutdown: \"2026-01-01\"\n    replacement: veo-3.1-generate-preview\n    fallback: veo-3.1-lite-generate-preview\n    backendShutdown: {gemini-api: \"2025-12-01\"}\n" +
+		// A fallback that retired since redirects on: the listing names
+		// where requests end up, not the retired hop.
+		"  - id: x-chain\n    family: veo\n    mediaType: video\n    backendShutdown: {gemini-api: \"2026-09-01\"}\n    fallback: y-chain\n" +
+		"  - id: y-chain\n    family: veo\n    mediaType: video\n    backends: [gemini-api]\n    shutdown: \"2026-09-15\"\n    replacement: gemini-omni-1.1-flash\n"
+	if err := os.WriteFile(override, []byte(yaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := catalog.NewSource(override, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Status(); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.catalog = src
+	res, err := e.svc.ListModels(context.Background(), ListModelsRequest{MediaType: "video", IncludeInactive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"x-video": "gemini-omni-1.1-flash", "x-old": "veo-3.1-generate-preview", "x-chain": "gemini-omni-1.1-flash", "y-chain": "gemini-omni-1.1-flash"}
+	for _, m := range res.Models {
+		if r, ok := want[m.ID]; ok {
+			if m.Replacement != r {
+				t.Errorf("%s replacement = %q, want %q", m.ID, m.Replacement, r)
+			}
+			if resolved, err := e.svc.catalog.Get().Resolve(m.ID, "video", "gemini-api", e.svc.now()); !m.OnBackend && (err != nil || resolved.Model.ID != r) {
+				t.Errorf("%s resolves to %+v %v, not its listed replacement %s", m.ID, resolved, err, r)
+			}
+			delete(want, m.ID)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("not listed: %v", want)
+	}
+}
+
+func TestListModelsMarksTheResolvedDefault(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	override := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(override, []byte("defaults:\n  video: fast\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := catalog.NewSource(override, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Status(); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.catalog = src
+	defaults := func() []string {
+		t.Helper()
+		res, err := e.svc.ListModels(context.Background(), ListModelsRequest{MediaType: "video", IncludeInactive: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, m := range res.Models {
+			if m.Default {
+				ids = append(ids, m.ID)
+			}
+		}
+		return ids
+	}
+	if got := defaults(); len(got) != 1 || got[0] != "veo-3.1-fast-generate-preview" {
+		t.Fatalf("defaults before the shutdown = %v", got)
+	}
+	// Past the Gemini API shutdown, requests without a model use Omni.
+	e.svc.now = func() time.Time { return time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC) }
+	if got := defaults(); len(got) != 1 || got[0] != "gemini-omni-1.1-flash" {
+		t.Fatalf("defaults after the shutdown = %v", got)
 	}
 }

@@ -311,6 +311,9 @@ func (s *Service) outputName(ref string) (string, bool) {
 	if strings.HasPrefix(ref, store.URIScheme) {
 		return strings.TrimPrefix(ref, store.URIScheme), true
 	}
+	if p, err := store.FilePath(ref); err == nil {
+		ref = p
+	}
 	if !strings.ContainsAny(ref, `/\`) {
 		return ref, true // bare name of an earlier output
 	}

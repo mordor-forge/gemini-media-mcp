@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -24,6 +25,7 @@ Workflow tips:
 - Chain outputs: pass a previous result's uri (or path) as image/referenceImages/images input.
 - Video is asynchronous: generate_video, extend_video and edit_video return a jobId; call get_video (waitSeconds ~45) until state is completed. Veo takes 1-3 minutes, Omni 1-5.
 - edit_video changes a finished clip or a short video file from an instruction (model omni).
+- Upscaling (any target from 1K to 8K and beyond): tile_image plans the crops, edit_image re-renders each, stitch_tiles blends them.
 - Every call costs money. Results report cost; estimate_cost compares options before expensive calls (4K images, 1080p/4k or standard-tier video). If a call is rejected for confirmation, ask the user, then retry with approvedCostUsd.
 - list_models shows current models, aliases, supported parameters and prices; retired models are redirected automatically with a warning.`
 
@@ -40,6 +42,12 @@ type Server struct {
 	store     *store.Store
 	transport string
 	log       *slog.Logger
+	reads     chan struct{} // one resources/read at a time
+
+	// Over HTTP, one resources/read request at a time for its whole
+	// lifetime, response write included, and how many wait for it.
+	resourceHTTP    chan struct{}
+	resourceWaiting atomic.Int32
 }
 
 // New builds the MCP server and registers all tools and resources.
@@ -60,7 +68,7 @@ func New(svc *media.Service, st *store.Store, opts Options) *Server {
 		// Logging is deprecated in MCP 2026-07-28; logs go to stderr instead.
 		Capabilities: &mcp.ServerCapabilities{},
 	})
-	s := &Server{mcp: m, svc: svc, store: st, transport: opts.Transport, log: log}
+	s := &Server{mcp: m, svc: svc, store: st, transport: opts.Transport, log: log, reads: make(chan struct{}, 1), resourceHTTP: make(chan struct{}, 1)}
 	s.registerTools()
 	s.registerResources()
 	return s

@@ -3,6 +3,7 @@ package catalog
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,14 @@ func TestEmbeddedCatalogIsConsistent(t *testing.T) {
 			t.Fatalf("default %s=%s is %s/%s", mt, name, m.MediaType, m.EffectiveStatus(now))
 		}
 	}
+	for backend, defaults := range c.BackendDefaults {
+		for mt, name := range defaults {
+			m, ok := c.Lookup(name)
+			if !ok || m.MediaType != mt || !m.OfferedOn(backend, now) {
+				t.Fatalf("%s default %s=%s missing, wrong media type or not offered there", backend, mt, name)
+			}
+		}
+	}
 	families := map[string]bool{FamilyGeminiImage: true, FamilyVeo: true, FamilyGeminiTTS: true, FamilyLyria: true, FamilyOmni: true}
 	for _, m := range c.Models {
 		if !families[m.Family] {
@@ -47,6 +56,178 @@ func TestEmbeddedCatalogIsConsistent(t *testing.T) {
 				t.Errorf("%s: bad shutdown date %q", m.ID, m.Shutdown)
 			}
 		}
+		for backend, date := range m.BackendShutdown {
+			if _, ok := parseDate(date); !ok || !slices.Contains(m.Backends, backend) {
+				t.Errorf("%s: bad backendShutdown %s=%q", m.ID, backend, date)
+			}
+		}
+	}
+}
+
+// Google deprecated the Veo 3.1 previews on the Gemini API (effective
+// 2026-10-22): Omni is the default there, Veo stays callable with a warning
+// until the date and then redirects to Omni, while Vertex AI keeps the GA
+// Veo models.
+func TestVeoPreviewsLeaveTheGeminiAPI(t *testing.T) {
+	c := Default()
+	before := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	after := time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC)
+
+	for _, at := range []time.Time{before, after} {
+		r, err := c.Resolve("", Video, "gemini-api", at)
+		if err != nil || r.Model.ID != "gemini-omni-1.1-flash" || len(r.Warnings) != 0 {
+			t.Fatalf("Gemini API video default at %s = %+v %v", at.Format(time.DateOnly), r, err)
+		}
+		r, err = c.Resolve("", Video, "vertex", at)
+		if err != nil || r.APIID != "veo-3.1-lite-generate-001" || len(r.Warnings) != 0 {
+			t.Fatalf("Vertex video default at %s = %+v %v", at.Format(time.DateOnly), r, err)
+		}
+	}
+	omni, _ := c.Lookup("omni")
+	lite, _ := c.Lookup("lite")
+	if !c.IsDefault(omni, "gemini-api", before) || c.IsDefault(omni, "vertex", before) || !c.IsDefault(lite, "vertex", before) || c.IsDefault(lite, "gemini-api", before) {
+		t.Fatal("IsDefault must follow the backend defaults")
+	}
+	// A default past its backend shutdown is not what requests use: the
+	// fallback they resolve to is the default.
+	fd, err := Merge(embedded, []byte("defaults:\n  video: fast\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fast, _ := fd.Lookup("fast")
+	fdOmni, _ := fd.Lookup("omni")
+	if !fd.IsDefault(fast, "gemini-api", before) || fd.IsDefault(fdOmni, "gemini-api", before) {
+		t.Error("before the shutdown the configured default is the default")
+	}
+	if fd.IsDefault(fast, "gemini-api", after) || !fd.IsDefault(fdOmni, "gemini-api", after) || fd.List(Video, "gemini-api", true, after)[0] != fdOmni {
+		t.Error("after the shutdown the fallback requests resolve to is the default, listed first")
+	}
+
+	for _, name := range []string{"lite", "fast", "standard", "veo-3.1-fast-generate-001"} {
+		r, err := c.Resolve(name, Video, "gemini-api", before)
+		if err != nil || r.Model.Family != FamilyVeo || len(r.Warnings) != 1 {
+			t.Fatalf("before the shutdown %q = %+v %v", name, r, err)
+		}
+		for _, want := range []string{"deprecated on the Gemini API", "2026-10-22", "gemini-omni-1.1-flash (omni)", "-001 on the vertex backend"} {
+			if !strings.Contains(r.Warnings[0], want) {
+				t.Errorf("%q warning %q lacks %q", name, r.Warnings[0], want)
+			}
+		}
+		r, err = c.Resolve(name, Video, "gemini-api", after)
+		if err != nil || r.Model.ID != "gemini-omni-1.1-flash" || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "shut down on the Gemini API on 2026-10-22; using gemini-omni-1.1-flash") {
+			t.Fatalf("after the shutdown %q = %+v %v", name, r, err)
+		}
+		r, err = c.Resolve(name, Video, "vertex", after)
+		if err != nil || r.Model.Family != FamilyVeo || !strings.HasSuffix(r.APIID, "-001") || len(r.Warnings) != 0 {
+			t.Fatalf("vertex %q = %+v %v", name, r, err)
+		}
+	}
+	if st := lite.StatusOn("gemini-api", before); st != StatusDeprecated {
+		t.Errorf("lite on the Gemini API before = %s", st)
+	}
+	// The shutdown date itself is the first day without the model.
+	if lite.OfferedOn("gemini-api", time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)) || !lite.OfferedOn("gemini-api", time.Date(2026, 10, 21, 23, 59, 0, 0, time.UTC)) {
+		t.Error("the Gemini API shutdown must take effect at the start of 2026-10-22 (UTC)")
+	}
+	if lite.OfferedOn("gemini-api", after) || !lite.OfferedOn("vertex", after) || lite.StatusOn("vertex", after) != StatusPreview {
+		t.Error("after the date lite is only offered on vertex, still in preview there")
+	}
+	// Retired on the Gemini API, Veo leaves its default listing but stays
+	// on Vertex and in the full listing.
+	has := func(ms []*Model, id string) bool {
+		return slices.ContainsFunc(ms, func(m *Model) bool { return m.ID == id })
+	}
+	if has(c.List(Video, "gemini-api", false, after), lite.ID) || !has(c.List(Video, "gemini-api", true, after), lite.ID) || !has(c.List(Video, "vertex", false, after), lite.ID) {
+		t.Error("List must hide models retired on the backend unless includeInactive is set")
+	}
+	if !has(c.List(Video, "gemini-api", false, before), lite.ID) || !has(c.List(Video, "vertex", false, before), omni.ID) {
+		t.Error("List must keep deprecated models and models the backend never offered")
+	}
+	if got := lite.BackendSummary(after); got != "gemini-api ended 2026-10-22, vertex" {
+		t.Errorf("BackendSummary = %q", got)
+	}
+	preview, _ := c.Lookup("gemini-omni-flash-preview")
+	veo2, _ := c.Lookup("veo-2.0-generate-001")
+	if got := preview.BackendSummary(after); got != "gemini-api ended 2026-10-22" {
+		t.Errorf("globally retired BackendSummary = %q", got)
+	}
+	if got := veo2.BackendSummary(after); got != "ended 2026-06-30" {
+		t.Errorf("retired model without backends = %q", got)
+	}
+	// Implicit backends (no list) count as both, in warnings too.
+	ic, err := Merge(embedded, []byte("models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    status: deprecated\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, err := ic.Resolve("x-video", Video, "gemini-api", after); err != nil || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "stays available as x-video on the vertex backend") {
+		t.Errorf("implicit backends warning = %+v %v", r, err)
+	}
+	// A model offered on both backends implicitly still lists a backend's end.
+	implicit := &Model{ID: "x", BackendShutdown: map[string]string{"gemini-api": "2026-10-22"}}
+	if got := implicit.BackendSummary(after); got != "gemini-api ended 2026-10-22, vertex" {
+		t.Errorf("implicit backends with a shutdown = %q", got)
+	}
+	// A future global shutdown shows for implicit backends too.
+	if got := (&Model{ID: "x", Shutdown: "2027-01-01"}).BackendSummary(after); got != "all until 2027-01-01" {
+		t.Errorf("implicit backends with a future shutdown = %q", got)
+	}
+	// A deprecation warning recommends where requests will end up, not a
+	// fallback that has itself retired.
+	chain, err := Merge(embedded, []byte("models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n    fallback: y-video\n  - id: y-video\n    family: veo\n    mediaType: video\n    backends: [gemini-api]\n    shutdown: \"2026-10-01\"\n    replacement: gemini-omni-1.1-flash\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, err := chain.Resolve("x-video", Video, "gemini-api", before); err != nil || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "switch to gemini-omni-1.1-flash (omni)") {
+		t.Errorf("chained deprecation = %+v %v", r, err)
+	}
+	// The Omni preview keeps its own, narrower capabilities.
+	if r, err := c.Resolve("gemini-omni-flash-preview", Video, "gemini-api", before); err != nil {
+		t.Fatal(err)
+	} else if _, err := r.Model.Validate(Params{"resolution": "4k"}, "gemini-api"); err == nil {
+		t.Error("the Omni preview generates at 720p only")
+	} else if _, err := r.Model.Validate(Params{"lastFrame": "x.png", "image": "y.png"}, "gemini-api"); err == nil || r.Model.Capabilities.Extend {
+		t.Error("the Omni preview has no first/last frames or extension")
+	}
+	// With no backend resolved (the CLI listing, no credentials), a model is
+	// retired once every backend has ended it.
+	ended, err := Merge(embedded, []byte("models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    status: preview\n    fallback: veo-3.1-lite-generate-preview\n    backendShutdown: {gemini-api: \"2026-10-22\", vertex: \"2026-10-01\"}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	x, _ := ended.Lookup("x-video")
+	for _, b := range []string{"", "auto"} {
+		if st := x.StatusOn(b, before); st != StatusPreview || !x.OfferedOn(b, before) {
+			t.Errorf("StatusOn(%q) with gemini-api still open = %s", b, st)
+		}
+		if st := x.StatusOn(b, after); st != StatusRetired || x.OfferedOn(b, after) {
+			t.Errorf("StatusOn(%q) after every backend ended = %s", b, st)
+		}
+		if has(ended.List(Video, b, false, after), "x-video") || !has(ended.List(Video, b, true, after), "x-video") {
+			t.Errorf("List(%q) must hide a model every backend ended unless includeInactive is set", b)
+		}
+	}
+	if !has(ended.List(Video, "", false, after), lite.ID) {
+		t.Error("List(\"\") must keep lite, which vertex still offers")
+	}
+	if r, err := ended.Resolve("x-video", Video, "auto", after); err != nil || r.Model.ID != "veo-3.1-lite-generate-preview" || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "x-video shut down on every backend (gemini-api ended 2026-10-22, vertex ended 2026-10-01); using veo-3.1-lite-generate-preview") {
+		t.Errorf("unresolved backend after every backend ended = %+v %v", r, err)
+	}
+	// Retired Veo IDs follow the chain to Omni.
+	r, err := c.Resolve("veo-3.0-generate-001", Video, "gemini-api", after)
+	if err != nil || r.Model.ID != "gemini-omni-1.1-flash" || len(r.Warnings) != 2 {
+		t.Fatalf("retired veo after = %+v %v", r, err)
+	}
+	// The Omni preview warns, then redirects to 1.1.
+	r, err = c.Resolve("gemini-omni-flash-preview", Video, "gemini-api", before)
+	if err != nil || r.Model.ID != "gemini-omni-flash-preview" || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "switch to gemini-omni-1.1-flash") {
+		t.Fatalf("omni preview before = %+v %v", r, err)
+	}
+	r, err = c.Resolve("gemini-omni-flash-preview", Video, "gemini-api", after)
+	if err != nil || r.Model.ID != "gemini-omni-1.1-flash" {
+		t.Fatalf("omni preview after = %+v %v", r, err)
+	}
+	if names := strings.Join(c.Names(Video, "gemini-api", after), " "); strings.Contains(names, "veo-") || !strings.Contains(names, "omni") {
+		t.Errorf("Gemini API video names after the shutdown = %s", names)
 	}
 }
 
@@ -115,6 +296,11 @@ func TestResolveDeprecatedWarns(t *testing.T) {
 	r, err = c.Resolve("nano-banana", Image, "gemini-api", after)
 	if err != nil || r.Model.ID != "gemini-nano-banana-2.1" {
 		t.Fatalf("after shutdown the replacement should be used: %+v %v", r, err)
+	}
+	// Vertex AI keeps the model until its own, later shutdown.
+	r, err = c.Resolve("nano-banana", Image, "vertex", after)
+	if err != nil || r.Model.ID != "gemini-2.5-flash-image" || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "2027-03-15") {
+		t.Fatalf("vertex before its shutdown: %+v %v", r, err)
 	}
 }
 
@@ -334,6 +520,11 @@ models:
 	if c.Defaults["video"] != "fast" || c.Defaults["image"] != "pro" {
 		t.Fatalf("defaults = %v", c.Defaults)
 	}
+	// A default set by the override or the server config applies on every
+	// backend; the catalog's backend defaults for other media types stay.
+	if c.DefaultFor(Video, "vertex") != "fast" || c.DefaultFor(Image, "vertex") != "pro" || c.DefaultFor(Speech, "vertex") != "gemini-2.5-flash-preview-tts" {
+		t.Fatalf("backend defaults = %v", c.BackendDefaults)
+	}
 
 	// A broken edit keeps the last good catalog and reports the error.
 	write("models: [oops")
@@ -376,6 +567,40 @@ func TestBrokenOverrideAtStartupFallsBack(t *testing.T) {
 	}
 }
 
+func TestOverrideBackendDefaults(t *testing.T) {
+	c, err := Merge(embedded, []byte("backendDefaults:\n  vertex: {video: standard}\ndefaults:\n  video: fast\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DefaultFor(Video, "vertex") != "standard" || c.DefaultFor(Video, "gemini-api") != "fast" {
+		t.Fatalf("defaults = %v, backend defaults = %v", c.Defaults, c.BackendDefaults)
+	}
+	// A Gemini-only default needs a Vertex default alongside it.
+	c, err = Merge(embedded, []byte("defaults:\n  video: omni\nbackendDefaults:\n  vertex: {video: lite}\n"))
+	if err != nil || c.DefaultFor(Video, "vertex") != "lite" || c.DefaultFor(Video, "gemini-api") != "omni" {
+		t.Fatalf("omni default with a vertex default = %v", err)
+	}
+}
+
+// A default from the server config replaces the catalog's on every backend,
+// so it is checked against the backend in use.
+func TestCheckDefaultsOnTheBackend(t *testing.T) {
+	now := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	c := Default()
+	for _, b := range []string{"gemini-api", "vertex", "auto"} {
+		if err := c.CheckDefaultsOn(b, now); err != nil {
+			t.Errorf("embedded defaults on %s: %v", b, err)
+		}
+	}
+	c.setDefault(Video, "omni")
+	if err := c.CheckDefaultsOn("gemini-api", now); err != nil {
+		t.Errorf("omni on the Gemini API: %v", err)
+	}
+	if err := c.CheckDefaultsOn("vertex", now); err == nil || !strings.Contains(err.Error(), `the default video model "omni" cannot serve requests on vertex`) {
+		t.Errorf("omni on vertex: %v", err)
+	}
+}
+
 func TestOverrideErrors(t *testing.T) {
 	if _, err := Merge(embedded, []byte("unknownKey: 1")); err == nil {
 		t.Fatal("unknown top-level key should fail")
@@ -388,5 +613,40 @@ func TestOverrideErrors(t *testing.T) {
 	}
 	if _, err := Merge(embedded, []byte("models:\n  - id: x-image\n    family: gemini-image\n    mediaType: image\n    aliases: [nb2]\n")); err == nil {
 		t.Fatal("alias collisions should fail")
+	}
+	for _, bad := range []string{
+		"models:\n  - id: veo-3.1-generate-preview\n    backendShutdown: {gemini-api: 2026-10-32}\n",
+		"models:\n  - id: veo-3.1-generate-preview\n    shutdown: next week\n",
+	} {
+		if _, err := Merge(embedded, []byte(bad)); err == nil || !strings.Contains(err.Error(), "YYYY-MM-DD") {
+			t.Errorf("malformed date should fail: %q -> %v", bad, err)
+		}
+	}
+	for bad, want := range map[string]string{
+		"backendDefaults:\n  vertex: {video: veo-9}\n":                                               "not in the catalog",
+		"backendDefaults:\n  gemini-api: {video: nb2}\n":                                             "generates image",
+		"defaults:\n  image: omni\n":                                                                 "generates video",
+		"backendDefaults:\n  vertex: {video: omni}\n":                                                "not offered on vertex",
+		"backendDefaults:\n  vertexai: {video: lite}\n":                                              "the backends are",
+		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backends: [auto]\n":    "the backends are",
+		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backends: [\"\"]\n":    "the backends are",
+		"models:\n  - id: veo-3.1-generate-preview\n    backendShutdown: {gemini_api: 2026-10-22}\n": "not one of its backends",
+		"models:\n  - id: gemini-2.5-flash-image\n    backendShutdown: {vertex: \"2027-04-01\"}\n":   "after the model's shutdown 2027-03-15",
+		"defaults:\n  video: omni\n":                                                                 "not offered on vertex (only gemini-api); set backendDefaults.vertex.video as well",
+		"models:\n  - id: veo-3.1-generate-preview\n    fallback: nb2\n":                             "fallback \"nb2\" generates image, not video",
+		"models:\n  - id: veo-3.0-generate-001\n    replacement: nb2\n":                              "replacement \"nb2\" generates image, not video",
+		"models:\n  - id: veo-3.0-generate-001\n    replacement: veo-9\n":                            "replacement \"veo-9\" is not in the catalog",
+		"models:\n  - id: veo-3.0-generate-001\n    replacement: veo-3.0-generate-001\n":             "is the model itself",
+		"models:\n  - id: gemini-3.8-flash-tts\n    fallback: gemini-3.8-flash-lite-tts\n":           "not offered on vertex, where requests for gemini-3.8-flash-tts switch to it",
+		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n    fallback: y-video\n  - id: y-video\n    family: veo\n    mediaType: video\n    shutdown: \"2026-10-01\"\n": "from 2026-12-31, requests on gemini-api go to its fallback \"y-video\", which cannot serve them",
+		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    shutdown: \"2026-12-31\"\n    replacement: gemini-omni-1.1-flash\n":                                                                                           "from 2026-12-31, requests on vertex go to its replacement \"gemini-omni-1.1-flash\", which cannot serve them",
+		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    status: retired\nbackendDefaults:\n  gemini-api: {video: x-video}\n":                                                                                          "the default video model on gemini-api, \"x-video\", cannot serve requests (model x-video was retired",
+		"models:\n  - id: lyria-3-clip-preview\n    shutdown: \"2027-01-01\"\n":                                                                                                                                                             "the default music model on gemini-api, \"lyria-3-clip-preview\", cannot serve requests from 2027-01-01",
+		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backends: [vertex]\n    fallback: y-video\n  - id: y-video\n    family: veo\n    mediaType: video\n    backends: [gemini-api]\n    status: retired\n":         "x-video: requests on gemini-api go to its fallback \"y-video\", which cannot serve them (model y-video was retired",
+		"models:\n  - id: veo-3.1-lite-generate-preview\n    fallback: lite\n":                                                                                                                                                              "is the model itself",
+	} {
+		if _, err := Merge(embedded, []byte(bad)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("bad default should fail: %q -> %v", bad, err)
+		}
 	}
 }

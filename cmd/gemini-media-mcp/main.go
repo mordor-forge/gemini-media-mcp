@@ -187,6 +187,11 @@ func build(ctx context.Context, flags config.Flags, stderr io.Writer) (*app, err
 	if err != nil {
 		return nil, err
 	}
+	// A configured default the backend cannot serve would fail every call
+	// that omits the model.
+	if err := src.Get().CheckDefaultsOn(string(auth.Backend), time.Now()); err != nil {
+		return nil, fmt.Errorf("%w; set GEMINI_MEDIA_<TYPE>_MODEL (or defaults.<type> in the config file) to a model offered on %s (`gemini-media-mcp models` lists them), or unset it", err, auth.Backend)
+	}
 	svc := media.New(media.Deps{API: api, Auth: auth, Config: cfg, Catalog: src, Store: st, Jobs: reg, Ledger: ledger, Logger: log})
 	log.Info("configured", "version", version.String(), "backend", auth.Backend, "auth", auth.Mode, "reason", auth.Reason, "output", st.Dir())
 	return &app{cfg: cfg, auth: auth, svc: svc, store: st, ledger: ledger, log: log}, nil
@@ -385,16 +390,17 @@ func cmdModels(args []string, stdout io.Writer) error {
 		return err
 	}
 	c := catalog.Default()
-	models := c.List(*mt, *all, time.Now())
+	now := time.Now()
+	models := c.List(*mt, "", *all, now)
 	if *asJSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(models)
 	}
 	tw := tabwriter.NewWriter(stdout, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintf(tw, "MEDIA\tID\tALIASES\tSTATUS\tPRICE\n")
+	_, _ = fmt.Fprintf(tw, "MEDIA\tID\tALIASES\tSTATUS\tBACKENDS\tPRICE\n")
 	for _, m := range models {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", m.MediaType, m.ID, strings.Join(m.Aliases, ","), m.EffectiveStatus(time.Now()), m.PriceSummary())
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", m.MediaType, m.ID, strings.Join(m.Aliases, ","), m.StatusOn("", now), m.BackendSummary(now), m.PriceSummary())
 	}
 	_, _ = fmt.Fprintf(tw, "\ncatalog version %s\n", c.Version)
 	return tw.Flush()

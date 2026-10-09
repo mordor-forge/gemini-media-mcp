@@ -1,6 +1,6 @@
 # Architecture review and v1 refactor
 
-*Reviewed 2026-09-28 against the Gemini API, Vertex AI (now "Gemini Enterprise Agent Platform"), MCP spec 2026-07-28, go-sdk v1.8.0 and go-genai v1.71.0. Updated 2026-10-07 for Nano Banana 2.1, Gemini Omni and go-genai v1.72.0.*
+*Reviewed 2026-09-28 against the Gemini API, Vertex AI (now "Gemini Enterprise Agent Platform"), MCP spec 2026-07-28, go-sdk v1.8.0 and go-genai v1.71.0. Updated 2026-10-07 for Nano Banana 2.1, Gemini Omni and go-genai v1.72.0, and 2026-10-08 for the Veo 3.1 previews leaving the Gemini API.*
 
 ## Verdict
 
@@ -109,6 +109,7 @@ A request flows like this. An MCP tool call reaches `server`, which attaches pro
   - Retired models auto-redirect to their replacement, with a warning.
   - Deprecated models warn with their shutdown date.
   - Models missing on a backend fall back, e.g. 3.8 TTS falls back to 2.5 TTS on Vertex, and Lyria 3.5 to Lyria 3 Pro.
+  - Lifecycles can differ per backend (`backendShutdown`), and so can defaults (`backendDefaults`). Google shuts the Veo 3.1 previews down on the Gemini API on 2026-10-22 while the `-001` models stay on Gemini Enterprise Agent Platform (Vertex AI). The catalog records that date on the Gemini API only: Veo warns there until the date and falls back to Omni after it, Vertex keeps Veo, and the video default is Omni on the Gemini API and Veo Lite on Vertex. Nano Banana (2.5) uses the same field for its earlier Gemini API shutdown. A default set in the server config still applies on both backends.
   - Retirement dates reported by the API (`modelStatus`) are surfaced as warnings.
 - **Unknown model IDs pass through.** The family is inferred from the ID (`veo-*`, `gemini-omni-*`, `lyria-*`, `*tts*`, `gemini-*image*`, `gemini-*banana*`), so a model launched tomorrow works by raw ID before the catalog knows it. It is unvalidated and unpriced, and says so.
 - **Live discovery.** `list_models live:true` asks the API what the key can actually call. It flags catalog models that are unavailable, and lists media models the catalog doesn't know yet. `gemini-media-mcp doctor` runs the same check from a terminal.
@@ -126,9 +127,9 @@ A request flows like this. An MCP tool call reaches `server`, which attaches pro
 - **Locations are per model, from the catalog.** Veo uses `us-central1`; images, Lyria and TTS use `global`. An explicit location is honored where the model is offered and overridden with a warning where it is not. One genai client is pooled per location.
 - **Key migration warning.** `doctor` warns about standard `AIza…` Gemini API keys, which Google is migrating to `AQ.…` authorization keys. `configure --api-key-stdin` writes a `0600` config file for harnesses that don't forward environment variables (Gemini CLI redacts `*KEY*` variables; Agent Plugins forbids secrets in `env`).
 
-### 2.3 Tool surface: 12 workflow-shaped tools
+### 2.3 Tool surface: 14 workflow-shaped tools
 
-| v0 (12 tools) | v1 (12 tools) | Why |
+| v0 (12 tools) | v1 (14 tools) | Why |
 |---|---|---|
 | `generate_image`, `compose_images` | `generate_image` (+ `referenceImages` up to 14, `count` 1–4, `googleSearch`, `imageSize` 1K–4K, 512 only on Nano Banana 2) | Composition is generation with references. Fewer overlapping tools improve selection accuracy (RAG-MCP, arXiv:2505.03275). |
 | `edit_image` | `edit_image` (+ references, aspect ratio / outpainting, size; defaults to the model that made the source) | Consistent quality across edit chains. |
@@ -141,6 +142,7 @@ A request flows like this. An MCP tool call reaches `server`, which attaches pro
 | `list_models` | `list_models` (`mediaType`, `detail`, `live`, `includeInactive`) | Discovery and availability checks. |
 | `get_config` | `get_config` (backend reason, setting sources, warnings; never secrets) | Troubleshooting. |
 | — | `estimate_cost`, `get_usage` | Spend awareness. |
+| — | `tile_image`, `stitch_tiles` (local, free) | Upscaling past the 4K output limit: crops shaped to the model's ratios, then registration and blending of the re-rendered tiles (see 2.9). |
 
 Tool design follows Anthropic's [Writing effective tools for agents](https://www.anthropic.com/engineering/writing-tools-for-agents) and the findings of *MCP Tool Descriptions Are Smelly!* (arXiv:2602.14878: precise, purpose-first descriptions help; long ones add steps):
 
@@ -219,7 +221,7 @@ Google returns no cost with any response, and Veo operations carry no usage at a
 | Area | Now supported |
 |---|---|
 | Images | GA Nano Banana 2.1 (default since 2026-10-06; Nano Banana 2 shuts down 2026-10-29) / Pro / 2 Lite; 1K–4K (512px on NB2 only); 14 aspect ratios (NB2/2.1); up to 14 references; Google Search grounding; 1–4 parallel variations; model commentary returned; thought images filtered |
-| Video | Veo 3.1 Lite/Fast/Standard with backend-specific IDs; first frame, first+last frame, reference "ingredients"; negative prompt; seed and silent video on Vertex; person generation; extension on both backends (720p sources, checked locally); MP4 duration read from the file; `raiMediaFilteredReasons` surfaced. Gemini Omni 1.1 Flash (Gemini API) through the Interactions API: 3–10 s at 360p–4K, first and last frames, up to 10 references, instruction-based editing (`edit_video`) and extension to 40 s, run as background jobs |
+| Video | Veo 3.1 Lite/Fast/Standard with backend-specific IDs (Gemini API until 2026-10-22, then Vertex only; Veo Lite is the Vertex default); first frame, first+last frame, reference "ingredients"; negative prompt; seed and silent video on Vertex; person generation; extension on both backends (720p sources, checked locally); MP4 duration read from the file; `raiMediaFilteredReasons` surfaced. Gemini Omni 1.1 Flash (Gemini API, its video default since 2026-10-08) through the Interactions API: 3–10 s at 360p–4K, first and last frames, up to 10 references, instruction-based editing (`edit_video`) and extension to 40 s, run as background jobs |
 | Speech | Gemini 3.8 Flash / Flash-Lite TTS (verbatim text plus per-turn `speech_metadata` style, injected through the SDK's request hook until the SDK ships the field); legacy 2.5/3.1 models get in-text directions automatically; 2-speaker dialogue; all 30 voices; custom `voice_…` IDs; WAV output from both PCM and WAV responses |
 | Music | Lyria 3.5 (full songs, WAV, image inspiration), Lyria 3 Clip / Pro; lyrics and structure returned |
 
@@ -239,6 +241,31 @@ One repository serves every harness from a single canonical `skills/` directory.
 A release is one tag. `scripts/sync-version.sh` stamps the version into every manifest, and `scripts/validate-packaging.sh` (also run in CI) checks versions, schemas and layout, calling `claude plugin validate`, `mcpb validate` and `mcp-publisher validate` when those tools are installed. `release.yml` then runs GoReleaser, the MCPB bundle, the GHCR image and the registry publish. Per-client install snippets are in [`packaging/INSTALL-SNIPPETS.md`](../packaging/INSTALL-SNIPPETS.md).
 
 ---
+
+### 2.9 Tiled upscaling past 4K
+
+Nano Banana renders at most 4K. A widely shared workflow gets past that limit:
+
+- cut the photo into overlapping crops;
+- have the model re-render each crop at 4K with the full photo as context;
+- stitch the crops back together;
+- repeat on faces and other details.
+
+Everything except the model calls is deterministic image processing, so it lives in the server (`internal/tiles`), not in each agent's scratch scripts:
+
+- **`tile_image`** plans a grid, or regions chosen by the agent. Given a target long edge (1K-16K), it picks the cheapest grid and edit size whose tiles cover it: one tile up to about 4K, which also covers small-image upscales, and a 2x2-4x4 grid of 4K tiles beyond. A crop that no supported ratio fits inside the image extends past the border, mirrored there and discarded when stitching. Each crop is padded and then grown to the nearest aspect ratio the edit model supports, read from the catalog. The model therefore returns a pure scale-up of the crop. The tool saves the crops, a reference copy of the original (at most 2048 px, since the model samples inputs at about 1K) and a job file. It reports the cost of editing every tile, and how much model-rendered detail the output will carry versus interpolation.
+- **`stitch_tiles`** registers each tile against the tiled image at that image's own resolution:
+  - search: an exhaustive coarse search over scale and shift, then a pattern search over independent x/y scale and sub-pixel shift on a pyramid, using normalized cross-correlation of blurred luma;
+  - rejection: a tile whose shape, structure or framing does not match;
+  - color: a smooth low-frequency per-channel offset matches broad exposure and color without copying old texture;
+  - blending: tiles are combined as a weighted average whose fades are at most half of each overlap, and the base image keeps only the weight left over, so it shows only where no tile was placed.
+
+  An 8K stitch of nine 4K tiles takes about 16 s on four cores. Tiles are decoded two at a time, and the next tile is resampled while the current one is painted. Peak heap use is under 1 GB.
+- Live testing shaped the workflow:
+  - On a 121 px portrait taken to 8K, all nine pass-1 tiles aligned with matches of 0.98-1.00, after one tile the model had zoomed out was rejected and retried.
+  - Refinement passes send the crop alone. Next to a close-up, the whole-photo reference made the model redraw the whole photo, which `stitch_tiles` rejected.
+  - With 4K tiles, pass 1 already renders about 10,000 px of detail for an 8K output. Tight regions re-rendered at 2.4x came back no sharper, so later passes fix content (a pair of mismatched irises) but add resolution only when the output exceeds what pass 1 renders. The skill therefore runs one pass plus targeted fixes, not the 2-3 passes of the original workflow. `tile_image` reports when an image is already saturated, and otherwise warns about regions too large to gain detail.
+- Both tools are free and make no network calls. The agent runs the paid `edit_image` calls in between, in parallel, under the usual budgets and approvals. The `gemini-upscale` skill holds the prompt, region choice and review loop. It states that the added detail is invented, not recovered.
 
 ## 3. What I deliberately did not do (follow-ups)
 

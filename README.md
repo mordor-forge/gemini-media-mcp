@@ -4,11 +4,12 @@
 [![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-An MCP server for Google's generative media models: **images** (Nano Banana 2.1 / Pro), **video** (Veo 3.1 and Gemini Omni Flash), **speech** (Gemini 3.8 TTS) and **music** (Lyria 3.5). It ships as a single Go binary, speaks **stdio and Streamable HTTP** (MCP 2026-07-28), works with the **Gemini API or Vertex AI**, and comes with **agent skills** and plugin packaging for Claude Code, Codex, Gemini CLI, VS Code/Copilot, Cursor and more.
+An MCP server for Google's generative media models: **images** (Nano Banana 2.1 / Pro), **video** (Veo 3.1 and Gemini Omni Flash), **speech** (Gemini 3.8 TTS) and **music** (Lyria 3.5). It ships as a single Go binary, speaks **stdio and Streamable HTTP** (MCP 2026-07-28), works with the **Gemini API or Vertex AI**, and comes with **agent skills** that teach agents the whole workflow, plus plugin packaging for Claude Code, Codex, Gemini CLI, VS Code/Copilot, Cursor and more.
 
 - **Current models, updated without a release.** A built-in catalog records IDs, aliases, lifecycle, parameters and prices. Retired models redirect to their replacement, and new model IDs work before the catalog knows them. You can override or extend the catalog with a hot-reloaded YAML file.
 - **Cost-aware.** Every result reports its estimated cost, and `estimate_cost` compares options before you spend. Spend is recorded in a ledger, capped by session, daily and monthly budgets, and calls above a threshold need explicit approval.
 - **Agent-friendly.** Each tool matches a workflow, and errors come back as `[kind] message + Hint`. Image results include inline previews, and outputs can be chained by URI. Video runs as async jobs with long-polling and progress notifications.
+- **Skills included.** Six [agent skills](#skills) cover each medium, multi-asset productions and **upscaling past 4K**. The upscale skill re-renders a photo tile by tile and stitches the tiles into an 8K image.
 - **Robust.** Backend and credentials are detected the way the Google SDKs do it. Vertex locations are chosen per model, retries and timeouts are built in, files are written atomically with provenance, and HTTP mode ships with security defaults.
 
 > Upgrading from v0? The tools changed. See the [migration table](docs/architecture-review.md#4-migration-from-v0). The review also covers what was broken, why, and the design of v1.
@@ -75,6 +76,8 @@ To run it in Docker instead: `docker run -i --rm --user "$(id -u):$(id -g)" -e G
 |---|---|
 | `generate_image` | Text-to-image with up to 14 reference images, 1K–4K, many aspect ratios, 1–4 variations, optional Google Search grounding |
 | `edit_image` | Change an existing image (add/remove/restyle/relight/outpaint) while keeping the rest |
+| `tile_image` | Step 1 of an upscale to any target size (1K–16K): plan the cheapest crops that cover it, shaped to the edit model's aspect ratios (one tile up to about 4K, a grid beyond, or regions such as faces). Free and local |
+| `stitch_tiles` | Align the edited tiles with the image, match their color, blend the overlaps and save one large PNG (8K by default). Free and local |
 | `generate_video` | Clip with native audio from text, a first frame, first+last frames, or reference images: Veo (4–8 s, up to 3 references) or Gemini Omni Flash (`omni`: 3–10 s, 360p drafts to 4K, up to 10 references). Returns a `jobId` |
 | `get_video` | Wait for a job (long-poll, default 45 s); downloads the video when done. Safe to repeat |
 | `extend_video` | Continue a finished clip: Omni adds up to 10 s (40 s total), Veo about 7 s (up to 148 s total) |
@@ -86,7 +89,22 @@ To run it in Docker instead: `docker run -i --rm --user "$(id -u):$(id -g)" -e G
 | `get_usage` | Estimated spend by period, model and tool; budgets remaining; running jobs |
 | `get_config` | Active backend and why it was chosen, output directory, defaults, warnings |
 
-Every result includes the saved file's path, a `gemini-media://files/<name>` URI and its cost. You can pass the URI as an input to another tool. Clients that can't read the server's disk (for example over HTTP) can fetch the file with `resources/read`.
+Every result includes the saved file's path, a `gemini-media://files/<name>` URI and its cost. You can pass the URI as an input to another tool. Clients that can't read the server's disk (for example over HTTP) can fetch the file with `resources/read`, for files up to 64 MB (larger upscales stay on the server's disk).
+
+## Skills
+
+The [`skills/`](skills) directory contains [Agent Skills](https://agentskills.io) that teach agents the full workflow for each media type: intent, prompt craft, model choice, cost checks, review and iteration. They cover interactive use as well as unattended runs.
+
+| Skill | For |
+|---|---|
+| `gemini-image` | Images: generation, editing, multi-reference composition, text rendering |
+| `gemini-video` | Video: text/image-to-video, frame interpolation, reference ingredients, Omni editing, extension, async jobs |
+| `gemini-speech` | Voiceovers, narration, two-speaker dialogue, voice and style selection |
+| `gemini-music` | Clips and full songs with structure, lyrics and tempo |
+| `gemini-media-production` | Multi-asset projects (storyboard → keyframes → video → voiceover → music → ffmpeg assembly) with a budget plan |
+| `gemini-upscale` | Upscaling photos to 1K, 2K, 4K or 8K: one tile up to 4K, a grid of 4K tiles stitched together beyond that, with an optional fix pass for defects such as mismatched eyes. About $0.04 at 1K to $0.50–1.20 at 8K. It invents plausible detail rather than recovering it, so it is not for forensic or archival use |
+
+Plugin installs (Claude Code, Codex, Gemini CLI, VS Code) include the skills. To install them in any Agent Skills–compatible agent, run `npx skills add mordor-forge/gemini-media-mcp`, or copy the folders into `.agents/skills/` or `~/.claude/skills/`.
 
 ## Models
 
@@ -95,9 +113,11 @@ Use an alias or a full model ID. Run `gemini-media-mcp models` for the built-in 
 | Media | Aliases (default first) |
 |---|---|
 | Image | `nb2` (Nano Banana 2.1, default), `pro` (Nano Banana Pro: highest fidelity), `nb2-lite` (cheapest inputs) |
-| Video | `lite` (cheapest Veo), `omni` (Gemini Omni Flash: prompt adherence, editing, extension to 40 s; Gemini API only), `fast` (Veo 4K, references, extension), `standard` (highest Veo quality) |
+| Video | `omni` (Gemini Omni Flash, default on the Gemini API: prompt adherence, editing, extension to 40 s; Gemini API only), `lite` (cheapest Veo, default on Vertex AI), `fast` (Veo 4K, references, extension), `standard` (highest Veo quality) |
 | Speech | `tts` (Gemini 3.8 Flash TTS), `tts-lite`, `tts-2.5`, `tts-pro` |
 | Music | `clip` (30 s), `full` (Lyria 3.5 songs) |
+
+**Veo on the Gemini API.** Google is shutting down the Veo 3.1 previews (and the `gemini-omni-flash-preview` model) on the Gemini API on 2026-10-22. Until then `lite`, `fast` and `standard` still work there with a deprecation warning; after it the server uses `omni` instead and says so. Veo 3.1 stays available on Vertex AI, now called Gemini Enterprise Agent Platform (`veo-3.1-*-generate-001`): to keep using it, run the server against a Google Cloud project: `GOOGLE_CLOUD_PROJECT` plus `gcloud auth application-default login`, and `GEMINI_MEDIA_BACKEND=vertex` if an API key is also set (see [Configuration](#configuration)).
 
 **Updating or adding a model without waiting for a release.** Create a YAML file and point `GEMINI_MEDIA_CATALOG` at it. The server merges it with the built-in catalog by `id` and reloads it automatically:
 
@@ -129,7 +149,7 @@ Settings are layered: built-in defaults < config file < environment < flags. The
 | `GEMINI_MEDIA_STATE_DIR` | `stateDir` | `$XDG_STATE_HOME/gemini-media-mcp`, else `~/.local/state/gemini-media-mcp` (Linux) or the config directory | Spend ledger and video jobs |
 | `GEMINI_MEDIA_BUDGET_SESSION_USD` / `_DAILY_USD` / `_MONTHLY_USD` | `budget.*Usd` | none | Spend caps (estimated) |
 | `GEMINI_MEDIA_CONFIRM_ABOVE_USD` | `budget.confirmAboveUsd` | none | Calls above this need `approvedCostUsd` |
-| `GEMINI_MEDIA_IMAGE_MODEL` / `_VIDEO_MODEL` / `_SPEECH_MODEL` / `_MUSIC_MODEL` / `GEMINI_MEDIA_VOICE` | `defaults.*` | catalog | Default models and voice |
+| `GEMINI_MEDIA_IMAGE_MODEL` / `_VIDEO_MODEL` / `_SPEECH_MODEL` / `_MUSIC_MODEL` / `GEMINI_MEDIA_VOICE` | `defaults.*` | catalog | Default models and voice (a model set here is the default on both backends; the server refuses to start if the backend in use does not offer it) |
 | `GEMINI_MEDIA_CATALOG` | `catalogFile` | – | Catalog override file (hot-reloaded) |
 | `GEMINI_MEDIA_INPUT_DIRS` | `inputDirs` | – | Extra directories inputs may be read from (HTTP mode) |
 | `GEMINI_MEDIA_ALLOW_ANY_INPUT_PATH` | `allowAnyInputPath` | `true` on stdio, `false` on HTTP | Read input files from anywhere on disk |
@@ -175,20 +195,6 @@ claude mcp add --transport http gemini-media http://127.0.0.1:8765/mcp --header 
 - It only reads input files from the output directory or `GEMINI_MEDIA_INPUT_DIRS` (unless `GEMINI_MEDIA_ALLOW_ANY_INPUT_PATH=true`).
 - `GET /healthz` reports status.
 
-## Skills
-
-The [`skills/`](skills) directory contains [Agent Skills](https://agentskills.io) that teach agents the full workflow for each media type: intent, prompt craft, model choice, cost checks, review and iteration. They cover interactive use as well as unattended runs.
-
-| Skill | For |
-|---|---|
-| `gemini-image` | Images: generation, editing, multi-reference composition, text rendering |
-| `gemini-video` | Video: text/image-to-video, frame interpolation, reference ingredients, Omni editing, extension, async jobs |
-| `gemini-speech` | Voiceovers, narration, two-speaker dialogue, voice and style selection |
-| `gemini-music` | Clips and full songs with structure, lyrics and tempo |
-| `gemini-media-production` | Multi-asset projects (storyboard → keyframes → video → voiceover → music → ffmpeg assembly) with a budget plan |
-
-Plugin installs (Claude Code, Codex, Gemini CLI, VS Code) include the skills. To install them in any Agent Skills–compatible agent, run `npx skills add mordor-forge/gemini-media-mcp`, or copy the folders into `.agents/skills/` or `~/.claude/skills/`.
-
 ## Development
 
 Paid live E2E tests are run locally with your own API key. CI runs the free
@@ -202,6 +208,7 @@ golangci-lint run
 python3 scripts/validate-skills.py skills
 GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=... go test -tags=e2e ./internal/media/ -run E2E -v -timeout 30m   # live, costs cents
 # add GEMINI_MEDIA_E2E_VIDEO=1 for the video test (~$0.20), GEMINI_MEDIA_E2E_OMNI=1 for the Omni clip + edit (~$0.30),
+# GEMINI_MEDIA_E2E_UPSCALE=1 for a small tiled upscale (~$0.20),
 # GEMINI_MEDIA_E2E_OUTPUT_DIR=./e2e-out to keep the files
 ```
 

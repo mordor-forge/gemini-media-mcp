@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"google.golang.org/genai"
@@ -74,7 +76,7 @@ func TestToolsAreListedWithAnnotationsAndSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"edit_image", "edit_video", "estimate_cost", "extend_video", "generate_image", "generate_music", "generate_speech", "generate_video", "get_config", "get_usage", "get_video", "list_models"}
+	want := []string{"edit_image", "edit_video", "estimate_cost", "extend_video", "generate_image", "generate_music", "generate_speech", "generate_video", "get_config", "get_usage", "get_video", "list_models", "stitch_tiles", "tile_image"}
 	var got []string
 	for _, tool := range res.Tools {
 		got = append(got, tool.Name)
@@ -161,7 +163,9 @@ func TestGenerateImageToolResult(t *testing.T) {
 func TestToolErrorsAreActionable(t *testing.T) {
 	s, _ := newTestServer(t)
 	cs := connect(t, s)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "generate_video", Arguments: map[string]any{"prompt": "x", "model": "lite", "resolution": "4k"}})
+	// No video model offers 8K, so this stays invalid whichever model the
+	// lifecycle dates pick.
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "generate_video", Arguments: map[string]any{"prompt": "x", "resolution": "8k"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +193,12 @@ func TestVideoToolsRoundTrip(t *testing.T) {
 	if job.State != jobs.StateWorking || job.JobID == "" {
 		t.Fatalf("job = %+v", job)
 	}
-	res, err = cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "get_video", Arguments: map[string]any{"jobId": job.JobID, "waitSeconds": 0}})
+	// The default video model on the Gemini API is Omni, which answers in
+	// the background.
+	if job.Model != "gemini-omni-1.1-flash" {
+		t.Fatalf("default video model = %s", job.Model)
+	}
+	res, err = cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "get_video", Arguments: map[string]any{"jobId": job.JobID, "waitSeconds": 10}})
 	if err != nil || res.IsError {
 		t.Fatalf("get_video: %v %+v", err, res)
 	}
@@ -271,7 +280,7 @@ func TestHTTPHandler(t *testing.T) {
 	}
 	defer func() { _ = cs.Close() }()
 	tools, err := cs.ListTools(context.Background(), nil)
-	if err != nil || len(tools.Tools) != 12 {
+	if err != nil || len(tools.Tools) != 14 {
 		t.Fatalf("tools over HTTP: %v %v", err, tools)
 	}
 	out, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "generate_image", Arguments: map[string]any{"prompt": "x"}})
@@ -317,6 +326,14 @@ func TestResourceReadEnforcesContainment(t *testing.T) {
 	if _, err := cs.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: uri}); err != nil {
 		t.Fatalf("reading a generated file: %v", err)
 	}
+
+	// A file over the limit is refused before it is read, with what to do.
+	defer func(v int64) { maxResourceBytes = v }(maxResourceBytes)
+	maxResourceBytes = 10
+	_, err = cs.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: uri})
+	if err == nil || !strings.Contains(err.Error(), "more than resources/read sends") || !strings.Contains(err.Error(), "output directory") {
+		t.Fatalf("oversized resource: %v", err)
+	}
 }
 
 type bearer struct{ token string }
@@ -325,4 +342,61 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+b.token)
 	return http.DefaultTransport.RoundTrip(r)
+}
+
+// Over HTTP a resources/read holds its slot until its response is written,
+// not just until the handler returns, so concurrent reads cannot pile up
+// in memory; other requests are not held up, and the queue is bounded.
+func TestResourceReadsAreGatedForTheirWholeRequest(t *testing.T) {
+	s, _ := newTestServer(t)
+	release := make(chan struct{})
+	entered := make(chan string, 16)
+	h := s.gateResourceReads(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		entered <- string(body)
+		if readsResource(body) {
+			<-release // the response is still being written
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	post := func(body string) int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body)))
+		return rec.Code
+	}
+	read := `{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"gemini-media://files/x.png"}}`
+	padded := strings.Repeat(" ", 100_000) + read
+
+	codes := make(chan int, 16)
+	go func() { codes <- post(read) }()
+	<-entered
+	go func() { codes <- post(padded) }()
+	if code := post(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`); code != http.StatusOK {
+		t.Fatalf("tools/list while a read is served: %d", code)
+	}
+	if b := <-entered; !strings.Contains(b, "tools/list") {
+		t.Fatalf("a second read ran alongside the first: %.80q", b)
+	}
+	for i := 1; i < maxResourceWaiters; i++ {
+		go func() { codes <- post(read) }()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for s.resourceWaiting.Load() < maxResourceWaiters {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d reads waiting, want %d", s.resourceWaiting.Load(), maxResourceWaiters)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if code := post(read); code != http.StatusServiceUnavailable {
+		t.Fatalf("a read past the queue: %d, want 503", code)
+	}
+	close(release)
+	for range 1 + maxResourceWaiters {
+		if code := <-codes; code != http.StatusOK {
+			t.Fatalf("queued read: %d", code)
+		}
+	}
+	if s.resourceWaiting.Load() != 0 || len(s.resourceHTTP) != 0 {
+		t.Fatal("the gate did not release its slot and waiters")
+	}
 }

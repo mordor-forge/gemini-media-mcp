@@ -113,7 +113,7 @@ func TestOmniEditsFilesWithinLimits(t *testing.T) {
 	}
 
 	// A Veo clip is edited by sending its saved file.
-	veo, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "waves", WaitSeconds: 30})
+	veo, err := e.svc.GenerateVideo(context.Background(), VideoRequest{Prompt: "waves", Model: "lite", WaitSeconds: 30})
 	if err != nil || veo.State != jobs.StateCompleted {
 		t.Fatalf("veo = %+v %v", veo, err)
 	}

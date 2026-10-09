@@ -1,6 +1,6 @@
 {
   "name": "gemini-media",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Codex overlay for the portable plugin in ../plugin.json: forwards the listed environment variables (Codex passes only a small allowlist to stdio MCP servers by default). The server itself is defined in ../mcp.json.",
   "mcpServers": {
     "gemini-media": {

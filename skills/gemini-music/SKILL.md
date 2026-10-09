@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Requires the gemini-media MCP server (https://github.com/mordor-forge/gemini-media-mcp) with a Gemini API key or Vertex AI project.
 metadata:
   author: mordor-forge
-  version: "1.0.0"
+  version: "1.1.0"
   mcp-server: gemini-media
 ---
 

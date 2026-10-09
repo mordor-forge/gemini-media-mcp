@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mordor-forge/gemini-media-mcp/internal/apperr"
@@ -51,6 +52,11 @@ type Service struct {
 	// omniActive tracks Omni interactions this process is running:
 	// job ID -> chan struct{} closed when the job is settled.
 	omniActive sync.Map
+	// imaging admits one tile_image or stitch_tiles step at a time (each
+	// may hold about 1 GB); capacity 1. imagingWaiting counts the calls
+	// waiting for it.
+	imaging        chan struct{}
+	imagingWaiting atomic.Int32
 }
 
 // New builds a Service.
@@ -62,8 +68,9 @@ func New(d Deps) *Service {
 	return &Service{
 		api: d.API, auth: d.Auth, cfg: d.Config, catalog: d.Catalog,
 		store: d.Store, jobs: d.Jobs, ledger: d.Ledger, log: log,
-		now:   time.Now,
-		sleep: sleepCtx,
+		now:     time.Now,
+		sleep:   sleepCtx,
+		imaging: make(chan struct{}, 1),
 	}
 }
 

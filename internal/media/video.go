@@ -36,7 +36,7 @@ const maxDownloadAttempts = 3
 // VideoRequest is the input of generate_video.
 type VideoRequest struct {
 	Prompt           string   `json:"prompt" jsonschema:"What happens in the clip: subject and action, camera movement, setting, lighting, style, and sound (dialogue in quotes, sound effects, ambience, music)."`
-	Model            string   `json:"model,omitempty" jsonschema:"Model ID or alias: lite (default, cheapest Veo), omni (Gemini Omni Flash: best prompt adherence, editable and extendable to 40 s), fast (Veo 4K, ingredients) or standard (highest Veo quality). See list_models."`
+	Model            string   `json:"model,omitempty" jsonschema:"Model ID or alias: omni (default on the Gemini API: Gemini Omni Flash, best prompt adherence, editable and extendable to 40 s), lite (cheapest Veo; the default on Vertex AI), fast (Veo 4K, ingredients) or standard (highest Veo quality). Veo is leaving the Gemini API: list_models shows its shutdown date. See list_models."`
 	AspectRatio      string   `json:"aspectRatio,omitempty" jsonschema:"16:9 (default) or 9:16"`
 	Resolution       string   `json:"resolution,omitempty" jsonschema:"720p (default), 1080p or 4k (not lite); omni also 360p for fast drafts. Veo 1080p and 4k require 8-second clips."`
 	DurationSeconds  int      `json:"durationSeconds,omitempty" jsonschema:"Clip length: Veo 4, 6 or 8 seconds; omni 3-10 seconds (default 8)."`
@@ -224,6 +224,9 @@ func (s *Service) ExtendVideo(ctx context.Context, req ExtendVideoRequest) (*Vid
 	}
 	if !m.Capabilities.Extend {
 		return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s does not support extension", m.ID), Hint: "Generate the first clip with omni, fast or standard to be able to extend it."}
+	}
+	if !m.OfferedOn(s.backend(), s.now()) {
+		return nil, &apperr.Error{Kind: apperr.NotFound, Message: fmt.Sprintf("%s is no longer offered on the %s backend, so job %s cannot be extended", m.ID, s.backend(), parent.ID), Hint: "Start a new clip from its last frame instead (generate_video with image; omni can then extend it)."}
 	}
 	if m.Family == catalog.FamilyOmni {
 		return s.extendOmni(ctx, req, parent, m)
@@ -648,11 +651,16 @@ func (s *Service) jobView(job *jobs.Job) *VideoJob {
 			v.Next = fmt.Sprintf("The video is ready and being downloaded. Call get_video with jobId %s again in a few seconds.", job.ID)
 		}
 	case jobs.StateCompleted:
+		// extend_video refuses models no longer offered on this backend.
+		extend := "call extend_video"
+		if known && !m.OfferedOn(s.backend(), s.now()) {
+			extend = "start a new clip from its last frame (generate_video with image); " + m.ID + " is no longer offered here, so it cannot be extended"
+		}
 		switch {
 		case known && m.Capabilities.VideoEdit:
-			v.Next = "Review the video. To change it, call edit_video with this jobId; to continue the shot, call extend_video."
+			v.Next = "Review the video. To change it, call edit_video with this jobId; to continue the shot, " + extend + "."
 		case known && m.Capabilities.Extend:
-			v.Next = "Review the video. To continue the shot, call extend_video with this jobId."
+			v.Next = "Review the video. To continue the shot, " + strings.Replace(extend, "call extend_video", "call extend_video with this jobId", 1) + "."
 		}
 	case jobs.StateFailed, jobs.StateFiltered:
 		if job.Billed {

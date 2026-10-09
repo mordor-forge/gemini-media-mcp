@@ -57,7 +57,7 @@ func (s *Store) LoadInput(ref string, pol InputPolicy) (*Input, error) {
 	case strings.HasPrefix(ref, "data:"):
 		return decodeDataURI(ref, maxBytes)
 	case strings.HasPrefix(ref, URIScheme):
-		path, data, err := s.Open(ref)
+		path, data, err := s.OpenMax(ref, maxBytes)
 		if err != nil {
 			return nil, fmt.Errorf("reading %s: %w", ref, err)
 		}
@@ -66,18 +66,9 @@ func (s *Store) LoadInput(ref string, pol InputPolicy) (*Input, error) {
 		return nil, fmt.Errorf("remote URLs are not fetched (%s); download the file first and pass its path", ref)
 	}
 
-	path := ref
-	if strings.HasPrefix(ref, "file://") {
-		u, err := url.Parse(ref)
-		if err != nil {
-			return nil, fmt.Errorf("invalid file URI %q: %w", ref, err)
-		}
-		path = u.Path
-		// file:///C:/x on Windows parses to /C:/x.
-		if len(path) >= 3 && path[0] == '/' && path[2] == ':' {
-			path = path[1:]
-		}
-		path = filepath.FromSlash(path)
+	path, err := FilePath(ref)
+	if err != nil {
+		return nil, err
 	}
 	path = expandHome(path)
 
@@ -109,7 +100,7 @@ func (s *Store) LoadInput(ref string, pol InputPolicy) (*Input, error) {
 		return nil, fmt.Errorf("input %s is not a regular file", ref)
 	}
 	if info.Size() > maxBytes {
-		return nil, fmt.Errorf("input %s is %d bytes; the limit is %d", ref, info.Size(), maxBytes)
+		return nil, &TooLargeError{Ref: ref, Size: info.Size(), Limit: maxBytes}
 	}
 	data, err := os.ReadFile(real)
 	if err != nil {
@@ -140,9 +131,19 @@ func rootsHint(roots []string) string {
 	return ", " + strings.Join(roots, ", ")
 }
 
+// TooLargeError reports an input over the size limit it was loaded with.
+type TooLargeError struct {
+	Ref         string
+	Size, Limit int64
+}
+
+func (e *TooLargeError) Error() string {
+	return fmt.Sprintf("input %s is %d bytes; the limit is %d", e.Ref, e.Size, e.Limit)
+}
+
 func newInput(data []byte, path, ref string, maxBytes int64) (*Input, error) {
 	if int64(len(data)) > maxBytes {
-		return nil, fmt.Errorf("input %s is %d bytes; the limit is %d", ref, len(data), maxBytes)
+		return nil, &TooLargeError{Ref: ref, Size: int64(len(data)), Limit: maxBytes}
 	}
 	return &Input{Data: data, MIMEType: SniffMIME(data, path), Ref: ref}, nil
 }
@@ -155,8 +156,8 @@ func decodeDataURI(ref string, maxBytes int64) (*Input, error) {
 	if !strings.HasSuffix(meta, ";base64") {
 		return nil, errors.New("data URIs must be base64-encoded (data:<mime>;base64,<data>)")
 	}
-	if int64(base64.StdEncoding.DecodedLen(len(payload))) > maxBytes {
-		return nil, fmt.Errorf("data URI payload exceeds %d bytes", maxBytes)
+	if n := int64(base64.StdEncoding.DecodedLen(len(payload))); n > maxBytes {
+		return nil, &TooLargeError{Ref: "data:" + strings.TrimSuffix(meta, ";base64"), Size: n, Limit: maxBytes}
 	}
 	data, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
@@ -186,4 +187,22 @@ func expandHome(p string) string {
 		}
 	}
 	return p
+}
+
+// FilePath turns a file:// URI into a local path; other references are
+// returned unchanged.
+func FilePath(ref string) (string, error) {
+	if !strings.HasPrefix(ref, "file://") {
+		return ref, nil
+	}
+	u, err := url.Parse(ref)
+	if err != nil {
+		return "", fmt.Errorf("invalid file URI %q: %w", ref, err)
+	}
+	path := u.Path
+	// file:///C:/x on Windows parses to /C:/x.
+	if len(path) >= 3 && path[0] == '/' && path[2] == ':' {
+		path = path[1:]
+	}
+	return filepath.FromSlash(path), nil
 }

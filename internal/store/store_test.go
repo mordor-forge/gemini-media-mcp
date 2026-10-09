@@ -76,6 +76,31 @@ func TestSaveUniqueNamesAndProvenance(t *testing.T) {
 	}
 }
 
+func TestSaveWithProvenanceRequiresTheSidecar(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A file where the sidecar directory belongs makes every sidecar fail.
+	if err := os.WriteFile(filepath.Join(s.Dir(), metaDir), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data := pngBytes(t, 4, 4)
+	prov := &Provenance{Tool: "stitch_tiles"}
+	if a, err := s.Save("image", "loose", "png", data, "image/png", prov); err != nil || a.Name != "loose.png" {
+		t.Fatalf("Save = %+v, %v; provenance is best-effort there", a, err)
+	}
+	if _, err := s.SaveWithProvenance("image", "strict", "png", data, "image/png", prov); err == nil || !strings.Contains(err.Error(), "provenance") {
+		t.Fatalf("SaveWithProvenance err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.Dir(), "strict.png")); !os.IsNotExist(err) {
+		t.Fatalf("the asset must be removed when its provenance fails: %v", err)
+	}
+	if _, err := s.SaveWithProvenance("image", "none", "png", data, "image/png", nil); err == nil {
+		t.Fatal("SaveWithProvenance without a record must fail")
+	}
+}
+
 func TestOpenRejectsTraversal(t *testing.T) {
 	s, _ := New(t.TempDir())
 	for _, bad := range []string{URIScheme + "../etc/passwd", "../x", URIScheme + ".meta", ""} {
@@ -233,5 +258,33 @@ func TestOpenEnforcesContainment(t *testing.T) {
 	viaLink, _ := New(linkedDir)
 	if _, _, err := viaLink.Open(a.URI); err != nil {
 		t.Fatalf("symlinked output directory: %v", err)
+	}
+}
+
+// A resource URI's size is checked before the file is read.
+func TestLoadInputBoundsResourceURIsBeforeReading(t *testing.T) {
+	s, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := s.Save("image", "big", "png", pngBytes(t, 64, 64), "image/png", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.LoadInput(a.URI, InputPolicy{MaxBytes: 10})
+	var big *TooLargeError
+	if !errors.As(err, &big) || big.Size != a.Bytes || big.Limit != 10 {
+		t.Fatalf("err = %v, want a TooLargeError", err)
+	}
+	if in, err := s.LoadInput(a.URI, InputPolicy{MaxBytes: a.Bytes}); err != nil || int64(len(in.Data)) != a.Bytes {
+		t.Fatalf("at the limit: %v", err)
+	}
+	// So is an inline data URI's, from its encoded length.
+	inline := "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngBytes(t, 64, 64))
+	if _, err := s.LoadInput(inline, InputPolicy{MaxBytes: 10}); !errors.As(err, &big) || big.Ref != "data:image/png" || big.Limit != 10 {
+		t.Fatalf("data URI: err = %v, want a TooLargeError", err)
+	}
+	if real, info, err := s.Stat(a.Name); err != nil || info.Size() != a.Bytes || filepath.Base(real) != a.Name {
+		t.Fatalf("Stat = %s %v %v", real, info, err)
 	}
 }

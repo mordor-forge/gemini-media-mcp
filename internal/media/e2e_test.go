@@ -5,8 +5,10 @@
 //
 //	GEMINI_MEDIA_E2E=1 GEMINI_API_KEY=... go test -tags=e2e ./internal/media/ -run E2E -v -timeout 30m
 //
-// Set GEMINI_MEDIA_E2E_VIDEO=1 to include video, GEMINI_MEDIA_E2E_OMNI=1 to
-// include a Gemini Omni clip and an edit of it (about $0.30), and
+// Set GEMINI_MEDIA_E2E_VIDEO=1 to include a Veo clip (Vertex AI only after
+// Veo leaves the Gemini API on 2026-10-22), GEMINI_MEDIA_E2E_OMNI=1 to
+// include a Gemini Omni clip and an edit of it (about $0.30),
+// GEMINI_MEDIA_E2E_UPSCALE=1 to include a small tiled upscale (about $0.20), and
 // GEMINI_MEDIA_E2E_OUTPUT_DIR=<dir> to keep the generated files for review
 // (otherwise they go to a temporary directory that is deleted). Vertex AI
 // works too (GOOGLE_CLOUD_PROJECT + ADC, or GOOGLE_GENAI_USE_VERTEXAI=true).
@@ -16,6 +18,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,6 +124,9 @@ func TestE2E_Video(t *testing.T) {
 	if os.Getenv("GEMINI_MEDIA_E2E_VIDEO") != "1" {
 		t.Skip("set GEMINI_MEDIA_E2E_VIDEO=1 to run the video test (~$0.20)")
 	}
+	if r, _, _, err := s.resolve("lite", catalog.Video); err != nil || r.Model.Family != catalog.FamilyVeo {
+		t.Skip("Veo is not offered on this backend (it left the Gemini API on 2026-10-22); run with Vertex AI credentials")
+	}
 	job, err := s.GenerateVideo(context.Background(), VideoRequest{Prompt: "Gentle ocean waves rolling onto a sandy beach at sunset, soft wave sounds", Model: "lite", DurationSeconds: 4})
 	if err != nil {
 		t.Fatal(err)
@@ -176,4 +182,57 @@ func TestE2E_Omni(t *testing.T) {
 	}
 	edit = wait(edit)
 	t.Logf("omni edit %s (%.1fs) cost %+v", edit.Files[0].Path, edit.Files[0].DurationSeconds, edit.Cost)
+}
+
+// TestE2E_Upscale runs a small tiled upscale end to end: a 2x2 grid edited
+// at 1K, which checks that real model tiles keep their framing well enough
+// to align.
+func TestE2E_Upscale(t *testing.T) {
+	if os.Getenv("GEMINI_MEDIA_E2E_UPSCALE") != "1" {
+		t.Skip("set GEMINI_MEDIA_E2E_UPSCALE=1 to run the tiled upscale (about $0.20)")
+	}
+	s := liveService(t)
+	ctx := context.Background()
+	src, err := s.GenerateImage(ctx, ImageRequest{Prompt: "A documentary photograph of a weathered wooden fishing boat moored in a small stone harbor, coiled ropes and nets on deck, overcast light.", AspectRatio: "3:2", OutputName: "upscale-source"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := s.TileImage(ctx, TileImageRequest{Image: src.Files[0].URI, Grid: 2, ImageSize: "1K", LongEdge: 2048})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("plan: %d tiles, estimate $%.2f, native %d px", len(plan.Tiles), plan.Cost.USD, plan.NativeLongEdge)
+	edits := make([]StitchTile, len(plan.Tiles))
+	errs := make([]error, len(plan.Tiles))
+	var wg sync.WaitGroup
+	for i, pt := range plan.Tiles {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res, err := s.EditImage(ctx, EditImageRequest{Image: pt.Crop.URI, ReferenceImages: []string{plan.Reference.URI},
+				AspectRatio: pt.AspectRatio, ImageSize: plan.ImageSize, Prompt: plan.Prompt})
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			edits[i] = StitchTile{Tile: pt.Tile, Image: res.Files[0].URI}
+		}()
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := s.StitchTiles(ctx, StitchTilesRequest{Job: plan.Job, Tiles: edits})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tr := range out.Tiles {
+		t.Logf("tile %d %s: %s match %.3f scale %.4fx%.4f shift %.1f,%.1f %s", tr.Tile, tr.Label, tr.Status, tr.Match, tr.ScaleX, tr.ScaleY, tr.ShiftX, tr.ShiftY, tr.Note)
+		if tr.Status != "placed" {
+			t.Errorf("tile %d was %s: %s", tr.Tile, tr.Status, tr.Note)
+		}
+	}
+	t.Logf("stitched %s (%dx%d)", out.File.Path, out.File.Width, out.File.Height)
 }
