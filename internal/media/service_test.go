@@ -900,3 +900,38 @@ func TestListModelsNamesTheBackendFallback(t *testing.T) {
 		t.Fatalf("not listed: %v", want)
 	}
 }
+
+func TestListModelsMarksTheResolvedDefault(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	override := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(override, []byte("defaults:\n  video: fast\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := catalog.NewSource(override, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.svc.catalog = src
+	defaults := func() []string {
+		t.Helper()
+		res, err := e.svc.ListModels(context.Background(), ListModelsRequest{MediaType: "video", IncludeInactive: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ids []string
+		for _, m := range res.Models {
+			if m.Default {
+				ids = append(ids, m.ID)
+			}
+		}
+		return ids
+	}
+	if got := defaults(); len(got) != 1 || got[0] != "veo-3.1-fast-generate-preview" {
+		t.Fatalf("defaults before the shutdown = %v", got)
+	}
+	// Past the Gemini API shutdown, requests without a model use Omni.
+	e.svc.now = func() time.Time { return time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC) }
+	if got := defaults(); len(got) != 1 || got[0] != "gemini-omni-1.1-flash" {
+		t.Fatalf("defaults after the shutdown = %v", got)
+	}
+}

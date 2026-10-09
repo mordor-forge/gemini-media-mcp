@@ -85,8 +85,22 @@ func TestVeoPreviewsLeaveTheGeminiAPI(t *testing.T) {
 	}
 	omni, _ := c.Lookup("omni")
 	lite, _ := c.Lookup("lite")
-	if !c.IsDefault(omni, "gemini-api") || c.IsDefault(omni, "vertex") || !c.IsDefault(lite, "vertex") || c.IsDefault(lite, "gemini-api") {
+	if !c.IsDefault(omni, "gemini-api", before) || c.IsDefault(omni, "vertex", before) || !c.IsDefault(lite, "vertex", before) || c.IsDefault(lite, "gemini-api", before) {
 		t.Fatal("IsDefault must follow the backend defaults")
+	}
+	// A default past its backend shutdown is not what requests use: the
+	// fallback they resolve to is the default.
+	fd, err := Merge(embedded, []byte("defaults:\n  video: fast\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fast, _ := fd.Lookup("fast")
+	fdOmni, _ := fd.Lookup("omni")
+	if !fd.IsDefault(fast, "gemini-api", before) || fd.IsDefault(fdOmni, "gemini-api", before) {
+		t.Error("before the shutdown the configured default is the default")
+	}
+	if fd.IsDefault(fast, "gemini-api", after) || !fd.IsDefault(fdOmni, "gemini-api", after) || fd.List(Video, "gemini-api", true, after)[0] != fdOmni {
+		t.Error("after the shutdown the fallback requests resolve to is the default, listed first")
 	}
 
 	for _, name := range []string{"lite", "fast", "standard", "veo-3.1-fast-generate-001"} {
@@ -584,7 +598,8 @@ func TestOverrideErrors(t *testing.T) {
 		"models:\n  - id: veo-3.0-generate-001\n    replacement: veo-9\n":                            "replacement \"veo-9\" is not in the catalog",
 		"models:\n  - id: veo-3.0-generate-001\n    replacement: veo-3.0-generate-001\n":             "is the model itself",
 		"models:\n  - id: gemini-3.8-flash-tts\n    fallback: gemini-3.8-flash-lite-tts\n":           "not offered on vertex, where requests for gemini-3.8-flash-tts switch to it",
-		"models:\n  - id: veo-3.1-lite-generate-preview\n    fallback: lite\n":                       "is the model itself",
+		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n    fallback: y-video\n  - id: y-video\n    family: veo\n    mediaType: video\n    shutdown: \"2026-10-01\"\n": "requests on gemini-api from 2026-12-31 switch to its fallback \"y-video\", which cannot serve them",
+		"models:\n  - id: veo-3.1-lite-generate-preview\n    fallback: lite\n": "is the model itself",
 	} {
 		if _, err := Merge(embedded, []byte(bad)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("bad default should fail: %q -> %v", bad, err)
