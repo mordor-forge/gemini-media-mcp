@@ -7,7 +7,7 @@
 #
 # Prices are USD list prices (paid tier, standard/on-demand) and are used for
 # estimates only. Authoritative spend lives in AI Studio / Cloud Billing.
-version: "2026-10-08"
+version: "2026-10-09"
 sources:
   - https://ai.google.dev/gemini-api/docs/models
   - https://ai.google.dev/gemini-api/docs/models/gemini-nano-banana-2.1
@@ -208,7 +208,7 @@ models:
     released: "2026-08-27"
     summary: Default video model on the Gemini API. Generates, edits and extends clips with native audio. 3-10 s, 360p drafts to 4K, first/last frames, up to 10 reference images, conversational edits of earlier clips, extension to 40 s. Strong prompt adherence and readable text in video. About Veo Fast's price at 720p.
     backends: [gemini-api]
-    capabilities: &omni
+    capabilities:
       aspectRatios: ["16:9", "9:16"]
       resolutions: ["360p", "720p", "1080p", "4k"]
       durations: [3, 4, 5, 6, 7, 8, 9, 10]
@@ -225,7 +225,7 @@ models:
         - when: {lastFrame: ["*"]}
           require: {image: ["*"]}
           message: lastFrame requires a first-frame image
-    pricing: &omniPricing
+    pricing:
       asOf: "2026-10-07"
       source: https://ai.google.dev/gemini-api/docs/pricing
       perSecond: {360p: 0.034, 720p: 0.1014, 1080p: 0.152, 4k: 0.304}
@@ -247,10 +247,25 @@ models:
     replacement: gemini-omni-1.1-flash
     summary: Preview of Gemini Omni, replaced by the GA gemini-omni-1.1-flash. Shuts down on the Gemini API on 2026-10-22.
     backends: [gemini-api]
-    capabilities: *omni
-    pricing: *omniPricing
+    capabilities:
+      aspectRatios: ["16:9", "9:16"]
+      resolutions: ["720p"]
+      durations: [3, 4, 5, 6, 7, 8, 9, 10]
+      defaultDuration: 8
+      maxReferenceImages: 5
+      imageToVideo: true
+      videoEdit: true
+      maxInputVideoSeconds: 10
+    pricing:
+      asOf: "2026-10-07"
+      source: https://ai.google.dev/gemini-api/docs/pricing
+      perSecond: {720p: 0.1014}
+      inputPer1M: {text: 1.50, image: 1.50, video: 1.50, audio: 1.50}
+      outputPer1M: {text: 9.00, video: 17.50}
     notes:
-      - Capabilities and prices are assumed to match gemini-omni-1.1-flash; the API rejects what the preview does not support.
+      - Generates and edits at 720p only. Extension, first/last frames and the other resolutions are new in gemini-omni-1.1-flash; use it for those.
+      - Google does not document the preview's reference image limit (secondary sources give 5 to 14); the catalog allows 5. gemini-omni-1.1-flash takes 10.
+      - Priced like gemini-omni-1.1-flash at 720p.
 
   - id: veo-3.1-lite-generate-preview
     vertexId: veo-3.1-lite-generate-001

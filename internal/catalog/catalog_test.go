@@ -167,6 +167,18 @@ func TestVeoPreviewsLeaveTheGeminiAPI(t *testing.T) {
 	if got := implicit.BackendSummary(after); got != "gemini-api ended 2026-10-22, vertex" {
 		t.Errorf("implicit backends with a shutdown = %q", got)
 	}
+	// A future global shutdown shows for implicit backends too.
+	if got := (&Model{ID: "x", Shutdown: "2027-01-01"}).BackendSummary(after); got != "all until 2027-01-01" {
+		t.Errorf("implicit backends with a future shutdown = %q", got)
+	}
+	// The Omni preview keeps its own, narrower capabilities.
+	if r, err := c.Resolve("gemini-omni-flash-preview", Video, "gemini-api", before); err != nil {
+		t.Fatal(err)
+	} else if _, err := r.Model.Validate(Params{"resolution": "4k"}, "gemini-api"); err == nil {
+		t.Error("the Omni preview generates at 720p only")
+	} else if _, err := r.Model.Validate(Params{"lastFrame": "x.png", "image": "y.png"}, "gemini-api"); err == nil || r.Model.Capabilities.Extend {
+		t.Error("the Omni preview has no first/last frames or extension")
+	}
 	// With no backend resolved (the CLI listing, no credentials), a model is
 	// retired once every backend has ended it.
 	ended, err := Merge(embedded, []byte("models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    status: preview\n    fallback: veo-3.1-lite-generate-preview\n    backendShutdown: {gemini-api: \"2026-10-22\", vertex: \"2026-10-01\"}\n"))

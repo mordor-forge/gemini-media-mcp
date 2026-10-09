@@ -616,8 +616,11 @@ func (m *Model) OfferedOn(backend string, now time.Time) bool {
 // e.g. "gemini-api until 2026-10-22, vertex" or "gemini-api ended 2026-10-22".
 func (m *Model) BackendSummary(now time.Time) string {
 	if len(m.Backends) == 0 && len(m.BackendShutdown) == 0 {
-		if !m.Active(now) {
+		switch {
+		case !m.Active(now):
 			return strings.TrimSpace("ended " + m.Shutdown)
+		case m.Shutdown != "":
+			return "all until " + m.Shutdown
 		}
 		return "all"
 	}
