@@ -324,6 +324,14 @@ func TestResourceReadEnforcesContainment(t *testing.T) {
 	if _, err := cs.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: uri}); err != nil {
 		t.Fatalf("reading a generated file: %v", err)
 	}
+
+	// A file over the limit is refused before it is read, with what to do.
+	defer func(v int64) { maxResourceBytes = v }(maxResourceBytes)
+	maxResourceBytes = 10
+	_, err = cs.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: uri})
+	if err == nil || !strings.Contains(err.Error(), "more than resources/read sends") || !strings.Contains(err.Error(), "output directory") {
+		t.Fatalf("oversized resource: %v", err)
+	}
 }
 
 type bearer struct{ token string }

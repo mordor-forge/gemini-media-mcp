@@ -41,6 +41,7 @@ type Server struct {
 	store     *store.Store
 	transport string
 	log       *slog.Logger
+	reads     chan struct{} // one resources/read at a time
 }
 
 // New builds the MCP server and registers all tools and resources.
@@ -61,7 +62,7 @@ func New(svc *media.Service, st *store.Store, opts Options) *Server {
 		// Logging is deprecated in MCP 2026-07-28; logs go to stderr instead.
 		Capabilities: &mcp.ServerCapabilities{},
 	})
-	s := &Server{mcp: m, svc: svc, store: st, transport: opts.Transport, log: log}
+	s := &Server{mcp: m, svc: svc, store: st, transport: opts.Transport, log: log, reads: make(chan struct{}, 1)}
 	s.registerTools()
 	s.registerResources()
 	return s

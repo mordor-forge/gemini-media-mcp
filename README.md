@@ -89,7 +89,7 @@ To run it in Docker instead: `docker run -i --rm --user "$(id -u):$(id -g)" -e G
 | `get_usage` | Estimated spend by period, model and tool; budgets remaining; running jobs |
 | `get_config` | Active backend and why it was chosen, output directory, defaults, warnings |
 
-Every result includes the saved file's path, a `gemini-media://files/<name>` URI and its cost. You can pass the URI as an input to another tool. Clients that can't read the server's disk (for example over HTTP) can fetch the file with `resources/read`.
+Every result includes the saved file's path, a `gemini-media://files/<name>` URI and its cost. You can pass the URI as an input to another tool. Clients that can't read the server's disk (for example over HTTP) can fetch the file with `resources/read`, for files up to 64 MB (larger upscales stay on the server's disk).
 
 ## Skills
 
