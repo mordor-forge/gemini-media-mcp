@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -42,6 +43,11 @@ type Server struct {
 	transport string
 	log       *slog.Logger
 	reads     chan struct{} // one resources/read at a time
+
+	// Over HTTP, one resources/read request at a time for its whole
+	// lifetime, response write included, and how many wait for it.
+	resourceHTTP    chan struct{}
+	resourceWaiting atomic.Int32
 }
 
 // New builds the MCP server and registers all tools and resources.
@@ -62,7 +68,7 @@ func New(svc *media.Service, st *store.Store, opts Options) *Server {
 		// Logging is deprecated in MCP 2026-07-28; logs go to stderr instead.
 		Capabilities: &mcp.ServerCapabilities{},
 	})
-	s := &Server{mcp: m, svc: svc, store: st, transport: opts.Transport, log: log, reads: make(chan struct{}, 1)}
+	s := &Server{mcp: m, svc: svc, store: st, transport: opts.Transport, log: log, reads: make(chan struct{}, 1), resourceHTTP: make(chan struct{}, 1)}
 	s.registerTools()
 	s.registerResources()
 	return s

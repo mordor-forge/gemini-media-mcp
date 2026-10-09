@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"image"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"google.golang.org/genai"
@@ -340,4 +342,61 @@ func (b bearer) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header.Set("Authorization", "Bearer "+b.token)
 	return http.DefaultTransport.RoundTrip(r)
+}
+
+// Over HTTP a resources/read holds its slot until its response is written,
+// not just until the handler returns, so concurrent reads cannot pile up
+// in memory; other requests are not held up, and the queue is bounded.
+func TestResourceReadsAreGatedForTheirWholeRequest(t *testing.T) {
+	s, _ := newTestServer(t)
+	release := make(chan struct{})
+	entered := make(chan string, 16)
+	h := s.gateResourceReads(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		entered <- string(body)
+		if readsResource(body) {
+			<-release // the response is still being written
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	post := func(body string) int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body)))
+		return rec.Code
+	}
+	read := `{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"gemini-media://files/x.png"}}`
+	padded := strings.Repeat(" ", 100_000) + read
+
+	codes := make(chan int, 16)
+	go func() { codes <- post(read) }()
+	<-entered
+	go func() { codes <- post(padded) }()
+	if code := post(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`); code != http.StatusOK {
+		t.Fatalf("tools/list while a read is served: %d", code)
+	}
+	if b := <-entered; !strings.Contains(b, "tools/list") {
+		t.Fatalf("a second read ran alongside the first: %.80q", b)
+	}
+	for i := 1; i < maxResourceWaiters; i++ {
+		go func() { codes <- post(read) }()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for s.resourceWaiting.Load() < maxResourceWaiters {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d reads waiting, want %d", s.resourceWaiting.Load(), maxResourceWaiters)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if code := post(read); code != http.StatusServiceUnavailable {
+		t.Fatalf("a read past the queue: %d, want 503", code)
+	}
+	close(release)
+	for range 1 + maxResourceWaiters {
+		if code := <-codes; code != http.StatusOK {
+			t.Fatalf("queued read: %d", code)
+		}
+	}
+	if s.resourceWaiting.Load() != 0 || len(s.resourceHTTP) != 0 {
+		t.Fatal("the gate did not release its slot and waiters")
+	}
 }

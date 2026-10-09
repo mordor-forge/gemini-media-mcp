@@ -1,11 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"time"
@@ -37,6 +39,7 @@ func (s *Server) HTTPHandler(cfg config.HTTP) (http.Handler, error) {
 		opts.SessionTimeout = 30 * time.Minute
 	}
 	var h http.Handler = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s.mcp }, opts)
+	h = s.gateResourceReads(h)
 
 	// Browsers must not be able to drive a local server from another origin.
 	cop := http.NewCrossOriginProtection()
@@ -69,6 +72,75 @@ func (s *Server) HTTPHandler(cfg config.HTTP) (http.Handler, error) {
 		_, _ = fmt.Fprintf(w, "%s %s: MCP endpoint at %s (Streamable HTTP)\n", version.Name, version.String(), cfg.Path)
 	})
 	return mux, nil
+}
+
+const (
+	// maxResourceWaiters bounds the resources/read requests queued behind
+	// the one being served; more are refused at once.
+	maxResourceWaiters = 4
+	// resourceWriteTimeout bounds how long one resources/read response may
+	// take to write, so a stalled client cannot keep the slot.
+	resourceWriteTimeout = 2 * time.Minute
+)
+
+// gateResourceReads serves resources/read requests one at a time for their
+// whole lifetime: the SDK encodes and writes a response after its handler
+// returns, so only the HTTP request bounds how long a file (up to
+// maxResourceBytes, plus its base64 form) stays in memory.
+func (s *Server) gateResourceReads(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.Body == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBody))
+		if err != nil {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		if !readsResource(body) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if s.resourceWaiting.Add(1) > maxResourceWaiters {
+			s.resourceWaiting.Add(-1)
+			w.Header().Set("Retry-After", "5")
+			http.Error(w, "the server is busy sending other resources; retry in a few seconds", http.StatusServiceUnavailable)
+			return
+		}
+		select {
+		case s.resourceHTTP <- struct{}{}:
+			s.resourceWaiting.Add(-1)
+		case <-r.Context().Done():
+			s.resourceWaiting.Add(-1)
+			return
+		}
+		defer func() { <-s.resourceHTTP }()
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(resourceWriteTimeout))
+		next.ServeHTTP(w, r)
+	})
+}
+
+// readsResource reports whether a JSON-RPC body (one message or a batch)
+// calls resources/read.
+func readsResource(body []byte) bool {
+	type call struct {
+		Method string `json:"method"`
+	}
+	var one call
+	if json.Unmarshal(body, &one) == nil {
+		return one.Method == "resources/read"
+	}
+	var batch []call
+	if json.Unmarshal(body, &batch) == nil {
+		for _, c := range batch {
+			if c.Method == "resources/read" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // RunHTTP serves until ctx is cancelled, then shuts down gracefully.
