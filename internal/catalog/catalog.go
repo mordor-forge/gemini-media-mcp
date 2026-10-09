@@ -317,11 +317,11 @@ func (c *Catalog) index() error {
 	return c.checkDefaults()
 }
 
-// checkRedirects makes sure redirects keep requests working: once a model
-// name resolves on a backend, every later lifecycle date at which it
-// redirects there (to its fallback or replacement) must still resolve, as
-// the models along the chain retire in turn. A model that retires without
-// a redirect may simply stop resolving.
+// checkRedirects makes sure redirects keep requests working: wherever a
+// model's fallback takes over, and once a model name resolves on a backend,
+// every lifecycle date at which it redirects there (to its fallback or
+// replacement) must still resolve, as the models along the chain retire in
+// turn. A model that retires without a redirect may simply stop resolving.
 func (c *Catalog) checkRedirects() error {
 	dates := c.lifecycleDates()
 	for _, m := range c.Models {
@@ -337,14 +337,20 @@ func (c *Catalog) checkRedirects() error {
 					continue
 				}
 				field, target := m.redirect(b, t)
-				if !served || target == "" {
+				// A fallback promises service wherever it takes over; a
+				// replacement only where the model served before.
+				if target == "" || !served && field != "fallback" {
 					continue
 				}
 				var ae *apperr.Error
 				if errors.As(err, &ae) {
 					err = errors.New(ae.Message)
 				}
-				return fmt.Errorf("catalog: %s: from %s, requests on %s go to its %s %q, which cannot serve them (%v); pick a %s that stays callable on %s", m.ID, t.Format(time.DateOnly), b, field, target, err, field, b)
+				when := ""
+				if !t.IsZero() {
+					when = "from " + t.Format(time.DateOnly) + ", "
+				}
+				return fmt.Errorf("catalog: %s: %srequests on %s go to its %s %q, which cannot serve them (%v); pick a %s that stays callable on %s", m.ID, when, b, field, target, err, field, b)
 			}
 		}
 	}
