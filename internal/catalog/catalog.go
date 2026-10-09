@@ -11,6 +11,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -313,7 +314,7 @@ func (c *Catalog) index() error {
 			}
 		}
 	}
-	return nil
+	return c.checkDefaults()
 }
 
 // checkRedirects makes sure redirects keep requests working: once a model
@@ -322,21 +323,7 @@ func (c *Catalog) index() error {
 // the models along the chain retire in turn. A model that retires without
 // a redirect may simply stop resolving.
 func (c *Catalog) checkRedirects() error {
-	seen := map[time.Time]bool{}
-	dates := []time.Time{{}} // the start, before every lifecycle date
-	add := func(s string) {
-		if t, ok := parseDate(s); ok && !seen[t] {
-			seen[t] = true
-			dates = append(dates, t)
-		}
-	}
-	for _, m := range c.Models {
-		add(m.Shutdown)
-		for _, d := range m.BackendShutdown {
-			add(d)
-		}
-	}
-	sort.Slice(dates, func(i, j int) bool { return dates[i].Before(dates[j]) })
+	dates := c.lifecycleDates()
 	for _, m := range c.Models {
 		if m.Fallback == "" && m.Replacement == "" {
 			continue
@@ -362,6 +349,85 @@ func (c *Catalog) checkRedirects() error {
 		}
 	}
 	return nil
+}
+
+// lifecycleDates lists, in order, the zero time (before every date) and
+// each distinct shutdown date in the catalog: the moments at which what a
+// name resolves to can change.
+func (c *Catalog) lifecycleDates() []time.Time {
+	seen := map[time.Time]bool{}
+	dates := []time.Time{{}}
+	add := func(s string) {
+		if t, ok := parseDate(s); ok && !seen[t] {
+			seen[t] = true
+			dates = append(dates, t)
+		}
+	}
+	for _, m := range c.Models {
+		add(m.Shutdown)
+		for _, d := range m.BackendShutdown {
+			add(d)
+		}
+	}
+	sort.Slice(dates, func(i, j int) bool { return dates[i].Before(dates[j]) })
+	return dates
+}
+
+// checkDefaults makes sure a request without a model resolves on every
+// backend at every lifecycle date, so a default that is retired, or
+// retires with nowhere to go, cannot break them.
+func (c *Catalog) checkDefaults() error {
+	types := map[string]bool{}
+	for mt := range c.Defaults {
+		types[mt] = true
+	}
+	for _, d := range c.BackendDefaults {
+		for mt := range d {
+			types[mt] = true
+		}
+	}
+	dates := c.lifecycleDates()
+	for _, mt := range slices.Sorted(maps.Keys(types)) {
+		for _, b := range concreteBackends {
+			name := c.DefaultFor(mt, b)
+			if name == "" {
+				continue
+			}
+			for _, t := range dates {
+				if _, err := c.Resolve("", mt, b, t); err != nil {
+					var ae *apperr.Error
+					if errors.As(err, &ae) {
+						err = errors.New(ae.Message)
+					}
+					when := ""
+					if !t.IsZero() {
+						when = " from " + t.Format(time.DateOnly)
+					}
+					return fmt.Errorf("catalog: the default %s model on %s, %q, cannot serve requests%s (%v); pick a default that stays callable there", mt, b, name, when, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// Successor names the model requests for m on backend go to once m is not
+// offered there: now when it already is not, else from the date it ends
+// there. It follows redirects as Resolve does, and is m's listed
+// replacement when m has no end date there or nothing resolves.
+func (c *Catalog) Successor(m *Model, backend string, now time.Time) string {
+	at := now
+	if m.OfferedOn(backend, now) {
+		t, ok := parseDate(m.ShutdownOn(backend))
+		if !ok {
+			return m.Replacement
+		}
+		at = t
+	}
+	if r, err := c.Resolve(m.ID, m.MediaType, backend, at); err == nil && r.Model != m {
+		return r.Model.ID
+	}
+	return m.Replacement
 }
 
 // concreteBackends are the backends the catalog describes.
