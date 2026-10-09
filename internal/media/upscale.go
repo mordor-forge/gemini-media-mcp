@@ -77,6 +77,12 @@ const (
 	detailPixels  = 512
 )
 
+// maxInlineBytes bounds an inline data: input: the request keeps its
+// base64 text alongside the decoded file and pixels, so larger images come
+// as files. It matches the HTTP transport's request limit, and applies over
+// stdio too.
+var maxInlineBytes int64 = 32 << 20
+
 // maxPreparedBytes bounds the memory of the tiles in flight while
 // stitching, on top of the canvas: one tile painted and the next prepared
 // when both fit, otherwise one at a time; a tile that does not fit alone
@@ -100,7 +106,7 @@ type TileImageRequest struct {
 	Padding    float64      `json:"padding,omitempty" jsonschema:"Context added around each cell or region, as a fraction of its size (default 0.2, 0.05-0.5). Tiles then grow to the nearest aspect ratio the model supports."`
 	LongEdge   int          `json:"longEdge,omitempty" jsonschema:"Long edge in pixels of the image stitch_tiles will produce (default 8192, 1024-16384, at most 70 megapixels). First pass only; later passes keep their input's size."`
 	Original   string       `json:"original,omitempty" jsonschema:"First pass only: the untouched original, sent with every tile as context (as a copy of at most 2048 px). Defaults to image. Refinement passes edit crops alone and keep the first pass's original, so it is ignored there."`
-	Model      string       `json:"model,omitempty" jsonschema:"Image model the tiles will be edited with (default nb2; a refinement pass defaults to the model of the pass before). Sets the supported aspect ratios and the cost estimate."`
+	Model      string       `json:"model,omitempty" jsonschema:"Image model the tiles will be edited with (default: the server's default image model; a refinement pass defaults to the model of the pass before). Sets the supported aspect ratios and the cost estimate."`
 	ImageSize  string       `json:"imageSize,omitempty" jsonschema:"Size the tiles will be edited at (1K, 2K or 4K, as the model supports). Omit it on a first pass to pick it with the grid; otherwise it defaults to the model's largest size."`
 	OutputName string       `json:"outputName,omitempty" jsonschema:"Optional base name for the crops and the stitched result. Defaults to the original's name."`
 }
@@ -1097,6 +1103,7 @@ type tilePlan struct {
 func (s *Service) autoPlan(m *catalog.Model, location string, pw, ph, outW, outH int, padding float64, ratios []tiles.Ratio, grids []int, sizes []string) (*tilePlan, error) {
 	var best *tilePlan
 	var lastErr error
+	unpriced := false
 	target := max(outW, outH)
 	meets := func(p *tilePlan) bool { return float64(p.native) >= 0.97*float64(target) }
 	for _, g := range grids {
@@ -1111,7 +1118,15 @@ func (s *Service) autoPlan(m *catalog.Model, location string, pw, ph, outW, outH
 				continue
 			}
 			p := &tilePlan{grid: g, size: size, tiles: planned, native: nativeLongEdge(planned, size, pw, ph)}
-			p.cost = float64(len(planned)) * m.EstimateImage(size, 1, 1200, 2, s.backend(), location).USD
+			est := m.EstimateImage(size, 1, 1200, 2, s.backend(), location)
+			p.cost = float64(len(planned)) * est.USD
+			if est.Basis == catalog.BasisUnpriced {
+				// Without prices every plan would look free and the most
+				// tiles would win: rank by the output pixels the edits
+				// make, which is what tokens and so cost scale with.
+				unpriced = true
+				p.cost = float64(len(planned) * imageSizePixels(size))
+			}
 			switch {
 			case best == nil:
 				best = p
@@ -1130,6 +1145,9 @@ func (s *Service) autoPlan(m *catalog.Model, location string, pw, ph, outW, outH
 		tilesWord = "tile"
 	}
 	best.note = fmt.Sprintf("%d %s at %s (grid %d), the cheapest plan whose detail covers the %d px target", len(best.tiles), tilesWord, best.size, best.grid, target)
+	if unpriced {
+		best.note = fmt.Sprintf("%d %s at %s (grid %d), the plan with the fewest output pixels whose detail covers the %d px target (the catalog has no price for %s)", len(best.tiles), tilesWord, best.size, best.grid, target, m.ID)
+	}
 	if !meets(best) {
 		best.note = fmt.Sprintf("%d %s at %s (grid %d), the most detailed plan available; it falls short of the %d px target", len(best.tiles), tilesWord, best.size, best.grid, target)
 	}
@@ -1158,7 +1176,7 @@ func checkPlan(planned []tiles.Tile, pw, ph, outW, outH int, modelID string) err
 		if !cropFits(t.Box) {
 			return &apperr.Error{Kind: apperr.Invalid,
 				Message: fmt.Sprintf("the %dx%d image is too elongated for %s's aspect ratios: tile %d would need a %dx%d crop", pw, ph, modelID, t.Index, t.Box.W, t.Box.H),
-				Hint:    "Cut the image into less elongated parts (no wider than the model's widest aspect ratio, e.g. 8:1 for nb2) and upscale each, or use a finer grid."}
+				Hint:    fmt.Sprintf("Cut the image into less elongated parts (no wider than %s's widest aspect ratio) and upscale each, or use a finer grid.", modelID)}
 		}
 		boxes[i] = t.Box
 	}
@@ -1258,6 +1276,10 @@ func (s *Service) loadLocal(ref, what string) (*store.Input, error) {
 // loadLocalMax is loadLocal with its own size limit in bytes, and the hint
 // for an input over it.
 func (s *Service) loadLocalMax(ref, what string, maxBytes int64, tooLarge string) (*store.Input, error) {
+	if strings.HasPrefix(ref, "data:") && maxBytes > maxInlineBytes {
+		maxBytes = maxInlineBytes
+		tooLarge = fmt.Sprintf("Save it to a file and pass its path or gemini-media:// URI; inline data: inputs are limited to %d MB.", maxInlineBytes>>20)
+	}
 	pol := s.inputPolicy()
 	pol.MaxBytes = maxBytes
 	in, err := s.store.LoadInput(ref, pol)

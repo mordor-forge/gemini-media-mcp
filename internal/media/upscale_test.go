@@ -15,6 +15,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -254,6 +255,13 @@ func TestTileImageAcceptsDataURIs(t *testing.T) {
 	}
 	if res.Output != (Size{8192, 8192}) || len(res.Tiles) != 4 {
 		t.Fatalf("plan = %+v", res)
+	}
+	// Inline images are capped well below files, over stdio too.
+	defer func(v int64) { maxInlineBytes = v }(maxInlineBytes)
+	maxInlineBytes = 1 << 10
+	_, err = e.svc.TileImage(context.Background(), TileImageRequest{Image: uri, Grid: 2})
+	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Hint, "inline data: inputs are limited") {
+		t.Fatalf("oversized inline image: %v", err)
 	}
 }
 
@@ -1290,5 +1298,55 @@ func TestStitchTilesBudgetsSixteenBitTiles(t *testing.T) {
 	}
 	if _, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits}); err != nil {
 		t.Fatalf("16-bit tiles: %v", err)
+	}
+}
+
+// The tile model's schema names no model: the default is whatever the
+// server is configured with.
+func TestTileModelSchemaNamesNoModel(t *testing.T) {
+	f, _ := reflect.TypeOf(TileImageRequest{}).FieldByName("Model")
+	if desc := f.Tag.Get("jsonschema"); strings.Contains(desc, "nb2") || !strings.Contains(desc, "default image model") {
+		t.Fatalf("model description = %q", desc)
+	}
+}
+
+// Without prices every plan would cost $0; automatic planning then picks
+// the plan with the fewest output pixels that covers the target, not the
+// most tiles.
+func TestAutoPlanRanksUnpricedModelsByPixels(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	override := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(override, []byte("models:\n  - id: x-image\n    family: gemini-image\n    mediaType: image\n    capabilities:\n      edit: true\n      imageSizes: [\"1K\", \"2K\", \"4K\"]\n      aspectRatios: [\"1:1\", \"4:3\", \"3:4\", \"3:2\", \"2:3\", \"16:9\", \"9:16\"]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := catalog.NewSource(override, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Status(); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := src.Get().Lookup("x-image")
+	ratios := tiles.ParseRatios(m.Capabilities.AspectRatios)
+	grids, sizes := []int{1, 2, 3, 4}, editSizes(m)
+	outW, outH := fitLong(400, 300, 8192)
+	p, err := e.svc.autoPlan(m, "", 400, 300, outW, outH, 0.2, ratios, grids, sizes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(p.note, "no price for x-image") || float64(p.native) < 0.97*8192 {
+		t.Fatalf("plan = grid %d at %s, native %d: %s", p.grid, p.size, p.native, p.note)
+	}
+	chosen := len(p.tiles) * imageSizePixels(p.size)
+	for _, g := range grids {
+		for _, size := range sizes {
+			planned, err := tiles.Grid(400, 300, g, 0.2, ratios)
+			if err != nil || float64(nativeLongEdge(planned, size, 400, 300)) < 0.97*8192 {
+				continue
+			}
+			if px := len(planned) * imageSizePixels(size); px < chosen {
+				t.Fatalf("grid %d at %s (%d px) covers the target with fewer pixels than the chosen grid %d at %s (%d px)", g, size, px, p.grid, p.size, chosen)
+			}
+		}
 	}
 }
