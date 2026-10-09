@@ -2,7 +2,7 @@
 name: gemini-video
 description: Generates and edits short video clips with native audio using Google Veo and Gemini Omni Flash through the gemini-media MCP server - text-to-video, animating a still image, first-to-last-frame transitions, keeping a character or product consistent from reference images, changing an existing clip with an instruction, and extending clips into longer shots. Handles the asynchronous job flow, resolution and duration rules, and cost approval for this expensive medium. Use when the user wants a video, clip, animation, b-roll, cinematic shot or product spin, wants to bring a picture to life, or wants to add, remove or restyle something in a short clip. Not for trimming or cutting footage, screen recordings, slideshows, or audio-only work.
 license: Apache-2.0
-compatibility: Requires the gemini-media MCP server (https://github.com/mordor-forge/gemini-media-mcp) with a Gemini API key or a Vertex AI project (Vertex AI express mode cannot run Veo).
+compatibility: Requires the gemini-media MCP server (https://github.com/mordor-forge/gemini-media-mcp) with a Gemini API key or a Vertex AI project. Veo needs a Vertex AI project (Gemini Enterprise Agent Platform) from 2026-10-22, and Vertex AI express mode cannot run it; Omni runs on the Gemini API only.
 metadata:
   author: mordor-forge
   version: "1.0.0"
@@ -14,7 +14,7 @@ metadata:
 ## Quick start
 
 1. Write one prompt covering subject and action, camera, setting and lighting, style, and sound.
-2. Call `gemini-media:generate_video` with `prompt` (defaults: model `lite`, 720p, 8 s, 16:9). It returns a `jobId` with `state: "working"`.
+2. Call `gemini-media:generate_video` with `prompt` (defaults: model `omni` on the Gemini API or `lite` on Vertex AI, 720p, 8 s, 16:9). It returns a `jobId` with `state: "working"`.
 3. Call `gemini-media:get_video` with the `jobId` and `waitSeconds: 45`. Each call blocks server-side; repeat while `state` is `working`. Veo usually takes 1-3 minutes, Omni 1-5 (4K and extensions longer). You cannot sleep between calls, so just call again.
 4. When `state` is `completed`, the MP4 is already downloaded: use `files[0].path` / `files[0].uri`.
 5. Review (see Review), then iterate or extend.
@@ -39,10 +39,12 @@ Image inputs (`image`, `lastFrame`, `referenceImages`) accept a file path, a `ge
 
 | Alias | Choose it for | Limits |
 |-------|---------------|--------|
-| `lite` (default) | Drafts, previews, social clips | 720p/1080p; first frame and first+last frame; no 4k, no reference images, no extension |
-| `omni` | Strongest prompt adherence, readable text, multi-shot scenes, editing and long extensions | Gemini API only; 3-10 s; 360p drafts, 720p, 1080p/4k (upscaled); up to 10 reference images; about `fast`'s price at 720p |
-| `fast` | Best value for production clips | 720p/1080p/4k; up to 3 reference images; extension |
-| `standard` | Hero shots and final renders | Same features as `fast`, several times the price |
+| `omni` (default on the Gemini API) | Strongest prompt adherence, readable text, multi-shot scenes, editing and long extensions | Gemini API only; 3-10 s; 360p drafts, 720p, 1080p/4k (upscaled); up to 10 reference images; about `fast`'s price at 720p |
+| `lite` (default on Vertex AI) | Cheapest drafts, previews, social clips | 720p/1080p; first frame and first+last frame; no 4k, no reference images, no extension |
+| `fast` | Best value for Veo production clips | 720p/1080p/4k; up to 3 reference images; extension |
+| `standard` | Veo hero shots and final renders | Same features as `fast`, several times the price |
+
+Veo (`lite`, `fast`, `standard`) leaves the Gemini API on 2026-10-22: until then it works there with a deprecation warning, and after it the server uses `omni` instead and says so in `warnings`. Veo 3.1 stays on Vertex AI (Gemini Enterprise Agent Platform). If the user needs Veo on the Gemini API after that date, tell them to switch the server to Vertex AI.
 
 Prices change: call `gemini-media:list_models` (`mediaType: "video"`) and `gemini-media:estimate_cost`; never quote prices from memory.
 
@@ -120,8 +122,8 @@ Most agents cannot watch video. Check what you can: `state`, `durationSeconds`, 
 
 ## Cost and approvals
 
-- Video is the most expensive medium here. Draft with `lite` at 720p, or `omni` at `360p` (about a third of its 720p price), 4-6 s while the idea is still loose; move to `fast`, `standard`, `omni` 720p, 1080p or 4k only for finals.
-- Before any `fast`/`standard`/`omni` clip, any 1080p/4k clip, reference-image clips, extensions, edits, or more than one clip, call `gemini-media:estimate_cost` with `mediaType: "video"`, `model`, `resolution`, `durationSeconds`, `count` and `compare: true`. Tell the user the per-clip and total figure, and for multi-clip plans get agreement before starting.
+- Video is the most expensive medium here. Draft with `omni` at `360p` (about a third of its 720p price) or, on Vertex AI, `lite` at 720p, 4-6 s while the idea is still loose; move to `omni` 720p, `fast`, `standard`, 1080p or 4k only for finals.
+- Before any `omni` clip above 360p, any `fast`/`standard` clip, any 1080p/4k clip, reference-image clips, extensions, edits, or more than one clip, call `gemini-media:estimate_cost` with `mediaType: "video"`, `model`, `resolution`, `durationSeconds`, `count` and `compare: true`. Tell the user the per-clip and total figure, and for multi-clip plans get agreement before starting.
 - `[confirmation]` error: the call exceeds the approval threshold. Ask the user with the quoted amount; only after they agree, retry the same call with `approvedCostUsd`. Never invent approval.
 - `[budget]` error: a spending cap was hit. Stop and show `gemini-media:get_usage`.
 - Cost is reserved while a job runs and settled when it finishes; `get_usage` shows it.
@@ -136,7 +138,7 @@ Tool errors read `[kind] message` then `Hint: ...`. Follow the hint; in short:
 | `safety` or state `filtered` | Rephrase: remove real people, brands, copyrighted characters, violence; for image-to-video, check the input image. Do not resend unchanged. |
 | `quota`, `unavailable` | The server already retried with backoff. Wait briefly, retry once, then report. |
 | `timeout` | While waiting, the job keeps running server-side: call `gemini-media:get_video` again rather than starting a new job. If starting a job timed out, Google may still have accepted it, so a retry can double-charge: retry once at most. |
-| `not_found` | Unknown or expired `jobId`, retired model, missing input file, or `omni` on Vertex AI (Gemini API only). Regenerate, check the path, or use a Veo model. |
+| `not_found` | Unknown or expired `jobId`, retired model, missing input file, `omni` on Vertex AI (Gemini API only), or extending a Veo clip after Veo left the Gemini API. Regenerate, check the path, or switch model. |
 | `auth`, `permission` | Stop. Ask the user to run `gemini-media-mcp doctor` (Vertex AI express mode cannot generate video). |
 | `budget`, `confirmation` | See Cost and approvals. |
 
@@ -144,8 +146,8 @@ Never loop on errors that cost money; one retry at most.
 
 ## Interaction mode
 
-- **With a user present:** confirm the essentials in one line when they are unclear (orientation, length, draft or final quality) and the estimated cost for anything beyond a `lite` draft. After delivery, offer two or three next steps (extend, upgrade tier, new take with a changed camera move).
-- **Autonomous (nobody to ask):** do not block on questions. Use `lite`, 720p, a sensible duration and ratio; stay below the confirmation threshold and never set `approvedCostUsd` yourself; poll with `gemini-media:get_video` until the job finishes. Report the prompt, model, parameters, file path, cost, and what a higher-quality version would cost.
+- **With a user present:** confirm the essentials in one line when they are unclear (orientation, length, draft or final quality) and the estimated cost for anything beyond a draft (`omni` at 360p, or `lite`). After delivery, offer two or three next steps (extend, upgrade tier, new take with a changed camera move).
+- **Autonomous (nobody to ask):** do not block on questions. Use the default model at 720p (`omni` at 360p for drafts), a sensible duration and ratio; stay below the confirmation threshold and never set `approvedCostUsd` yourself; poll with `gemini-media:get_video` until the job finishes. Report the prompt, model, parameters, file path, cost, and what a higher-quality version would cost.
 
 ## Chaining
 

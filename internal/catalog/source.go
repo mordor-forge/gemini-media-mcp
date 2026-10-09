@@ -108,10 +108,7 @@ func (s *Source) reloadLocked(initial bool) error {
 	}
 	for k, v := range s.defaults {
 		if v != "" {
-			if c.Defaults == nil {
-				c.Defaults = map[string]string{}
-			}
-			c.Defaults[k] = v
+			c.setDefault(k, v)
 		}
 	}
 	s.current, s.lastErr = c, nil
@@ -126,8 +123,9 @@ func (s *Source) fail(_ bool, err error) error {
 
 // Merge overlays override YAML onto base YAML. Models are matched by id:
 // provided fields replace base fields (maps are merged key by key, lists are
-// replaced); unknown ids are appended. Top-level defaults are merged and a
-// non-empty version replaces the base version.
+// replaced); unknown ids are appended. Top-level defaults are merged (a
+// default set there applies on every backend unless the override also sets
+// backendDefaults) and a non-empty version replaces the base version.
 func Merge(base, override []byte) (*Catalog, error) {
 	c, err := Parse(base)
 	if err != nil {
@@ -144,6 +142,7 @@ func Merge(base, override []byte) (*Catalog, error) {
 		return nil, errors.New("override must be a YAML mapping")
 	}
 	top := root.Content[0]
+	var backendDefaults *yaml.Node // applied after defaults, which clear them
 	for i := 0; i+1 < len(top.Content); i += 2 {
 		key, val := top.Content[i].Value, top.Content[i+1]
 		switch key {
@@ -161,8 +160,10 @@ func Merge(base, override []byte) (*Catalog, error) {
 				return nil, fmt.Errorf("override defaults: %w", err)
 			}
 			for k, v := range d {
-				c.Defaults[k] = v
+				c.setDefault(k, v)
 			}
+		case "backendDefaults":
+			backendDefaults = val
 		case "models":
 			if val.Kind != yaml.SequenceNode {
 				return nil, errors.New("override models must be a list")
@@ -174,6 +175,23 @@ func Merge(base, override []byte) (*Catalog, error) {
 			}
 		default:
 			return nil, fmt.Errorf("override: unknown top-level key %q", key)
+		}
+	}
+	if backendDefaults != nil {
+		var bd map[string]map[string]string
+		if err := backendDefaults.Decode(&bd); err != nil {
+			return nil, fmt.Errorf("override backendDefaults: %w", err)
+		}
+		for b, d := range bd {
+			if c.BackendDefaults == nil {
+				c.BackendDefaults = map[string]map[string]string{}
+			}
+			if c.BackendDefaults[b] == nil {
+				c.BackendDefaults[b] = map[string]string{}
+			}
+			for k, v := range d {
+				c.BackendDefaults[b][k] = v
+			}
 		}
 	}
 	if err := c.index(); err != nil {
