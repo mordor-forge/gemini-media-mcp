@@ -59,10 +59,7 @@ func (c *Catalog) Resolve(name, mediaType, backend string, now time.Time) (*Reso
 			// A passed backend shutdown redirects like a retirement on that
 			// backend: to the fallback, else the replacement.
 			ended := m.SupportsBackend(backend)
-			target := m.Fallback
-			if ended && target == "" {
-				target = m.Replacement
-			}
+			_, target := m.redirect(backend, now)
 			msg := fmt.Sprintf("%s is not available on %s", m.ID, backend)
 			switch {
 			case ended && unresolved(backend):
@@ -89,6 +86,22 @@ func (c *Catalog) Resolve(name, mediaType, backend string, now time.Time) (*Reso
 	r.Model = m
 	r.APIID = m.APIID(backend)
 	return r, nil
+}
+
+// redirect names the field Resolve follows for m on backend at now, and
+// its target: the replacement once m is retired; where m is not offered,
+// the fallback, else (after a backend shutdown) the replacement. Both are
+// empty while m is offered on backend.
+func (m *Model) redirect(backend string, now time.Time) (field, target string) {
+	switch {
+	case !m.Active(now):
+		return "replacement", m.Replacement
+	case m.OfferedOn(backend, now):
+		return "", ""
+	case m.Fallback != "" || !m.SupportsBackend(backend):
+		return "fallback", m.Fallback
+	}
+	return "replacement", m.Replacement
 }
 
 // deprecation words the warning for a deprecated model on backend.
