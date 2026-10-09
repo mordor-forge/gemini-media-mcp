@@ -263,7 +263,7 @@ models:
       inputPer1M: {text: 1.50, image: 1.50, video: 1.50, audio: 1.50}
       outputPer1M: {text: 9.00, video: 17.50}
     notes:
-      - Generates and edits at 720p only. Extension, first/last frames and the other resolutions are new in gemini-omni-1.1-flash; use it for those.
+      - Generates and edits at 720p only, and animates a still image (image). A last frame (first-to-last-frame transitions), extension and the other resolutions are new in gemini-omni-1.1-flash; use it for those.
       - Google does not document the preview's reference image limit (secondary sources give 5 to 14); the catalog allows 5. gemini-omni-1.1-flash takes 10.
       - Priced like gemini-omni-1.1-flash at 720p.
 

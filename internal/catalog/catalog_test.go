@@ -171,6 +171,15 @@ func TestVeoPreviewsLeaveTheGeminiAPI(t *testing.T) {
 	if got := (&Model{ID: "x", Shutdown: "2027-01-01"}).BackendSummary(after); got != "all until 2027-01-01" {
 		t.Errorf("implicit backends with a future shutdown = %q", got)
 	}
+	// A deprecation warning recommends where requests will end up, not a
+	// fallback that has itself retired.
+	chain, err := Merge(embedded, []byte("models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n    fallback: y-video\n  - id: y-video\n    family: veo\n    mediaType: video\n    backends: [gemini-api]\n    shutdown: \"2026-10-01\"\n    replacement: gemini-omni-1.1-flash\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, err := chain.Resolve("x-video", Video, "gemini-api", before); err != nil || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "switch to gemini-omni-1.1-flash (omni)") {
+		t.Errorf("chained deprecation = %+v %v", r, err)
+	}
 	// The Omni preview keeps its own, narrower capabilities.
 	if r, err := c.Resolve("gemini-omni-flash-preview", Video, "gemini-api", before); err != nil {
 		t.Fatal(err)
@@ -570,6 +579,25 @@ func TestOverrideBackendDefaults(t *testing.T) {
 	c, err = Merge(embedded, []byte("defaults:\n  video: omni\nbackendDefaults:\n  vertex: {video: lite}\n"))
 	if err != nil || c.DefaultFor(Video, "vertex") != "lite" || c.DefaultFor(Video, "gemini-api") != "omni" {
 		t.Fatalf("omni default with a vertex default = %v", err)
+	}
+}
+
+// A default from the server config replaces the catalog's on every backend,
+// so it is checked against the backend in use.
+func TestCheckDefaultsOnTheBackend(t *testing.T) {
+	now := time.Date(2026, 10, 8, 0, 0, 0, 0, time.UTC)
+	c := Default()
+	for _, b := range []string{"gemini-api", "vertex", "auto"} {
+		if err := c.CheckDefaultsOn(b, now); err != nil {
+			t.Errorf("embedded defaults on %s: %v", b, err)
+		}
+	}
+	c.setDefault(Video, "omni")
+	if err := c.CheckDefaultsOn("gemini-api", now); err != nil {
+		t.Errorf("omni on the Gemini API: %v", err)
+	}
+	if err := c.CheckDefaultsOn("vertex", now); err == nil || !strings.Contains(err.Error(), `the default video model "omni" cannot serve requests on vertex`) {
+		t.Errorf("omni on vertex: %v", err)
 	}
 }
 

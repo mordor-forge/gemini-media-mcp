@@ -106,9 +106,11 @@ func (m *Model) redirect(backend string, now time.Time) (field, target string) {
 
 // deprecation words the warning for a deprecated model on backend.
 func (c *Catalog) deprecation(m *Model, backend string, now time.Time) string {
+	// Recommend the model requests will reach, following redirects.
+	to := c.Successor(m, backend, now)
 	if d := m.BackendShutdown[backend]; d != "" {
 		msg := fmt.Sprintf("%s is deprecated on %s and shuts down there on %s", m.ID, backendName(backend), d)
-		if to := firstNonEmpty(m.Fallback, m.Replacement); to != "" {
+		if to != "" {
 			msg += "; switch to " + c.label(to)
 		}
 		return msg + c.elsewhere(m, backend, now)
@@ -117,8 +119,8 @@ func (c *Catalog) deprecation(m *Model, backend string, now time.Time) string {
 	if m.Shutdown != "" {
 		msg += " and shuts down on " + m.Shutdown
 	}
-	if m.Replacement != "" {
-		msg += "; switch to " + c.label(m.Replacement)
+	if to != "" {
+		msg += "; switch to " + c.label(to)
 	}
 	return msg
 }
@@ -158,15 +160,6 @@ func backendName(backend string) string {
 		return "Gemini Enterprise Agent Platform, formerly Vertex AI"
 	}
 	return backend
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func (c *Catalog) resolveUnknown(name, mediaType, backend string, now time.Time) (*Resolved, error) {

@@ -417,6 +417,34 @@ func (c *Catalog) checkDefaults() error {
 	return nil
 }
 
+// CheckDefaultsOn reports a default that requests without a model cannot
+// use on backend at now. Defaults set in the server config replace the
+// catalog's on every backend after it was validated, so the composition
+// root checks them against the backend in use.
+func (c *Catalog) CheckDefaultsOn(backend string, now time.Time) error {
+	types := map[string]bool{}
+	for mt := range c.Defaults {
+		types[mt] = true
+	}
+	for mt := range c.BackendDefaults[backend] {
+		types[mt] = true
+	}
+	for _, mt := range slices.Sorted(maps.Keys(types)) {
+		name := c.DefaultFor(mt, backend)
+		if name == "" {
+			continue
+		}
+		if _, err := c.Resolve("", mt, backend, now); err != nil {
+			var ae *apperr.Error
+			if errors.As(err, &ae) {
+				err = errors.New(ae.Message)
+			}
+			return fmt.Errorf("the default %s model %q cannot serve requests on %s: %v", mt, name, backend, err)
+		}
+	}
+	return nil
+}
+
 // Successor names the model requests for m on backend go to once m is not
 // offered there: now when it already is not, else from the date it ends
 // there. It follows redirects as Resolve does, and is m's listed
