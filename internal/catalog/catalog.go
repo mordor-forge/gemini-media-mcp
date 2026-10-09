@@ -9,6 +9,7 @@ package catalog
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/mordor-forge/gemini-media-mcp/internal/apperr"
 )
 
 //go:embed models.yaml
@@ -266,6 +269,9 @@ func (c *Catalog) index() error {
 			}
 		}
 	}
+	if err := c.checkFallbacks(); err != nil {
+		return err
+	}
 	// A default naming no model, a model of another media type or one its
 	// backend does not offer would fail every request that relies on it.
 	checkDefault := func(backend, mediaType, name string) error {
@@ -310,6 +316,53 @@ func (c *Catalog) index() error {
 	return nil
 }
 
+// checkFallbacks makes sure requests a fallback takes over keep resolving
+// for as long as the model itself is active: from the day the fallback
+// takes over on a backend through every later lifecycle date in the
+// catalog, as models along the redirect chain retire in turn.
+func (c *Catalog) checkFallbacks() error {
+	var dates []time.Time
+	for _, m := range c.Models {
+		if t, ok := m.ShutdownTime(); ok {
+			dates = append(dates, t)
+		}
+		for _, d := range m.BackendShutdown {
+			if t, ok := parseDate(d); ok {
+				dates = append(dates, t)
+			}
+		}
+	}
+	for _, m := range c.Models {
+		if m.Fallback == "" {
+			continue
+		}
+		end, ends := m.ShutdownTime()
+		for _, b := range concreteBackends {
+			if m.SupportsBackend(b) && m.BackendShutdown[b] == "" {
+				continue // the fallback never takes over here
+			}
+			start, _ := parseDate(m.BackendShutdown[b]) // zero: from the start
+			for _, t := range append([]time.Time{start}, dates...) {
+				if t.Before(start) || ends && !t.Before(end) {
+					continue
+				}
+				if _, err := c.Resolve(m.ID, m.MediaType, b, t); err != nil {
+					var ae *apperr.Error
+					if errors.As(err, &ae) {
+						err = errors.New(ae.Message)
+					}
+					when := ""
+					if !t.IsZero() {
+						when = " from " + t.Format(time.DateOnly)
+					}
+					return fmt.Errorf("catalog: %s: requests on %s%s switch to its fallback %q, which cannot serve them (%v); pick a fallback offered there for as long as %s is", m.ID, b, when, m.Fallback, err, m.ID)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // concreteBackends are the backends the catalog describes.
 var concreteBackends = []string{"gemini-api", "vertex"}
 
@@ -348,8 +401,14 @@ func (c *Catalog) List(mediaType, backend string, includeInactive bool, now time
 		}
 		out = append(out, m)
 	}
+	defaults := map[string]*Model{}
 	rank := func(m *Model) int {
-		if c.IsDefault(m, backend) {
+		d, ok := defaults[m.MediaType]
+		if !ok {
+			d = c.EffectiveDefault(m.MediaType, backend, now)
+			defaults[m.MediaType] = d
+		}
+		if d == m {
 			return 0
 		}
 		switch m.StatusOn(backend, now) {
@@ -393,10 +452,21 @@ func (c *Catalog) setDefault(mediaType, name string) {
 	}
 }
 
-// IsDefault reports whether m is the default for its media type on backend.
-func (c *Catalog) IsDefault(m *Model, backend string) bool {
-	d, ok := c.Lookup(c.DefaultFor(m.MediaType, backend))
-	return ok && d == m
+// EffectiveDefault is the model a request for mediaType without a model
+// name uses on backend at now: the configured default after lifecycle
+// redirects, or nil when that does not resolve to a catalog model.
+func (c *Catalog) EffectiveDefault(mediaType, backend string, now time.Time) *Model {
+	r, err := c.Resolve("", mediaType, backend, now)
+	if err != nil || !r.Known {
+		return nil
+	}
+	return r.Model
+}
+
+// IsDefault reports whether m is what a request for its media type without
+// a model name uses on backend at now.
+func (c *Catalog) IsDefault(m *Model, backend string, now time.Time) bool {
+	return c.EffectiveDefault(m.MediaType, backend, now) == m
 }
 
 // ShutdownTime parses the shutdown date. Google shuts a model down on that

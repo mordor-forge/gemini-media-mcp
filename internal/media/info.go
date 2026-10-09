@@ -91,7 +91,7 @@ func (s *Service) ListModels(ctx context.Context, req ListModelsRequest) (*ListM
 	for _, m := range c.List(mt, backend, req.IncludeInactive, now) {
 		sum := ModelSummary{
 			ID: m.ID, Aliases: m.Aliases, Title: m.Title, MediaType: m.MediaType,
-			Status: m.StatusOn(backend, now), Default: c.IsDefault(m, backend), Summary: m.Summary,
+			Status: m.StatusOn(backend, now), Default: c.IsDefault(m, backend, now), Summary: m.Summary,
 			Price: m.PriceSummary(), Shutdown: m.ShutdownOn(backend), Replacement: m.Replacement,
 			OnBackend: m.OfferedOn(backend, now), Notes: m.Notes,
 		}
