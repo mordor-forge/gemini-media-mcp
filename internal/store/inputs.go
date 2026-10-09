@@ -156,8 +156,8 @@ func decodeDataURI(ref string, maxBytes int64) (*Input, error) {
 	if !strings.HasSuffix(meta, ";base64") {
 		return nil, errors.New("data URIs must be base64-encoded (data:<mime>;base64,<data>)")
 	}
-	if int64(base64.StdEncoding.DecodedLen(len(payload))) > maxBytes {
-		return nil, fmt.Errorf("data URI payload exceeds %d bytes", maxBytes)
+	if n := int64(base64.StdEncoding.DecodedLen(len(payload))); n > maxBytes {
+		return nil, &TooLargeError{Ref: "data:" + strings.TrimSuffix(meta, ";base64"), Size: n, Limit: maxBytes}
 	}
 	data, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {

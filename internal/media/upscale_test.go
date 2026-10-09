@@ -502,6 +502,17 @@ func TestStitchTilesStopsWhenCanceled(t *testing.T) {
 	if _, err := e.svc.StitchTiles(ctx, StitchTilesRequest{Job: res.Job, Tiles: edits}); apperr.KindOf(err) != apperr.Canceled {
 		t.Fatalf("canceled while blending: err = %v", err)
 	}
+	// The PNG encode of a large stitch takes seconds too.
+	ctx, cancel = context.WithCancel(context.Background())
+	defer cancel()
+	ctx = WithProgress(ctx, func(msg string, _, _ float64) {
+		if msg == "encoding PNG" {
+			cancel()
+		}
+	})
+	if _, err := e.svc.StitchTiles(ctx, StitchTilesRequest{Job: res.Job, Tiles: edits}); apperr.KindOf(err) != apperr.Canceled {
+		t.Fatalf("canceled while encoding: err = %v", err)
+	}
 	if _, _, err := e.store.Open("cancel-upscaled.png"); err == nil {
 		t.Fatal("a canceled stitch must not save its output")
 	}
@@ -882,10 +893,10 @@ func TestStitchTilesPreparesSeriallyOverTheBudget(t *testing.T) {
 // not fit one edit request.
 func TestEncodeCropFitsTheEditPayload(t *testing.T) {
 	img := scene(64, 48, 22)
-	if _, ext, mime, err := encodeCrop(img, 1<<20); err != nil || ext != "png" || mime != "image/png" {
+	if _, ext, mime, err := encodeCrop(context.Background(), img, 1<<20); err != nil || ext != "png" || mime != "image/png" {
 		t.Fatalf("small crop: %s %s %v", ext, mime, err)
 	}
-	data, ext, mime, err := encodeCrop(img, maxEditPayload)
+	data, ext, mime, err := encodeCrop(context.Background(), img, maxEditPayload)
 	if err != nil || ext != "jpg" || mime != "image/jpeg" || !bytes.HasPrefix(data, []byte{0xFF, 0xD8}) {
 		t.Fatalf("crop over the payload: %s %s %v", ext, mime, err)
 	}
@@ -975,6 +986,13 @@ func TestStitchTilesBoundsJobAndTileFiles(t *testing.T) {
 	}
 	if p, err := e.store.Provenance(out.File.Name); err != nil || p.Params["job"] != "data:application/json" {
 		t.Fatalf("provenance job = %v (%v)", p.Params["job"], err)
+	}
+
+	// An inline job over the limit gets the same hint as a file.
+	big := "data:application/json;base64," + base64.StdEncoding.EncodeToString(append(jobData, bytes.Repeat([]byte(" "), maxJobBytes)...))
+	_, err = e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: big, Tiles: edits})
+	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Message, "limit") || !strings.Contains(ae.Hint, "job uri") {
+		t.Fatalf("oversized inline job: err = %v", err)
 	}
 
 	padded := filepath.Join(e.store.Dir(), "padded.json")
@@ -1108,5 +1126,31 @@ func TestTileImageRefusesTransparentImages(t *testing.T) {
 	_, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 1})
 	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Message, "transparent") || !strings.Contains(ae.Hint, "Flatten") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// A refinement pass without a model keeps the one pass 1 used.
+func TestRefinementPassKeepsTheModel(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(512, 384, 31)
+	src := filepath.Join(t.TempDir(), "keep.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2, LongEdge: 1024, Model: "pro"})
+	if err != nil || res.Model != "gemini-3-pro-image" {
+		t.Fatalf("pass 1 = %+v %v", res, err)
+	}
+	out, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: fakeEdits(t, e, truth, 4, res)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	region := []TileRegion{{X: 0.3, Y: 0.3, Width: 0.2, Height: 0.25}}
+	res2, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: out.File.URI, Regions: region})
+	if err != nil || res2.Pass != 2 || res2.Model != "gemini-3-pro-image" {
+		t.Fatalf("pass 2 without a model = %+v %v", res2, err)
+	}
+	if res3, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: out.File.URI, Regions: region, Model: "nb2"}); err != nil || res3.Model != "gemini-nano-banana-2.1" {
+		t.Fatalf("pass 2 naming a model = %+v %v", res3, err)
 	}
 }

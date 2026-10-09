@@ -12,6 +12,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"maps"
 	"math"
 	"os"
@@ -99,7 +100,7 @@ type TileImageRequest struct {
 	Padding    float64      `json:"padding,omitempty" jsonschema:"Context added around each cell or region, as a fraction of its size (default 0.2, 0.05-0.5). Tiles then grow to the nearest aspect ratio the model supports."`
 	LongEdge   int          `json:"longEdge,omitempty" jsonschema:"Long edge in pixels of the image stitch_tiles will produce (default 8192, 1024-16384, at most 70 megapixels). First pass only; later passes keep their input's size."`
 	Original   string       `json:"original,omitempty" jsonschema:"First pass only: the untouched original, sent with every tile as context (as a copy of at most 2048 px). Defaults to image. Refinement passes edit crops alone and keep the first pass's original, so it is ignored there."`
-	Model      string       `json:"model,omitempty" jsonschema:"Image model the tiles will be edited with (default nb2). Sets the supported aspect ratios and the cost estimate."`
+	Model      string       `json:"model,omitempty" jsonschema:"Image model the tiles will be edited with (default nb2; a refinement pass defaults to the model of the pass before). Sets the supported aspect ratios and the cost estimate."`
 	ImageSize  string       `json:"imageSize,omitempty" jsonschema:"Size the tiles will be edited at (1K, 2K or 4K, as the model supports). Omit it on a first pass to pick it with the grid; otherwise it defaults to the model's largest size."`
 	OutputName string       `json:"outputName,omitempty" jsonschema:"Optional base name for the crops and the stitched result. Defaults to the original's name."`
 }
@@ -245,7 +246,17 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		return nil, apperr.Invalidf("at most %d regions per pass (got %d); split them over two passes", maxRegions, len(req.Regions))
 	}
 
-	r, location, warnings, err := s.resolve(req.Model, catalog.Image)
+	// A refinement pass keeps the model the stitched image was made with,
+	// unless the call names another.
+	model := req.Model
+	if strings.TrimSpace(model) == "" {
+		if name, ok := s.outputName(req.Image); ok {
+			if p, err := s.store.Provenance(name); err == nil && p.Tool == "stitch_tiles" {
+				model = p.Model
+			}
+		}
+	}
+	r, location, warnings, err := s.resolve(model, catalog.Image)
 	if err != nil {
 		return nil, err
 	}
@@ -517,7 +528,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		if refAsset != nil {
 			refBytes = int(refAsset.Bytes)
 		}
-		data, ext, mime, err := encodeCrop(crop, refBytes)
+		data, ext, mime, err := encodeCrop(ctx, crop, refBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -899,8 +910,14 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	progress(ctx, "encoding PNG", total*2, total*2)
 	uncovered := canvas.Uncovered()
 	out := canvas.Finish()
-	data, err := encodePNG(out)
+	data, err := encodePNG(ctx, out)
+	if err == nil {
+		err = ctx.Err() // nothing is saved for a request that is gone
+	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, requestStopped(ctx.Err(), "stitch_tiles", "an 8K stitch takes 10-30 s")
+		}
 		return nil, err
 	}
 	name := slugLabel(req.OutputName)
@@ -1382,8 +1399,8 @@ func cropImage(img image.Image, box tiles.Box, maxPx int) image.Image {
 // encodeCrop encodes a crop as PNG, or as a high-quality JPEG when the PNG
 // and the others bytes sent with it would not fit one edit request. It
 // returns the data, its extension and its MIME type.
-func encodeCrop(img image.Image, others int) ([]byte, string, string, error) {
-	data, err := encodePNG(img)
+func encodeCrop(ctx context.Context, img image.Image, others int) ([]byte, string, string, error) {
+	data, err := encodePNG(ctx, img)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -1397,15 +1414,29 @@ func encodeCrop(img image.Image, others int) ([]byte, string, string, error) {
 	return buf.Bytes(), "jpg", "image/jpeg", nil
 }
 
-func encodePNG(img image.Image) ([]byte, error) {
+func encodePNG(ctx context.Context, img image.Image) ([]byte, error) {
 	var buf bytes.Buffer
 	b := img.Bounds()
 	buf.Grow(b.Dx() * b.Dy() * 2) // photos compress to about 2 bytes per pixel
 	enc := png.Encoder{CompressionLevel: png.BestSpeed}
-	if err := enc.Encode(&buf, img); err != nil {
+	if err := enc.Encode(ctxWriter{ctx, &buf}, img); err != nil {
 		return nil, fmt.Errorf("encoding PNG: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// ctxWriter fails its writes once ctx is done, so a long encode stops soon
+// after the request is gone.
+type ctxWriter struct {
+	ctx context.Context
+	w   io.Writer
+}
+
+func (c ctxWriter) Write(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.w.Write(p)
 }
 
 // fitLong scales w x h so the long side is long, keeping the aspect ratio.

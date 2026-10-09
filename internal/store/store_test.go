@@ -279,6 +279,11 @@ func TestLoadInputBoundsResourceURIsBeforeReading(t *testing.T) {
 	if in, err := s.LoadInput(a.URI, InputPolicy{MaxBytes: a.Bytes}); err != nil || int64(len(in.Data)) != a.Bytes {
 		t.Fatalf("at the limit: %v", err)
 	}
+	// So is an inline data URI's, from its encoded length.
+	inline := "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngBytes(t, 64, 64))
+	if _, err := s.LoadInput(inline, InputPolicy{MaxBytes: 10}); !errors.As(err, &big) || big.Ref != "data:image/png" || big.Limit != 10 {
+		t.Fatalf("data URI: err = %v, want a TooLargeError", err)
+	}
 	if real, info, err := s.Stat(a.Name); err != nil || info.Size() != a.Bytes || filepath.Base(real) != a.Name {
 		t.Fatalf("Stat = %s %v %v", real, info, err)
 	}
