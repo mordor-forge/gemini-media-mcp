@@ -600,7 +600,9 @@ func TestOverrideErrors(t *testing.T) {
 		"models:\n  - id: gemini-3.8-flash-tts\n    fallback: gemini-3.8-flash-lite-tts\n":           "not offered on vertex, where requests for gemini-3.8-flash-tts switch to it",
 		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n    fallback: y-video\n  - id: y-video\n    family: veo\n    mediaType: video\n    shutdown: \"2026-10-01\"\n": "from 2026-12-31, requests on gemini-api go to its fallback \"y-video\", which cannot serve them",
 		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    shutdown: \"2026-12-31\"\n    replacement: gemini-omni-1.1-flash\n":                                                                                           "from 2026-12-31, requests on vertex go to its replacement \"gemini-omni-1.1-flash\", which cannot serve them",
-		"models:\n  - id: veo-3.1-lite-generate-preview\n    fallback: lite\n": "is the model itself",
+		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    status: retired\nbackendDefaults:\n  gemini-api: {video: x-video}\n":                                                                                          "the default video model on gemini-api, \"x-video\", cannot serve requests (model x-video was retired",
+		"models:\n  - id: lyria-3-clip-preview\n    shutdown: \"2027-01-01\"\n":                                                                                                                                                             "the default music model on gemini-api, \"lyria-3-clip-preview\", cannot serve requests from 2027-01-01",
+		"models:\n  - id: veo-3.1-lite-generate-preview\n    fallback: lite\n":                                                                                                                                                              "is the model itself",
 	} {
 		if _, err := Merge(embedded, []byte(bad)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("bad default should fail: %q -> %v", bad, err)
