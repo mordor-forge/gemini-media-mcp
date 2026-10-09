@@ -149,7 +149,7 @@ Settings are layered: built-in defaults < config file < environment < flags. The
 | `GEMINI_MEDIA_STATE_DIR` | `stateDir` | `$XDG_STATE_HOME/gemini-media-mcp`, else `~/.local/state/gemini-media-mcp` (Linux) or the config directory | Spend ledger and video jobs |
 | `GEMINI_MEDIA_BUDGET_SESSION_USD` / `_DAILY_USD` / `_MONTHLY_USD` | `budget.*Usd` | none | Spend caps (estimated) |
 | `GEMINI_MEDIA_CONFIRM_ABOVE_USD` | `budget.confirmAboveUsd` | none | Calls above this need `approvedCostUsd` |
-| `GEMINI_MEDIA_IMAGE_MODEL` / `_VIDEO_MODEL` / `_SPEECH_MODEL` / `_MUSIC_MODEL` / `GEMINI_MEDIA_VOICE` | `defaults.*` | catalog | Default models and voice (a model set here is the default on both backends) |
+| `GEMINI_MEDIA_IMAGE_MODEL` / `_VIDEO_MODEL` / `_SPEECH_MODEL` / `_MUSIC_MODEL` / `GEMINI_MEDIA_VOICE` | `defaults.*` | catalog | Default models and voice (a model set here is the default on both backends; the server refuses to start if the backend in use does not offer it) |
 | `GEMINI_MEDIA_CATALOG` | `catalogFile` | – | Catalog override file (hot-reloaded) |
 | `GEMINI_MEDIA_INPUT_DIRS` | `inputDirs` | – | Extra directories inputs may be read from (HTTP mode) |
 | `GEMINI_MEDIA_ALLOW_ANY_INPUT_PATH` | `allowAnyInputPath` | `true` on stdio, `false` on HTTP | Read input files from anywhere on disk |
