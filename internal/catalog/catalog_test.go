@@ -169,7 +169,7 @@ func TestVeoPreviewsLeaveTheGeminiAPI(t *testing.T) {
 	}
 	// With no backend resolved (the CLI listing, no credentials), a model is
 	// retired once every backend has ended it.
-	ended, err := Merge(embedded, []byte("models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    status: preview\n    replacement: gemini-omni-1.1-flash\n    backendShutdown: {gemini-api: \"2026-10-22\", vertex: \"2026-10-01\"}\n"))
+	ended, err := Merge(embedded, []byte("models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    status: preview\n    fallback: veo-3.1-lite-generate-preview\n    backendShutdown: {gemini-api: \"2026-10-22\", vertex: \"2026-10-01\"}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestVeoPreviewsLeaveTheGeminiAPI(t *testing.T) {
 	if !has(ended.List(Video, "", false, after), lite.ID) {
 		t.Error("List(\"\") must keep lite, which vertex still offers")
 	}
-	if r, err := ended.Resolve("x-video", Video, "auto", after); err != nil || r.Model.ID != "gemini-omni-1.1-flash" || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "x-video shut down on every backend (gemini-api ended 2026-10-22, vertex ended 2026-10-01); using gemini-omni-1.1-flash") {
+	if r, err := ended.Resolve("x-video", Video, "auto", after); err != nil || r.Model.ID != "veo-3.1-lite-generate-preview" || len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "x-video shut down on every backend (gemini-api ended 2026-10-22, vertex ended 2026-10-01); using veo-3.1-lite-generate-preview") {
 		t.Errorf("unresolved backend after every backend ended = %+v %v", r, err)
 	}
 	// Retired Veo IDs follow the chain to Omni.
@@ -598,7 +598,8 @@ func TestOverrideErrors(t *testing.T) {
 		"models:\n  - id: veo-3.0-generate-001\n    replacement: veo-9\n":                            "replacement \"veo-9\" is not in the catalog",
 		"models:\n  - id: veo-3.0-generate-001\n    replacement: veo-3.0-generate-001\n":             "is the model itself",
 		"models:\n  - id: gemini-3.8-flash-tts\n    fallback: gemini-3.8-flash-lite-tts\n":           "not offered on vertex, where requests for gemini-3.8-flash-tts switch to it",
-		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n    fallback: y-video\n  - id: y-video\n    family: veo\n    mediaType: video\n    shutdown: \"2026-10-01\"\n": "requests on gemini-api from 2026-12-31 switch to its fallback \"y-video\", which cannot serve them",
+		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n    fallback: y-video\n  - id: y-video\n    family: veo\n    mediaType: video\n    shutdown: \"2026-10-01\"\n": "from 2026-12-31, requests on gemini-api go to its fallback \"y-video\", which cannot serve them",
+		"models:\n  - id: x-video\n    family: veo\n    mediaType: video\n    shutdown: \"2026-12-31\"\n    replacement: gemini-omni-1.1-flash\n":                                                                                           "from 2026-12-31, requests on vertex go to its replacement \"gemini-omni-1.1-flash\", which cannot serve them",
 		"models:\n  - id: veo-3.1-lite-generate-preview\n    fallback: lite\n": "is the model itself",
 	} {
 		if _, err := Merge(embedded, []byte(bad)); err == nil || !strings.Contains(err.Error(), want) {

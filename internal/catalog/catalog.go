@@ -269,7 +269,7 @@ func (c *Catalog) index() error {
 			}
 		}
 	}
-	if err := c.checkFallbacks(); err != nil {
+	if err := c.checkRedirects(); err != nil {
 		return err
 	}
 	// A default naming no model, a model of another media type or one its
@@ -316,47 +316,48 @@ func (c *Catalog) index() error {
 	return nil
 }
 
-// checkFallbacks makes sure requests a fallback takes over keep resolving
-// for as long as the model itself is active: from the day the fallback
-// takes over on a backend through every later lifecycle date in the
-// catalog, as models along the redirect chain retire in turn.
-func (c *Catalog) checkFallbacks() error {
-	var dates []time.Time
-	for _, m := range c.Models {
-		if t, ok := m.ShutdownTime(); ok {
+// checkRedirects makes sure redirects keep requests working: once a model
+// name resolves on a backend, every later lifecycle date at which it
+// redirects there (to its fallback or replacement) must still resolve, as
+// the models along the chain retire in turn. A model that retires without
+// a redirect may simply stop resolving.
+func (c *Catalog) checkRedirects() error {
+	seen := map[time.Time]bool{}
+	dates := []time.Time{{}} // the start, before every lifecycle date
+	add := func(s string) {
+		if t, ok := parseDate(s); ok && !seen[t] {
+			seen[t] = true
 			dates = append(dates, t)
-		}
-		for _, d := range m.BackendShutdown {
-			if t, ok := parseDate(d); ok {
-				dates = append(dates, t)
-			}
 		}
 	}
 	for _, m := range c.Models {
-		if m.Fallback == "" {
+		add(m.Shutdown)
+		for _, d := range m.BackendShutdown {
+			add(d)
+		}
+	}
+	sort.Slice(dates, func(i, j int) bool { return dates[i].Before(dates[j]) })
+	for _, m := range c.Models {
+		if m.Fallback == "" && m.Replacement == "" {
 			continue
 		}
-		end, ends := m.ShutdownTime()
 		for _, b := range concreteBackends {
-			if m.SupportsBackend(b) && m.BackendShutdown[b] == "" {
-				continue // the fallback never takes over here
-			}
-			start, _ := parseDate(m.BackendShutdown[b]) // zero: from the start
-			for _, t := range append([]time.Time{start}, dates...) {
-				if t.Before(start) || ends && !t.Before(end) {
+			served := false
+			for _, t := range dates {
+				_, err := c.Resolve(m.ID, m.MediaType, b, t)
+				if err == nil {
+					served = true
 					continue
 				}
-				if _, err := c.Resolve(m.ID, m.MediaType, b, t); err != nil {
-					var ae *apperr.Error
-					if errors.As(err, &ae) {
-						err = errors.New(ae.Message)
-					}
-					when := ""
-					if !t.IsZero() {
-						when = " from " + t.Format(time.DateOnly)
-					}
-					return fmt.Errorf("catalog: %s: requests on %s%s switch to its fallback %q, which cannot serve them (%v); pick a fallback offered there for as long as %s is", m.ID, b, when, m.Fallback, err, m.ID)
+				field, target := m.redirect(b, t)
+				if !served || target == "" {
+					continue
 				}
+				var ae *apperr.Error
+				if errors.As(err, &ae) {
+					err = errors.New(ae.Message)
+				}
+				return fmt.Errorf("catalog: %s: from %s, requests on %s go to its %s %q, which cannot serve them (%v); pick a %s that stays callable on %s", m.ID, t.Format(time.DateOnly), b, field, target, err, field, b)
 			}
 		}
 	}

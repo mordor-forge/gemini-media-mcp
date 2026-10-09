@@ -871,7 +871,7 @@ func TestListModelsNamesTheBackendFallback(t *testing.T) {
 	yaml := "models:\n" +
 		"  - id: x-video\n    family: veo\n    mediaType: video\n    status: deprecated\n    replacement: veo-3.1-generate-preview\n    fallback: gemini-omni-1.1-flash\n    backendShutdown: {gemini-api: \"2026-12-31\"}\n" +
 		// Past the global shutdown, Resolve follows the replacement.
-		"  - id: x-old\n    family: veo\n    mediaType: video\n    status: deprecated\n    shutdown: \"2026-01-01\"\n    replacement: gemini-omni-1.1-flash\n    fallback: veo-3.1-lite-generate-preview\n    backendShutdown: {gemini-api: \"2025-12-01\"}\n"
+		"  - id: x-old\n    family: veo\n    mediaType: video\n    status: deprecated\n    shutdown: \"2026-01-01\"\n    replacement: veo-3.1-generate-preview\n    fallback: veo-3.1-lite-generate-preview\n    backendShutdown: {gemini-api: \"2025-12-01\"}\n"
 	if err := os.WriteFile(override, []byte(yaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -879,12 +879,15 @@ func TestListModelsNamesTheBackendFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := src.Status(); err != nil {
+		t.Fatal(err)
+	}
 	e.svc.catalog = src
 	res, err := e.svc.ListModels(context.Background(), ListModelsRequest{MediaType: "video", IncludeInactive: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"x-video": "gemini-omni-1.1-flash", "x-old": "gemini-omni-1.1-flash"}
+	want := map[string]string{"x-video": "gemini-omni-1.1-flash", "x-old": "veo-3.1-generate-preview"}
 	for _, m := range res.Models {
 		if r, ok := want[m.ID]; ok {
 			if m.Replacement != r {
@@ -909,6 +912,9 @@ func TestListModelsMarksTheResolvedDefault(t *testing.T) {
 	}
 	src, err := catalog.NewSource(override, nil, nil)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := src.Status(); err != nil {
 		t.Fatal(err)
 	}
 	e.svc.catalog = src
