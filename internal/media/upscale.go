@@ -194,7 +194,7 @@ func (j *tileJob) check() error {
 	boxes := make([]tiles.Box, len(j.Tiles))
 	for i, t := range j.Tiles {
 		b := t.Box
-		if b.W < tiles.MinTilePixels || b.H < tiles.MinTilePixels || b.W > 8*j.Width || b.H > 8*j.Height || b.W*b.H > min(4*j.Width*j.Height, maxPlanPixels) ||
+		if b.W < tiles.MinTilePixels || b.H < tiles.MinTilePixels || b.W > side || b.H > side || !cropFits(b) ||
 			b.X >= j.Width || b.Y >= j.Height || b.X1() <= 0 || b.Y1() <= 0 {
 			return fmt.Errorf("tile %d's box %+v does not fit the %dx%d image", t.Tile, b, j.Width, j.Height)
 		}
@@ -246,39 +246,47 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		return nil, apperr.Invalidf("at most %d regions per pass (got %d); split them over two passes", maxRegions, len(req.Regions))
 	}
 
-	// A refinement pass keeps the model the stitched image was made with,
-	// unless the call names another.
-	model := req.Model
-	if strings.TrimSpace(model) == "" {
-		if name, ok := s.outputName(req.Image); ok {
-			if p, err := s.store.Provenance(name); err == nil && p.Tool == "stitch_tiles" {
-				model = p.Model
-			}
+	// pick resolves the edit model and what tile_image plans with for it,
+	// changing nothing when it fails.
+	var (
+		m             *catalog.Model
+		location      string
+		modelWarnings []string
+		sizes         []string
+		size          string
+		ratios        []tiles.Ratio
+	)
+	pick := func(name string) error {
+		r, loc, ws, err := s.resolve(name, catalog.Image)
+		if err != nil {
+			return err
 		}
+		mm := r.Model
+		if !mm.Capabilities.Edit {
+			return apperr.Invalidf("%s cannot edit images; use nb2 or pro", mm.ID)
+		}
+		sz := editSizes(mm)
+		if len(sz) == 0 {
+			return apperr.Invalidf("the catalog lists no output sizes for %s that tile_image can plan with (512, 1K, 2K, 4K, ...); pick nb2 or pro", mm.ID)
+		}
+		want := strings.ToUpper(strings.TrimSpace(req.ImageSize))
+		if want != "" && imageSizePixels(want) == 0 {
+			return apperr.Invalidf("tile_image cannot tell how many pixels imageSize %s has; omit imageSize to plan automatically, or use one of %s", want, strings.Join(sz, ", "))
+		}
+		if want != "" && !stitchable(want) {
+			return apperr.Invalidf("imageSize %s tiles (about %d megapixels) are larger than stitch_tiles accepts (%d); omit imageSize to plan automatically, or use one of %s", want, imageSizePixels(want)/1_000_000, maxTilePixels/1_000_000, strings.Join(sz, ", "))
+		}
+		rt := tiles.ParseRatios(mm.Capabilities.AspectRatios)
+		if len(rt) == 0 {
+			return apperr.Invalidf("the catalog lists no aspect ratios for %s, so tiles cannot be shaped for it; pick nb2 or pro", mm.ID)
+		}
+		m, location, modelWarnings, sizes, size, ratios = mm, loc, ws, sz, want, rt
+		return nil
 	}
-	r, location, warnings, err := s.resolve(model, catalog.Image)
-	if err != nil {
+	if err := pick(req.Model); err != nil {
 		return nil, err
 	}
-	m := r.Model
-	if !m.Capabilities.Edit {
-		return nil, apperr.Invalidf("%s cannot edit images; use nb2 or pro", m.ID)
-	}
-	sizes := editSizes(m)
-	if len(sizes) == 0 {
-		return nil, apperr.Invalidf("the catalog lists no output sizes for %s that tile_image can plan with (512, 1K, 2K, 4K, ...); pick nb2 or pro", m.ID)
-	}
-	size := strings.ToUpper(strings.TrimSpace(req.ImageSize))
-	if size != "" && imageSizePixels(size) == 0 {
-		return nil, apperr.Invalidf("tile_image cannot tell how many pixels imageSize %s has; omit imageSize to plan automatically, or use one of %s", size, strings.Join(sizes, ", "))
-	}
-	if size != "" && !stitchable(size) {
-		return nil, apperr.Invalidf("imageSize %s tiles (about %d megapixels) are larger than stitch_tiles accepts (%d); omit imageSize to plan automatically, or use one of %s", size, imageSizePixels(size)/1_000_000, maxTilePixels/1_000_000, strings.Join(sizes, ", "))
-	}
-	ratios := tiles.ParseRatios(m.Capabilities.AspectRatios)
-	if len(ratios) == 0 {
-		return nil, apperr.Invalidf("the catalog lists no aspect ratios for %s, so tiles cannot be shaped for it; pick nb2 or pro", m.ID)
-	}
+	var warnings []string
 	// Decoding and cutting a large image takes seconds: stop between the
 	// steps once the request is gone.
 	stopped := func() error {
@@ -305,12 +313,14 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	// long as it still holds the bytes stitch_tiles wrote.
 	pass, original, reference, jobName := 1, strings.TrimSpace(req.Original), "", ""
 	prevNative := 0 // model-rendered long edge the image already carries
+	prevModel := ""
 	if name, ok := s.outputName(req.Image); ok {
 		if p, err := s.store.Provenance(name); err == nil && p.Tool == "stitch_tiles" {
 			if sum, _ := p.Params["sha256"].(string); sum != imageSum {
 				warnings = append(warnings, fmt.Sprintf("%s changed since stitch_tiles wrote it, so it is tiled as a new first pass", req.Image))
 			} else {
 				pass = intParam(p.Params, "pass") + 1
+				prevModel = p.Model
 				prevNative = intParam(p.Params, "nativeLongEdge")
 				jobName, _ = p.Params["name"].(string)
 				if original != "" {
@@ -324,6 +334,14 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	if original == "" {
 		original = req.Image
 	}
+	// A refinement pass keeps the model the stitched image was made with,
+	// unless the call names another; only a verified stitch is trusted.
+	if strings.TrimSpace(req.Model) == "" && prevModel != "" {
+		if err := pick(prevModel); err != nil {
+			warnings = append(warnings, fmt.Sprintf("the previous pass's model %s cannot be used (%v), so this pass uses %s", prevModel, err, m.ID))
+		}
+	}
+	warnings = append(slices.Clone(modelWarnings), warnings...)
 	// Each tile is edited with its crop plus, on the first pass only, the
 	// reference.
 	editInputs := 1
@@ -419,7 +437,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 			try = []string{size}
 		}
 		var p *tilePlan
-		if p, err = s.autoPlan(m, location, pw, ph, max(outW, outH), padding, ratios, grids, try); err == nil {
+		if p, err = s.autoPlan(m, location, pw, ph, outW, outH, padding, ratios, grids, try); err == nil {
 			grid, size, planned, planNote = p.grid, p.size, p.tiles, p.note
 		}
 	} else {
@@ -432,26 +450,13 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		planned, err = tiles.Grid(pw, ph, grid, padding, ratios)
 	}
 	if err != nil {
+		if _, ok := apperr.As(err); ok {
+			return nil, err // a plan checkPlan refused keeps its hint
+		}
 		return nil, apperr.Invalidf("%v", err)
 	}
-	for _, t := range planned {
-		// Cutting a crop allocates all of it, mirrored padding included; an
-		// image far more elongated than the model's widest ratio would need
-		// a crop many times its own size.
-		if t.Box.W*t.Box.H > maxPlanPixels {
-			return nil, &apperr.Error{Kind: apperr.Invalid,
-				Message: fmt.Sprintf("the %dx%d image is too elongated for %s's aspect ratios: tile %d would need a %dx%d crop", pw, ph, m.ID, t.Index, t.Box.W, t.Box.H),
-				Hint:    "Cut the image into less elongated parts (no wider than the model's widest aspect ratio, e.g. 8:1 for nb2) and upscale each."}
-		}
-	}
-	boxes := make([]tiles.Box, len(planned))
-	for i, t := range planned {
-		boxes[i] = t.Box
-	}
-	if px := footprintPixels(boxes, pw, ph, outW, outH); px > maxFootprintPixels {
-		return nil, &apperr.Error{Kind: apperr.Invalid,
-			Message: fmt.Sprintf("the %d tiles together cover %.0f megapixels of output, more than stitch_tiles blends (%d)", len(planned), px/1e6, maxFootprintPixels/1_000_000),
-			Hint:    "Lower padding, use fewer or smaller regions, or a smaller longEdge."}
+	if err := checkPlan(planned, pw, ph, outW, outH, m.ID); err != nil {
+		return nil, err
 	}
 
 	name := slugLabel(req.OutputName)
@@ -530,6 +535,9 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		}
 		data, ext, mime, err := encodeCrop(ctx, crop, refBytes)
 		if err != nil {
+			if e := stopped(); e != nil {
+				return nil, e
+			}
 			return nil, err
 		}
 		a, err := s.store.Save("image", fmt.Sprintf("%s-t%d-%s", prefix, t.Index, t.Label), ext, data, mime, &store.Provenance{
@@ -737,17 +745,24 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		return nil, err
 	}
 	defer release()
-	pin, err := s.loadLocal(job.Image, "tiled image")
+	// No image of the job's size needs more than 8 bytes a pixel (16-bit,
+	// uncompressed), so a larger file is padded; its bytes are released
+	// once decoded, before the canvas and tiles are allocated.
+	baseLimit := min(int64(localInputBytes), 8*int64(job.Width)*int64(job.Height)+1<<20)
+	plan, err := func() (image.Image, error) {
+		pin, err := s.loadLocalMax(job.Image, "tiled image", baseLimit, fmt.Sprintf("Pass the file tile_image cut, unchanged (a %dx%d image needs at most %d MB), or run tile_image again.", job.Width, job.Height, baseLimit>>20))
+		if err != nil {
+			return nil, err
+		}
+		if sha(pin.Data) != job.ImageSHA256 {
+			return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s changed after tile_image cut it", job.Image), Hint: "Run tile_image again on the current file."}
+		}
+		return decodeImage(pin, "tiled image", maxPlanPixels)
+	}()
 	if err != nil {
 		return nil, err
 	}
-	if sha(pin.Data) != job.ImageSHA256 {
-		return nil, &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s changed after tile_image cut it", job.Image), Hint: "Run tile_image again on the current file."}
-	}
-	plan, err := decodeImage(pin, "tiled image", maxPlanPixels)
-	if err != nil {
-		return nil, err
-	}
+	runtime.GC()
 	// From here stitching holds several hundred MB for a few seconds; hand
 	// it back to the OS afterwards rather than keeping it in a long-lived
 	// server (not on the cheap rejections above).
@@ -766,6 +781,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	type aligned struct {
 		a    tiles.Alignment
 		w, h int
+		bpp  int    // decoded bytes per pixel (8 for a 16-bit PNG)
 		sum  string // sha256 of the bytes aligned, checked when reloaded
 		err  error
 	}
@@ -793,7 +809,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 				results[i].err = err
 				return
 			}
-			results[i] = aligned{a: tiles.Align(plan, t.Box, tile, opt), w: tile.Bounds().Dx(), h: tile.Bounds().Dy(), sum: sum}
+			results[i] = aligned{a: tiles.Align(plan, t.Box, tile, opt), w: tile.Bounds().Dx(), h: tile.Bounds().Dy(), bpp: decodedBytesPerPixel(tile.ColorModel()), sum: sum}
 			mu.Lock()
 			done++
 			progress(ctx, fmt.Sprintf("aligned %d/%d tiles", done, len(edited)), float64(done), total*2)
@@ -807,9 +823,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 
 	// source is a placed tile's file, reloaded for painting.
 	type source struct {
-		ref, sum string
-		tile     int
-		w, h     int // decoded size
+		ref, sum  string
+		tile      int
+		w, h, bpp int // decoded size and bytes per pixel
 	}
 	var placements []tiles.Placement
 	var sources []source
@@ -829,7 +845,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 			rep.ScaleX, rep.ScaleY = round4(a.ScaleX), round4(a.ScaleY)
 			rep.ShiftX, rep.ShiftY = round1(a.ShiftX*sx), round1(a.ShiftY*sy)
 			placements = append(placements, tiles.Placement{Box: t.Box, Align: a})
-			sources = append(sources, source{ref: ref, sum: results[i].sum, tile: t.Tile, w: results[i].w, h: results[i].h})
+			sources = append(sources, source{ref: ref, sum: results[i].sum, tile: t.Tile, w: results[i].w, h: results[i].h, bpp: results[i].bpp})
 			// Rendered pixels per tiled-image pixel, along the sparser axis.
 			native = math.Min(native, math.Min(float64(results[i].w)/(a.ScaleX*float64(t.Box.W)), float64(results[i].h)/(a.ScaleY*float64(t.Box.H))))
 		}
@@ -845,11 +861,10 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	canvas.Reserve(placements)
 	// Prepare (decode and resample) the next tile while painting this one
 	// when the two fit maxPreparedBytes together; otherwise wait until the
-	// previous tile is painted. A tile holds its decode, a converted copy,
-	// its resampled window and the resampler's scratch buffers.
+	// previous tile is painted.
 	need := make([]int, len(placements))
 	for i, p := range placements {
-		need[i] = 8*sources[i].w*sources[i].h + 4*canvas.PreparedPixels(p) + tiles.MaxResizeScratch
+		need[i] = prepareBytes(sources[i].bpp, sources[i].w, sources[i].h, canvas.PreparedPixels(p))
 		if need[i] > maxPreparedBytes {
 			return nil, &apperr.Error{Kind: apperr.Invalid,
 				Message: fmt.Sprintf("tile %d would need about %d MB to blend, more than stitch_tiles allows (%d MB)", sources[i].tile, need[i]>>20, maxPreparedBytes>>20),
@@ -1079,13 +1094,18 @@ type tilePlan struct {
 // autoPlan picks the cheapest grid and edit size whose tiles carry at least
 // target pixels of model-rendered detail along the long edge, or the most
 // detailed plan when none reaches it.
-func (s *Service) autoPlan(m *catalog.Model, location string, pw, ph, target int, padding float64, ratios []tiles.Ratio, grids []int, sizes []string) (*tilePlan, error) {
+func (s *Service) autoPlan(m *catalog.Model, location string, pw, ph, outW, outH int, padding float64, ratios []tiles.Ratio, grids []int, sizes []string) (*tilePlan, error) {
 	var best *tilePlan
 	var lastErr error
+	target := max(outW, outH)
 	meets := func(p *tilePlan) bool { return float64(p.native) >= 0.97*float64(target) }
 	for _, g := range grids {
 		for _, size := range sizes {
 			planned, err := tiles.Grid(pw, ph, g, padding, ratios)
+			if err == nil {
+				// Only plans tile_image can cut and stitch_tiles can blend.
+				err = checkPlan(planned, pw, ph, outW, outH, m.ID)
+			}
 			if err != nil {
 				lastErr = err
 				continue
@@ -1114,6 +1134,40 @@ func (s *Service) autoPlan(m *catalog.Model, location string, pw, ph, target int
 		best.note = fmt.Sprintf("%d %s at %s (grid %d), the most detailed plan available; it falls short of the %d px target", len(best.tiles), tilesWord, best.size, best.grid, target)
 	}
 	return best, nil
+}
+
+// prepareBytes is about how much memory preparing a w x h tile holds: its
+// decode at bpp bytes per pixel (8 for a 16-bit PNG), the 4-byte RGBA copy
+// resizing makes of it, its resampled window of windowPixels and the
+// resampler's scratch buffers.
+func prepareBytes(bpp, w, h, windowPixels int) int {
+	return (bpp+4)*w*h + 4*windowPixels + tiles.MaxResizeScratch
+}
+
+// cropFits reports whether a crop box is one tile_image cuts: cutting
+// allocates the whole crop, mirrored padding included, so an image far more
+// elongated than the model's widest ratio, which needs a crop many times its
+// own size, is refused. stitch_tiles accepts exactly these boxes.
+func cropFits(b tiles.Box) bool { return b.W*b.H <= maxPlanPixels }
+
+// checkPlan refuses a plan of pw x ph image crops for an outW x outH output
+// that tile_image could not cut or stitch_tiles could not blend.
+func checkPlan(planned []tiles.Tile, pw, ph, outW, outH int, modelID string) error {
+	boxes := make([]tiles.Box, len(planned))
+	for i, t := range planned {
+		if !cropFits(t.Box) {
+			return &apperr.Error{Kind: apperr.Invalid,
+				Message: fmt.Sprintf("the %dx%d image is too elongated for %s's aspect ratios: tile %d would need a %dx%d crop", pw, ph, modelID, t.Index, t.Box.W, t.Box.H),
+				Hint:    "Cut the image into less elongated parts (no wider than the model's widest aspect ratio, e.g. 8:1 for nb2) and upscale each, or use a finer grid."}
+		}
+		boxes[i] = t.Box
+	}
+	if px := footprintPixels(boxes, pw, ph, outW, outH); px > maxFootprintPixels {
+		return &apperr.Error{Kind: apperr.Invalid,
+			Message: fmt.Sprintf("the %d tiles together cover %.0f megapixels of output, more than stitch_tiles blends (%d)", len(planned), px/1e6, maxFootprintPixels/1_000_000),
+			Hint:    "Lower padding, use fewer or smaller regions, or a smaller longEdge."}
+	}
+	return nil
 }
 
 // nativeLongEdge is about how many pixels of model-rendered detail the long

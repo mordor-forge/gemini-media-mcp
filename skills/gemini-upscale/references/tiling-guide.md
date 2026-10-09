@@ -108,5 +108,5 @@ Only when pass 1 left the output under-filled. `nativeLongEdge` is the long edge
 | Two irises differ | The eyes were in different tiles or regions. Re-render one region holding both eyes in the next pass. |
 | Plastic or over-smooth skin | Remove beautifying words and add the Skin clause. Prefer `nb2` at 4K. |
 | Repeating texture in grass, hair or fabric | Add the matching clause ("no repeated patterns"), raise `padding`. |
-| `tile_image` says the image is too elongated | A panorama far wider than the model's widest ratio (8:1 on `nb2`) would need huge mirrored crops. Cut it into parts and upscale each. |
+| `tile_image` says the image is too elongated | A panorama far wider than the model's widest ratio (8:1 on `nb2`) would need huge mirrored crops. With `grid` omitted, `tile_image` already picks a finer grid when one fits, so try that first; otherwise cut the image into parts and upscale each. |
 | `stitch_tiles` warns that tiles were not passed | Those areas keep the interpolated image. Edit the missing tiles and stitch again with every tile, or tell the user which areas were not re-rendered. |

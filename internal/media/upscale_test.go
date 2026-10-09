@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1016,6 +1017,20 @@ func TestStitchTilesBoundsJobAndTileFiles(t *testing.T) {
 	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Message, "tile 1") || !strings.Contains(ae.Hint, "under 64 MB") {
 		t.Fatalf("oversized tile file: err = %v", err)
 	}
+
+	// The tiled image may be no larger than an image of its size can be.
+	f, err := os.OpenFile(src, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(make([]byte, 2<<20)); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	_, err = e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits})
+	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Message, "tiled image") || !strings.Contains(ae.Hint, "file tile_image cut") {
+		t.Fatalf("padded tiled image: err = %v", err)
+	}
 }
 
 // When alignment moves an edge tile inward, the strip it no longer covers
@@ -1152,5 +1167,128 @@ func TestRefinementPassKeepsTheModel(t *testing.T) {
 	}
 	if res3, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: out.File.URI, Regions: region, Model: "nb2"}); err != nil || res3.Model != "gemini-nano-banana-2.1" {
 		t.Fatalf("pass 2 naming a model = %+v %v", res3, err)
+	}
+	// A stitched file changed since is a new first pass, on the default.
+	changed := decodeFile(t, out.File.Path)
+	changed.Pix[0] ^= 0xff
+	if err := os.WriteFile(out.File.Path, encode(t, changed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res4, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: out.File.URI, Grid: 2, LongEdge: 1024})
+	if err != nil || res4.Pass != 1 || res4.Model != "gemini-nano-banana-2.1" || !strings.Contains(strings.Join(res4.Warnings, " "), "changed since stitch_tiles wrote it") {
+		t.Fatalf("changed stitch = %+v %v", res4, err)
+	}
+}
+
+// lateCancel reports cancellation from its second Err call after it is
+// armed, so a test can cancel between two checks of one step.
+type lateCancel struct {
+	context.Context
+	armed atomic.Bool
+	calls atomic.Int32
+}
+
+func (c *lateCancel) Err() error {
+	if c.armed.Load() && c.calls.Add(1) > 1 {
+		return context.Canceled
+	}
+	return c.Context.Err()
+}
+
+// A cancel that arrives while a crop is being encoded is reported like the
+// others, with its retry hint.
+func TestTileImageStopsWhileEncodingACrop(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	src := filepath.Join(t.TempDir(), "encode.png")
+	if err := os.WriteFile(src, encode(t, scene(256, 192, 41)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lc := &lateCancel{Context: context.Background()}
+	// The step's own check passes; the encoder's next write sees the cancel.
+	ctx := WithProgress(lc, func(msg string, _, _ float64) {
+		if strings.HasPrefix(msg, "cutting ") {
+			lc.armed.Store(true)
+		}
+	})
+	_, err := e.svc.TileImage(ctx, TileImageRequest{Image: src, Grid: 2, LongEdge: 1024})
+	if ae, ok := apperr.As(err); !ok || ae.Kind != apperr.Canceled || !strings.Contains(ae.Hint, "tile_image") {
+		t.Fatalf("canceled while encoding: err = %v", err)
+	}
+}
+
+// stitch_tiles accepts every crop tile_image plans, panoramas included, and
+// automatic planning skips plans whose crops tile_image could not cut.
+func TestPanoramicPlansStayWithinTheLimits(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	m, _ := catalog.Default().Lookup("nb2")
+	ratios := tiles.ParseRatios(m.Capabilities.AspectRatios)
+
+	planned, err := tiles.Grid(10000, 100, 1, 0.2, ratios)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outW, outH := fitLong(10000, 100, 8192)
+	job := tileJob{Version: 1, Width: 10000, Height: 100, OutWidth: outW, OutHeight: outH,
+		Tiles: []jobTile{{Tile: 1, Box: planned[0].Box}}}
+	if err := checkPlan(planned, 10000, 100, outW, outH, m.ID); err != nil {
+		t.Fatalf("tile_image would refuse the plan: %v", err)
+	}
+	if err := job.check(); err != nil {
+		t.Fatalf("stitch_tiles refuses a crop tile_image cuts (%dx%d): %v", planned[0].Box.W, planned[0].Box.H, err)
+	}
+
+	outW, outH = fitLong(40000, 200, 8192)
+	p, err := e.svc.autoPlan(m, "", 40000, 200, outW, outH, 0.2, ratios, []int{1, 2, 3, 4}, editSizes(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.grid == 1 || checkPlan(p.tiles, 40000, 200, outW, outH, m.ID) != nil {
+		t.Fatalf("automatic plan = grid %d, which tile_image cannot cut", p.grid)
+	}
+}
+
+// A 16-bit tile holds 8 bytes a pixel decoded plus its RGBA copy, and is
+// budgeted that way; such tiles still stitch.
+func TestStitchTilesBudgetsSixteenBitTiles(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(512, 384, 42)
+	src := filepath.Join(t.TempDir(), "deep.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	edits := fakeEdits(t, e, truth, 4, res)
+	for _, ed := range edits {
+		path, data, err := e.store.Open(ed.Image)
+		if err != nil {
+			t.Fatal(err)
+		}
+		img, err := png.Decode(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		deep := image.NewNRGBA64(img.Bounds())
+		draw.Draw(deep, deep.Rect, img, img.Bounds().Min, draw.Src)
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, deep); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tile, _, err := e.svc.loadTile(edits[0].Image, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := tile.Bounds()
+	if bpp := decodedBytesPerPixel(tile.ColorModel()); bpp != 8 || prepareBytes(bpp, b.Dx(), b.Dy(), 0)-prepareBytes(4, b.Dx(), b.Dy(), 0) != 4*b.Dx()*b.Dy() {
+		t.Fatalf("a 16-bit tile decodes at %d bytes a pixel", bpp)
+	}
+	if _, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: edits}); err != nil {
+		t.Fatalf("16-bit tiles: %v", err)
 	}
 }
