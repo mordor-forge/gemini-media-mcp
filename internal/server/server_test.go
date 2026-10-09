@@ -161,7 +161,9 @@ func TestGenerateImageToolResult(t *testing.T) {
 func TestToolErrorsAreActionable(t *testing.T) {
 	s, _ := newTestServer(t)
 	cs := connect(t, s)
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "generate_video", Arguments: map[string]any{"prompt": "x", "model": "lite", "resolution": "4k"}})
+	// No video model offers 8K, so this stays invalid whichever model the
+	// lifecycle dates pick.
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{Name: "generate_video", Arguments: map[string]any{"prompt": "x", "resolution": "8k"}})
 	if err != nil {
 		t.Fatal(err)
 	}
