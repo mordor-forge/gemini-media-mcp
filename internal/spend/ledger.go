@@ -391,6 +391,31 @@ func (l *Ledger) Record(e Entry) (Entry, error) {
 	return e, err
 }
 
+// RecordIf records e only when ok accepts the entry currently stored under
+// e.ID (found is false when there is none). The check runs under the
+// cross-process lock after reading every process's lines, so it cannot race
+// another writer. It reports whether e was recorded.
+func (l *Ledger) RecordIf(e Entry, ok func(prev Entry, found bool) bool) (bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e.Time.IsZero() {
+		e.Time = l.now().UTC()
+	}
+	if e.Session == "" {
+		e.Session = l.session
+	}
+	recorded := false
+	err := l.lockedLocked(func() error {
+		prev, found := l.entries[e.ID]
+		if !ok(prev, found) {
+			return nil
+		}
+		recorded = true
+		return l.appendLocked(e)
+	})
+	return recorded, err
+}
+
 func (l *Ledger) recordLocked(e *Entry) error {
 	if e.Time.IsZero() {
 		e.Time = l.now().UTC()

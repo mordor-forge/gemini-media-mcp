@@ -132,6 +132,42 @@ func TestPendingJobUpdatesAndCrossProcessVisibility(t *testing.T) {
 	}
 }
 
+// RecordIf checks the latest entry, including other processes' writes,
+// before recording.
+func TestRecordIfChecksTheLatestEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "u.jsonl")
+	a, _ := Open(path, Budget{})
+	b, _ := Open(path, Budget{})
+	pending, err := a.Record(Entry{Tool: "generate_video", Model: "omni", Status: StatusPending, CostUSD: 0.8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsettled := func(prev Entry, found bool) bool { return found && prev.Status == StatusPending }
+	// Process a settles it; process b's conditional write then sees that.
+	done := pending
+	done.Status, done.CostUSD = StatusOK, 0.6
+	if _, err := a.Record(done); err != nil {
+		t.Fatal(err)
+	}
+	stale := pending
+	stale.Status, stale.Error = StatusOK, "stopped"
+	if ok, err := b.RecordIf(stale, unsettled); err != nil || ok {
+		t.Fatalf("RecordIf over a settled entry = %v, %v", ok, err)
+	}
+	if got, _ := b.Get(pending.ID); got.CostUSD != 0.6 || got.Error != "" {
+		t.Fatalf("entry = %+v", got)
+	}
+	// It does record when the check passes.
+	other, _ := a.Record(Entry{Tool: "t", Model: "m", Status: StatusPending, CostUSD: 0.1})
+	other.Status = StatusOK
+	if ok, err := b.RecordIf(other, unsettled); err != nil || !ok {
+		t.Fatalf("RecordIf over a pending entry = %v, %v", ok, err)
+	}
+	if got, _ := a.Get(other.ID); got.Status != StatusOK {
+		t.Fatalf("entry = %+v", got)
+	}
+}
+
 func TestLedgerToleratesCorruptLines(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "u.jsonl")
 	if err := os.WriteFile(path, []byte("not json\n{\"id\":\"x\",\"ts\":\"2026-01-01T00:00:00Z\",\"tool\":\"t\",\"model\":\"m\",\"status\":\"ok\",\"costUsd\":1,\"basis\":\"unit_params\"}\n{\"partial"), 0o600); err != nil {
