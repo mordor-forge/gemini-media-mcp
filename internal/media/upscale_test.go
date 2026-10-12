@@ -539,6 +539,69 @@ func TestTileImageRefusesExtremePanoramas(t *testing.T) {
 	if apperr.KindOf(err) != apperr.Invalid || !strings.Contains(err.Error(), "too elongated") {
 		t.Fatalf("err = %v", err)
 	}
+
+	// Planned automatically, grid 1's refusal is kept over the larger grids
+	// that cannot cut a 20 px strip at all.
+	thin := filepath.Join(t.TempDir(), "thin.png")
+	if err := os.WriteFile(thin, encode(t, image.NewGray(image.Rect(0, 0, 40000, 20))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.svc.TileImage(context.Background(), TileImageRequest{Image: thin})
+	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Message, "too elongated") || ae.Hint == "" {
+		t.Fatalf("auto plan: err = %v", err)
+	}
+}
+
+// A model that cannot be tiled is refused with the models the catalog
+// offers instead, not names fixed in code.
+func TestTileImageSuggestsModelsFromTheCatalog(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	override := filepath.Join(t.TempDir(), "override.yaml")
+	if err := os.WriteFile(override, []byte("models:\n  - id: gemini-3-pro-image\n    capabilities:\n      edit: false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src, err := catalog.NewSource(override, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, lastErr := src.Status(); lastErr != nil {
+		t.Fatalf("override: %v", lastErr)
+	}
+	e.svc.catalog = src
+	img := filepath.Join(t.TempDir(), "s.png")
+	if err := os.WriteFile(img, encode(t, scene(400, 300, 3)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.svc.TileImage(context.Background(), TileImageRequest{Image: img, Model: "pro"})
+	ae, ok := apperr.As(err)
+	// Deprecated models (nano-banana, nano-banana-2) are not suggested.
+	if !ok || !strings.Contains(ae.Message, "cannot edit images") || !strings.Contains(ae.Hint, "nb2") || strings.Contains(ae.Hint, "pro") || strings.Contains(ae.Hint, "nano-banana") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A file far larger than its pixels need, here for a 2 MB text chunk, is
+// refused before any tile is edited: stitch_tiles would refuse it after.
+func TestTileImageRefusesPaddedFiles(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	data := encode(t, scene(256, 192, 5))
+	chunk := append([]byte("tEXtComment\x00"), bytes.Repeat([]byte("x"), 2<<20)...)
+	text := binary.BigEndian.AppendUint32(nil, uint32(len(chunk)-4))
+	text = append(text, chunk...)
+	text = binary.BigEndian.AppendUint32(text, crc32.ChecksumIEEE(chunk))
+	iend := len(data) - 12
+	padded := slices.Concat(data[:iend], text, data[iend:])
+	if _, err := png.Decode(bytes.NewReader(padded)); err != nil {
+		t.Fatalf("the padded file is not a valid PNG: %v", err)
+	}
+	src := filepath.Join(t.TempDir(), "padded.png")
+	if err := os.WriteFile(src, padded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, LongEdge: 1024})
+	if ae, ok := apperr.As(err); !ok || ae.Kind != apperr.Invalid || !strings.Contains(ae.Hint, "without its metadata") {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 // Tiles are checked against the tile limit from their header, before any

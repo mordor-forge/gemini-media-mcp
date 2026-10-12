@@ -136,7 +136,7 @@ type TileImageResult struct {
 	PlanNote       string        `json:"planNote,omitempty" jsonschema:"Why this grid and imageSize were chosen, when picked automatically"`
 	Image          Size          `json:"image" jsonschema:"Size of the tiled image"`
 	Output         Size          `json:"output" jsonschema:"Size stitch_tiles will produce"`
-	NativeLongEdge int           `json:"nativeLongEdge,omitempty" jsonschema:"About how many pixels of model-rendered detail the output's long edge carries if every tile comes back at imageSize; beyond that the output is interpolated"`
+	NativeLongEdge int           `json:"nativeLongEdge,omitempty" jsonschema:"About how many pixels of model-rendered detail the output's long edge carries if every tile comes back at imageSize, at most the output's long edge; below it the rest is interpolated"`
 	Reference      *store.Asset  `json:"reference,omitempty" jsonschema:"First pass only: a copy of the original (at most 2048 px) to pass as edit_image referenceImages for every tile. Refinement passes edit each crop alone."`
 	Model          string        `json:"model"`
 	ImageSize      string        `json:"imageSize"`
@@ -269,11 +269,11 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		}
 		mm := r.Model
 		if !mm.Capabilities.Edit {
-			return apperr.Invalidf("%s cannot edit images; use nb2 or pro", mm.ID)
+			return &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("%s cannot edit images", mm.ID), Hint: s.tileModelHint()}
 		}
 		sz := editSizes(mm)
 		if len(sz) == 0 {
-			return apperr.Invalidf("the catalog lists no output sizes for %s that tile_image can plan with (512, 1K, 2K, 4K, ...); pick nb2 or pro", mm.ID)
+			return &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("the catalog lists no output sizes for %s that tile_image can plan with (512, 1K, 2K, 4K, ...)", mm.ID), Hint: s.tileModelHint()}
 		}
 		want := strings.ToUpper(strings.TrimSpace(req.ImageSize))
 		if want != "" && imageSizePixels(want) == 0 {
@@ -284,7 +284,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		}
 		rt := tiles.ParseRatios(mm.Capabilities.AspectRatios)
 		if len(rt) == 0 {
-			return apperr.Invalidf("the catalog lists no aspect ratios for %s, so tiles cannot be shaped for it; pick nb2 or pro", mm.ID)
+			return &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("the catalog lists no aspect ratios for %s, so tiles cannot be shaped for it", mm.ID), Hint: s.tileModelHint()}
 		}
 		m, location, modelWarnings, sizes, size, ratios = mm, loc, ws, sz, want, rt
 		return nil
@@ -392,6 +392,13 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		return nil, err
 	}
 	pw, ph := img.Bounds().Dx(), img.Bounds().Dy()
+	// stitch_tiles reads the file back under this limit: refuse it now,
+	// before any tile is edited.
+	if limit := tiledImageBytes(pw, ph); int64(len(in.Data)) > limit {
+		return nil, &apperr.Error{Kind: apperr.Invalid,
+			Message: fmt.Sprintf("%s is %.1f MB, more than a %dx%d image needs (%d MB at most): the rest is metadata or other data, which stitch_tiles refuses", req.Image, float64(len(in.Data))/(1<<20), pw, ph, limit>>20),
+			Hint:    "Re-save the image without its metadata (for example as a plain PNG), then call tile_image with that file."}
+	}
 	if refSrc == nil {
 		refSrc = img
 	}
@@ -689,7 +696,7 @@ type StitchResult struct {
 	File           store.Asset  `json:"file"`
 	Pass           int          `json:"pass"`
 	Tiles          []TileReport `json:"tiles"`
-	NativeLongEdge int          `json:"nativeLongEdge,omitempty" jsonschema:"About how many pixels of model-rendered detail the long edge carries, limited by the least detailed tile; 0 when unknown or when part of the image has none"`
+	NativeLongEdge int          `json:"nativeLongEdge,omitempty" jsonschema:"About how many pixels of model-rendered detail the long edge carries, limited by the least detailed tile and at most the output's long edge; 0 when unknown or when part of the image has none"`
 	Original       string       `json:"original"`
 	Reference      string       `json:"reference"`
 	Details        []string     `json:"details,omitempty" jsonschema:"What each detail preview shows, in order"`
@@ -752,10 +759,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		return nil, err
 	}
 	defer release()
-	// No image of the job's size needs more than 8 bytes a pixel (16-bit,
-	// uncompressed), so a larger file is padded; its bytes are released
-	// once decoded, before the canvas and tiles are allocated.
-	baseLimit := min(int64(localInputBytes), 8*int64(job.Width)*int64(job.Height)+1<<20)
+	// The file's bytes are released once decoded, before the canvas and
+	// tiles are allocated.
+	baseLimit := tiledImageBytes(job.Width, job.Height)
 	plan, err := func() (image.Image, error) {
 		pin, err := s.loadLocalMax(job.Image, "tiled image", baseLimit, fmt.Sprintf("Pass the file tile_image cut, unchanged (a %dx%d image needs at most %d MB), or run tile_image again.", job.Width, job.Height, baseLimit>>20))
 		if err != nil {
@@ -1118,7 +1124,11 @@ func (s *Service) autoPlan(m *catalog.Model, location string, pw, ph, outW, outH
 				err = checkPlan(planned, pw, ph, outW, outH, m.ID)
 			}
 			if err != nil {
-				lastErr = err
+				// A plan checkPlan refused says what to change; keep that
+				// over a later grid that could not be cut at all.
+				if _, ok := apperr.As(lastErr); !ok {
+					lastErr = err
+				}
 				continue
 			}
 			p := &tilePlan{grid: g, size: size, tiles: planned, native: nativeLongEdge(planned, size, pw, ph)}
@@ -1190,6 +1200,37 @@ func checkPlan(planned []tiles.Tile, pw, ph, outW, outH int, modelID string) err
 			Hint:    "Lower padding, use fewer or smaller regions, or a smaller longEdge."}
 	}
 	return nil
+}
+
+// tiledImageBytes bounds the file of a w x h tiled image: no image of that
+// size needs more than 8 bytes a pixel (16-bit, uncompressed), so a larger
+// file is padded.
+func tiledImageBytes(w, h int) int64 {
+	return min(int64(localInputBytes), 8*int64(w)*int64(h)+1<<20)
+}
+
+// tileModelHint names the current image models tile_image can plan with on
+// this backend, from the catalog.
+func (s *Service) tileModelHint() string {
+	backend, now := s.backend(), s.now()
+	var names []string
+	for _, m := range s.catalog.Get().List(catalog.Image, backend, false, now) {
+		if st := m.StatusOn(backend, now); !m.OfferedOn(backend, now) || st != catalog.StatusGA && st != catalog.StatusPreview {
+			continue
+		}
+		if !m.Capabilities.Edit || len(editSizes(m)) == 0 || len(tiles.ParseRatios(m.Capabilities.AspectRatios)) == 0 {
+			continue
+		}
+		name := m.ID
+		if len(m.Aliases) > 0 {
+			name = m.Aliases[0]
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return "Call list_models to see the image models; none in the catalog can be tiled on this backend."
+	}
+	return fmt.Sprintf("Use %s (see list_models).", strings.Join(names, ", "))
 }
 
 // nativeLongEdge is about how many pixels of model-rendered detail the long
