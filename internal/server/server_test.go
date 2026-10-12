@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -354,7 +355,7 @@ func TestResourceReadsAreGatedForTheirWholeRequest(t *testing.T) {
 	h := s.gateResourceReads(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		entered <- string(body)
-		if readsResource(body) {
+		if resourceReads(body) > 0 {
 			<-release // the response is still being written
 		}
 		w.WriteHeader(http.StatusOK)
@@ -398,5 +399,32 @@ func TestResourceReadsAreGatedForTheirWholeRequest(t *testing.T) {
 	}
 	if s.resourceWaiting.Load() != 0 || len(s.resourceHTTP) != 0 {
 		t.Fatal("the gate did not release its slot and waiters")
+	}
+}
+
+// A batch holds all its responses until the last is written, so one slot
+// covers at most one resources/read in it.
+func TestResourceReadBatchesCarryAtMostOneRead(t *testing.T) {
+	s, _ := newTestServer(t)
+	h := s.gateResourceReads(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	read := func(id int) string {
+		return fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"resources/read","params":{"uri":"gemini-media://files/x.png"}}`, id)
+	}
+	for _, c := range []struct {
+		body string
+		want int
+	}{
+		{"[" + read(1) + "," + read(2) + "]", http.StatusBadRequest},
+		{"[" + read(1) + `,{"jsonrpc":"2.0","id":2,"method":"tools/list"}]`, http.StatusOK},
+		{read(1), http.StatusOK},
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(c.body)))
+		if rec.Code != c.want || c.want == http.StatusBadRequest && !strings.Contains(rec.Body.String(), "its own request") {
+			t.Errorf("%.60s...: %d %q, want %d", c.body, rec.Code, rec.Body.String(), c.want)
+		}
+	}
+	if len(s.resourceHTTP) != 0 || s.resourceWaiting.Load() != 0 {
+		t.Fatal("the gate did not release its slot")
 	}
 }
