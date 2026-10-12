@@ -35,10 +35,10 @@ Keep the tile's `aspectRatio` in the `edit_image` call. A wrong ratio is the mos
 | Busy scene with many small subjects | `grid: 4`: smaller tiles keep subjects coherent |
 | Tiles disagree at seams (different textures) | Raise `padding` to 0.3 so each tile sees more context |
 
-`tile_image` reports `nativeLongEdge`: about how many pixels of model-made detail the long edge carries when every tile comes back at 4K.
+`tile_image` reports `nativeLongEdge`: about how many pixels of model-made detail the long edge carries when every tile comes back at its `imageSize`. It never exceeds the output's long edge, since the output cannot hold more pixels than it has.
 
-- On a 3 x 3 grid this is about 8,700-11,000 px, so an 8K export is backed by real model output.
-- If `longEdge` is above `nativeLongEdge`, the remainder is interpolated. Use a finer grid, or tell the user.
+- A 3 x 3 grid of 4K tiles renders about 8,700-11,000 px, so an 8K output reports its full 8,192 px: every pixel is backed by real model output.
+- If `nativeLongEdge` is below `longEdge`, the remainder is interpolated. Use a finer grid, or tell the user.
 
 ## How stitching works
 
@@ -57,7 +57,7 @@ Keep the tile's `aspectRatio` in the `edit_image` call. A wrong ratio is the mos
 
 ```text
 tile_image(image: "~/Pictures/portrait.jpg")
-  -> 9 tiles (pass 1, grid); output 8192x5461; ~10,700 px native
+  -> 9 tiles (pass 1, grid); output 8192x5461; 8,192 px native (full)
      reference gemini-media://files/portrait-reference.jpg
      tile 1 r1c1 (aspectRatio 3:2) gemini-media://files/portrait-p1-t1-r1c1.png ...
      editing every tile once with gemini-nano-banana-2.1 at 4K: ~$1.12
@@ -84,16 +84,16 @@ stitch_tiles(job: ".../portrait-p2-tiles.json", tiles: [{tile: 1, image: ".../po
   -> portrait-upscaled-p2.png
 ```
 
-Deliver `portrait-upscaled-p2.png` with its size, about 10,700 px of model detail, 10 tiles and the total cost. Describe the added detail as AI-reconstructed.
+Deliver `portrait-upscaled-p2.png` with its size, model detail across its full 8,192 px, 10 tiles and the total cost. Describe the added detail as AI-reconstructed.
 
 ## Do later passes add detail?
 
 Only when pass 1 left the output under-filled. `nativeLongEdge` is the long edge in pixels that the stitched tiles render with model detail:
 
-- **It exceeds the output's long edge** (9-11K for a 3 x 3 grid of 4K tiles, against an 8K output). Every output pixel is already model-rendered. A region re-rendered at a closer crop is scaled back down onto the same pixels, so it can change *what* is drawn but not add detail.
+- **It equals the output's long edge** (a 3 x 3 grid of 4K tiles renders 9-11K px for an 8K output, reported as 8,192). Every output pixel is already model-rendered. A region re-rendered at a closer crop is scaled back down onto the same pixels, so it can change *what* is drawn but not add detail.
   - In a live test, four tight regions re-rendered at 2.4x were indistinguishable from pass 1 at 100%.
   - A region holding both eyes did fix two mismatched irises.
-- **It is below the output's long edge** (`longEdge` 16384, or 2K tiles). The output is interpolated beyond it, and tight regions add real detail where they land.
+- **It is below the output's long edge** (a panorama at `longEdge` 16384, or 2K tiles). The output is interpolated beyond it, and tight regions add real detail where they land.
 
 ## Troubleshooting
 

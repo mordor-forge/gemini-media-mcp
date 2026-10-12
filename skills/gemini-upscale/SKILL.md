@@ -28,7 +28,7 @@ Say this plainly to the user. Refuse or warn for evidence, forensics, archival r
 ## Quick start
 
 1. **Choices.** If the user has not said, ask once: "What size: 1K, 2K, 4K or 8K (long edge)?" A print or wallpaper usually wants 8K, a web or social image 2K. Default to `nb2` (Nano Banana 2.1). `pro` costs about twice as much per tile.
-2. **Plan pass 1.** Call `gemini-media:tile_image` with `image` (the photo) and `longEdge` (1024, 2048, 4096 or 8192; any value 1024-16384 works). Leave `grid` and `imageSize` out: the tool picks the cheapest plan that covers the target and explains it in `planNote`. The result lists the tiles, a `reference` image (first pass only), the `job`, and the cost of editing every tile.
+2. **Plan pass 1.** Call `gemini-media:tile_image` with `image` (the photo) and `longEdge` (1024, 2048, 4096 or 8192; any value 1024-16384 works while the output stays within 70 megapixels, so the largest is about 8,360 px for a square image, 9,660 for 4:3, 10,240 for 3:2, and 16,384 only for panoramas about 4:1 or wider). Leave `grid` and `imageSize` out: the tool picks the cheapest plan that covers the target and explains it in `planNote`. The result lists the tiles, a `reference` image (first pass only), the `job`, and the cost of editing every tile.
 3. **Budget.** Estimate the whole run before spending anything:
    - pass 1 costs what `tile_image` reports;
    - allow one or two retries and an optional fix pass of 1-4 regions, each at the same per-tile price.
@@ -45,7 +45,7 @@ Say this plainly to the user. Refuse or warn for evidence, forensics, archival r
    - retry rejected tiles at most twice each;
    - inspect the preview and the 100% detail crops.
 6. **Fix pass (only for visible defects).** Run it if the preview or the details show something wrong, such as two different iris colors or garbled hands, teeth or text. Call `tile_image` with `image` set to the stitched `file.uri` and 1-4 `regions` around the defects (Choosing regions below). Edit each crop **on its own, without `referenceImages`**, using the refinement prompt, then stitch again. The server carries the original and the output size over from pass 1. At 8K this pass replaces content but adds no resolution, and `tile_image` says so.
-7. **More passes add resolution only** when pass 1 did not fill the output, that is when you see the warning "interpolated beyond about N px" (for example `longEdge` 16384, or tiles below 4K). Then use 4-8 tight regions.
+7. **More passes add resolution only** when pass 1 did not fill the output, that is when you see the warning "interpolated beyond about N px" (for example a panorama at `longEdge` 16384, or tiles below 4K). Then use 4-8 tight regions.
 8. **Deliver** (Delivering below).
 
 ## Tools
@@ -161,7 +161,7 @@ Tool errors read `[kind] message` followed by `Hint: ...`. Follow the hint.
 
 | Kind | Do |
 |------|----|
-| `invalid` from `tile_image` | Fix the argument: `grid` 1-4, `padding` 0.05-0.5, regions inside the image, `longEdge` 1024-16384 and at most 70 MP. A transparent image must be flattened onto a background first. |
+| `invalid` from `tile_image` | Fix the argument: `grid` 1-4, `padding` 0.05-0.5, regions inside the image, `longEdge` 1024-16384 and at most 70 MP. A transparent image must be flattened onto a background first, and a file much larger than its pixels need (heavy metadata) re-saved without it. |
 | `invalid` from `stitch_tiles` | Use the `job` uri from `tile_image` and tile numbers from its list. If the tiled image changed, run `tile_image` again. |
 | `safety` on a tile | Usually a close crop of a person. Retry once with a neutral prompt (drop adjectives about the body); if it repeats, leave that tile out and say so. |
 | `quota`, `unavailable` | Send fewer edits in parallel and retry once. `tile_image` and `stitch_tiles` run one at a time per server: if they report the server busy, call them one after another. |
