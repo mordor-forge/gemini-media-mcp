@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/crc32"
 	"image"
@@ -332,6 +333,27 @@ func TestStitchTilesErrors(t *testing.T) {
 	if p, err := e.store.Provenance(out.File.Name); err != nil || !slices.Contains(p.Inputs, "data:image/png") || strings.Contains(strings.Join(p.Inputs, " "), "base64") {
 		t.Fatalf("provenance inputs = %v (%v)", p.Inputs, err)
 	}
+
+	// Each tile fits the inline limit, but together they do not: they are
+	// refused before waiting for the imaging slot.
+	var all []StitchTile
+	largest := 0
+	for _, ed := range edits {
+		_, d, err := e.store.Open(ed.Image)
+		if err != nil {
+			t.Fatal(err)
+		}
+		largest = max(largest, len(d))
+		all = append(all, StitchTile{Tile: ed.Tile, Image: "data:image/png;base64," + base64.StdEncoding.EncodeToString(d)})
+	}
+	func() {
+		defer func(v int64) { maxInlineBytes = v }(maxInlineBytes)
+		maxInlineBytes = int64(largest) + 1<<10
+		_, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: all})
+		if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Message, "inline data is limited") || !strings.Contains(ae.Hint, "gemini-media://") {
+			t.Fatalf("all tiles inline: err = %v", err)
+		}
+	}()
 
 	// A job file with tampered geometry is refused before anything is allocated.
 	_, data, err := e.store.Open(res.Job)
@@ -963,6 +985,35 @@ func TestStitchTilesPreparesSeriallyOverTheBudget(t *testing.T) {
 
 // Crops stay lossless unless the crop and the reference sent with it would
 // not fit one edit request.
+// countCancel reports Canceled once Err has been called more than limit
+// times (never when limit is 0), so a test can cancel at an exact point.
+type countCancel struct {
+	context.Context
+	n, limit int
+}
+
+func (c *countCancel) Err() error {
+	c.n++
+	if c.limit > 0 && c.n > c.limit {
+		return context.Canceled
+	}
+	return nil
+}
+
+// A crop that falls back to JPEG stops too when the request is gone.
+func TestEncodeCropStopsDuringTheJPEGFallback(t *testing.T) {
+	img := scene(256, 192, 43)
+	count := &countCancel{Context: context.Background()}
+	if _, err := encodePNG(count, img); err != nil {
+		t.Fatal(err)
+	}
+	// The PNG encode completes; the JPEG fallback's first write sees the cancel.
+	_, _, _, err := encodeCrop(&countCancel{Context: context.Background(), limit: count.n}, img, maxEditPayload)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+}
+
 func TestEncodeCropFitsTheEditPayload(t *testing.T) {
 	img := scene(64, 48, 22)
 	if _, ext, mime, err := encodeCrop(context.Background(), img, 1<<20); err != nil || ext != "png" || mime != "image/png" {
@@ -1145,8 +1196,11 @@ func TestStitchReportsAnUncoveredEdge(t *testing.T) {
 	// The returned tile shows the crop shifted 5 plan px right.
 	b := res.Tiles[0].Box
 	const k, shift = 8, 5
-	r := image.Rect((b.X+shift)*k, b.Y*k, (b.X1()+shift)*k, b.Y1()*k)
-	tile, err := e.store.Save("image", "edge-edit", "png", encode(t, resized(truth, r, b.W*5, b.H*5)), "image/png", nil)
+	// Past the image's edge the model draws on; mirrored pixels stand in
+	// for that (an empty area would be transparent, which stitch_tiles
+	// refuses).
+	crop := tiles.Crop(truth, tiles.Box{X: (b.X + shift) * k, Y: b.Y * k, W: b.W * k, H: b.H * k})
+	tile, err := e.store.Save("image", "edge-edit", "png", encode(t, resized(crop, crop.Rect, b.W*5, b.H*5)), "image/png", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1235,6 +1289,42 @@ func TestTileImageRefusesTransparentImages(t *testing.T) {
 	}
 	_, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 1})
 	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Message, "transparent") || !strings.Contains(ae.Hint, "Flatten") {
+		t.Fatalf("err = %v", err)
+	}
+	// Passed inline, the image is named by its type, not echoed back.
+	uri := "data:image/png;base64," + base64.StdEncoding.EncodeToString(encode(t, img))
+	_, err = e.svc.TileImage(context.Background(), TileImageRequest{Image: uri, Grid: 1})
+	if ae, ok := apperr.As(err); !ok || !strings.Contains(ae.Message, "data:image/png has transparent") || strings.Contains(ae.Message, "base64") {
+		t.Fatalf("inline: err = %v", err)
+	}
+}
+
+// An edited tile with transparent areas is refused: painted over the opaque
+// image, it would leave holes.
+func TestStitchTilesRefusesTransparentTiles(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(512, 384, 31)
+	src := filepath.Join(t.TempDir(), "alpha.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 1, LongEdge: 1024})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := res.Tiles[0].Box
+	edit := resized(truth, image.Rect(b.X*4, b.Y*4, b.X1()*4, b.Y1()*4), b.W*5, b.H*5)
+	faded := image.NewNRGBA(edit.Bounds())
+	for i := 0; i < len(edit.Pix); i += 4 {
+		copy(faded.Pix[i:i+3], edit.Pix[i:i+3])
+		faded.Pix[i+3] = 128
+	}
+	a, err := e.store.Save("image", "alpha-edit", "png", encode(t, faded), "image/png", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: []StitchTile{{Tile: 1, Image: a.URI}}})
+	if ae, ok := apperr.As(err); !ok || ae.Kind != apperr.Invalid || !strings.Contains(ae.Message, "tile 1") || !strings.Contains(ae.Message, "transparent") || !strings.Contains(ae.Hint, "flatten") {
 		t.Fatalf("err = %v", err)
 	}
 }

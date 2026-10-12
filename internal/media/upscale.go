@@ -396,7 +396,7 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	// before any tile is edited.
 	if limit := tiledImageBytes(pw, ph); int64(len(in.Data)) > limit {
 		return nil, &apperr.Error{Kind: apperr.Invalid,
-			Message: fmt.Sprintf("%s is %.1f MB, more than a %dx%d image needs (%d MB at most): the rest is metadata or other data, which stitch_tiles refuses", req.Image, float64(len(in.Data))/(1<<20), pw, ph, limit>>20),
+			Message: fmt.Sprintf("%s is %.1f MB, more than a %dx%d image needs (%d MB at most): the rest is metadata or other data, which stitch_tiles refuses", provenanceRef(req.Image), float64(len(in.Data))/(1<<20), pw, ph, limit>>20),
 			Hint:    "Re-save the image without its metadata (for example as a plain PNG), then call tile_image with that file."}
 	}
 	if refSrc == nil {
@@ -753,6 +753,19 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 	if len(edited) == 0 {
 		return nil, apperr.Invalidf("no tiles given: pass the edit_image result of each tile")
 	}
+	// Inline tiles stay in the request while it waits for the imaging slot,
+	// so they are bounded together, not only one by one.
+	var inline int64
+	for _, ref := range edited {
+		if strings.HasPrefix(ref, "data:") {
+			inline += int64(len(ref)) * 3 / 4 // decoded size of the base64
+		}
+	}
+	if inline > maxInlineBytes {
+		return nil, &apperr.Error{Kind: apperr.Invalid,
+			Message: fmt.Sprintf("the tiles passed inline as data: add up to about %d MB; inline data is limited to %d MB per call", inline>>20, maxInlineBytes>>20),
+			Hint:    "Pass the edit_image results by their gemini-media:// URI or file path instead."}
+	}
 
 	release, err := s.admitImaging(ctx, "stitch_tiles", "an 8K stitch takes 10-30 s")
 	if err != nil {
@@ -907,7 +920,7 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 			tile, sum, err := s.loadTile(src.ref, src.tile)
 			if err == nil && sum != src.sum {
 				// Its alignment and color match belong to the old pixels.
-				err = &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("tile %d (%s) changed while stitch_tiles was running", src.tile, src.ref),
+				err = &apperr.Error{Kind: apperr.Invalid, Message: fmt.Sprintf("tile %d (%s) changed while stitch_tiles was running", src.tile, provenanceRef(src.ref)),
 					Hint: "Call stitch_tiles again once nothing is writing to the tile files."}
 			}
 			if err != nil {
@@ -1350,6 +1363,12 @@ func (s *Service) loadTile(ref string, index int) (image.Image, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	// Painted over the opaque image, transparent areas would show as holes.
+	if !opaque(img) {
+		return nil, "", &apperr.Error{Kind: apperr.Invalid,
+			Message: fmt.Sprintf("%s (%s) has transparent areas, which would leave holes in the stitched image", what, provenanceRef(ref)),
+			Hint:    "Pass the edit_image result as it was saved, or flatten the tile onto an opaque background, then call stitch_tiles again."}
+	}
 	return img, sha(in.Data), nil
 }
 
@@ -1425,12 +1444,17 @@ func decodeRaw(in *store.Input, what string, limit int) (image.Image, string, er
 // opaque tiles, so the upscale would drop the transparency, and the
 // reference and crops would show those areas as a dark matte.
 func requireOpaque(img image.Image, ref string) error {
-	if o, ok := img.(interface{ Opaque() bool }); ok && !o.Opaque() {
+	if !opaque(img) {
 		return &apperr.Error{Kind: apperr.Invalid,
-			Message: fmt.Sprintf("%s has transparent areas, which a tiled upscale cannot keep: the model returns opaque images", ref),
+			Message: fmt.Sprintf("%s has transparent areas, which a tiled upscale cannot keep: the model returns opaque images", provenanceRef(ref)),
 			Hint:    "Flatten it onto the background you want (for example white) and run tile_image again."}
 	}
 	return nil
+}
+
+func opaque(img image.Image) bool {
+	o, ok := img.(interface{ Opaque() bool })
+	return !ok || o.Opaque()
 }
 
 // decodedBytesPerPixel is how many bytes per pixel the decoder holds for an
@@ -1529,7 +1553,7 @@ func encodeCrop(ctx context.Context, img image.Image, others int) ([]byte, strin
 		return data, "png", "image/png", nil
 	}
 	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 95}); err != nil {
+	if err := jpeg.Encode(ctxWriter{ctx, &buf}, img, &jpeg.Options{Quality: 95}); err != nil {
 		return nil, "", "", fmt.Errorf("encoding a crop: %w", err)
 	}
 	return buf.Bytes(), "jpg", "image/jpeg", nil
