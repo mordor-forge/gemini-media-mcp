@@ -927,6 +927,30 @@ func TestTileJobAcceptsTheRoundedPlannedOutput(t *testing.T) {
 
 // A refinement grid with a tile left out keeps the previous image there, so
 // its detail figure is the lower of the two rather than none.
+// Tiles rendered finer than the output is large report the output's own
+// long edge: a later pass reads the figure back from the provenance.
+func TestNativeDetailIsCappedAtTheOutput(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	truth := scene(1024, 768, 29)
+	src := filepath.Join(t.TempDir(), "cap.png")
+	if err := os.WriteFile(src, encode(t, resized(truth, truth.Bounds(), 256, 192)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: src, Grid: 2, ImageSize: "4K", LongEdge: 1024})
+	if err != nil || res.NativeLongEdge != 1024 {
+		t.Fatalf("tile_image native = %d, want 1024 (the output's long edge), %v", res.NativeLongEdge, err)
+	}
+	// The fake tiles come back at 5x the crop, more than the 4x output.
+	out, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: fakeEdits(t, e, truth, 4, res)})
+	if err != nil || out.NativeLongEdge != 1024 {
+		t.Fatalf("stitch_tiles native = %d, want 1024, %v", out.NativeLongEdge, err)
+	}
+	p, err := e.store.Provenance(out.File.Name)
+	if err != nil || intParam(p.Params, "nativeLongEdge") != 1024 {
+		t.Fatalf("provenance = %+v, %v", p, err)
+	}
+}
+
 func TestPartialRefinementGridKeepsTheDetailFigure(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	truth := scene(1024, 768, 23)

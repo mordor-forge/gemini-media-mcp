@@ -569,7 +569,8 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		res.Grid = grid
 	}
 	if mode == "grid" && !math.IsInf(native, 1) {
-		res.NativeLongEdge = int(math.Round(native * float64(max(pw, ph))))
+		// The output cannot carry more detail than it has pixels.
+		res.NativeLongEdge = min(int(math.Round(native*float64(max(pw, ph)))), max(outW, outH))
 		if res.NativeLongEdge < max(outW, outH) {
 			res.Warnings = append(res.Warnings, fmt.Sprintf("the tiles carry about %d px of model detail along the long edge; the %d px output is interpolated beyond that (use a finer grid or a smaller longEdge)", res.NativeLongEdge, max(outW, outH)))
 		}
@@ -966,6 +967,9 @@ func (s *Service) StitchTiles(ctx context.Context, req StitchTilesRequest) (*Sti
 		// treating it as saturated.
 		res.NativeLongEdge = 0
 	}
+	// The output cannot carry more detail than it has pixels; later passes
+	// read this figure back from the provenance.
+	res.NativeLongEdge = min(res.NativeLongEdge, max(job.OutWidth, job.OutHeight))
 	inputs := []string{job.Image}
 	for _, src := range sources {
 		inputs = append(inputs, provenanceRef(src.ref))
