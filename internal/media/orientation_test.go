@@ -2,6 +2,7 @@ package media
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"image"
 	"image/color"
@@ -87,6 +88,71 @@ func TestDecodeImageAppliesEXIFOrientation(t *testing.T) {
 	for _, b := range [][]byte{nil, {0xFF, 0xD8}, {0xFF, 0xD8, 0xFF, 0xE1, 0, 200}, []byte("not a jpeg")} {
 		if got := jpegOrientation(b); got != 1 {
 			t.Errorf("jpegOrientation(%x) = %d", b, got)
+		}
+	}
+}
+
+// webpOriented is a lossless 64x32 WebP (left half red, right half blue)
+// whose EXIF chunk sets orientation 6, as Pillow writes it: VP8X, VP8L,
+// then EXIF holding a bare TIFF block.
+const webpOriented = "UklGRl4AAABXRUJQVlA4WAoAAAAIAAAAPwAAHwAAVlA4TB0AAAAvP8AHAA8wFKdAPg73/EcLxILJ/KVD6I3of1TBNwBFWElGGgAAAE1NACoAAAAIAAEBEgADAAAAAQAGAAAAAAAA"
+
+// withEXIF replaces a WebP's trailing EXIF chunk with exif.
+func withEXIF(t *testing.T, webp, exif []byte) []byte {
+	t.Helper()
+	i := bytes.LastIndex(webp, []byte("EXIF"))
+	if i < 0 {
+		t.Fatal("no EXIF chunk")
+	}
+	out := append([]byte{}, webp[:i]...)
+	out = append(out, "EXIF"...)
+	out = binary.LittleEndian.AppendUint32(out, uint32(len(exif)))
+	out = append(out, exif...)
+	if len(exif)%2 == 1 {
+		out = append(out, 0)
+	}
+	binary.LittleEndian.PutUint32(out[4:], uint32(len(out)-8))
+	return out
+}
+
+func TestDecodeImageAppliesWebPOrientation(t *testing.T) {
+	base, err := base64.StdEncoding.DecodeString(webpOriented)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tiff := base[bytes.LastIndex(base, []byte("EXIF"))+8:]
+	turned := append([]byte{}, tiff...)
+	turned[19] = 3 // the first entry's value (a big-endian short at 18): 6 -> 3
+	cases := []struct {
+		name   string
+		data   []byte
+		o      int
+		w, h   int
+		redAt  image.Point
+		blueAt image.Point
+	}{
+		{"bare TIFF", base, 6, 32, 64, image.Pt(16, 5), image.Pt(16, 58)},
+		{"Exif prefix", withEXIF(t, base, append([]byte("Exif\x00\x00"), turned...)), 3, 64, 32, image.Pt(58, 16), image.Pt(5, 16)},
+	}
+	for _, c := range cases {
+		if got := webpOrientation(c.data); got != c.o {
+			t.Fatalf("%s: orientation %d, want %d", c.name, got, c.o)
+		}
+		img, err := decodeImage(&store.Input{Data: c.data, MIMEType: "image/webp", Ref: "x.webp"}, "image", maxPlanPixels)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if b := img.Bounds(); b.Dx() != c.w || b.Dy() != c.h {
+			t.Fatalf("%s: %v, want %dx%d", c.name, b, c.w, c.h)
+		}
+		if !isRed(img.At(c.redAt.X, c.redAt.Y)) || isRed(img.At(c.blueAt.X, c.blueAt.Y)) {
+			t.Errorf("%s: pixels not where expected", c.name)
+		}
+	}
+	// No or broken RIFF data leaves the image alone.
+	for _, b := range [][]byte{nil, []byte("RIFF\x00\x00\x00\x00WEBP"), []byte("RIFF\x04\x00\x00\x00WEBPEXIF\xff\xff\xff\x7f"), base[:40]} {
+		if got := webpOrientation(b); got != 1 {
+			t.Errorf("webpOrientation(%q) = %d", b, got)
 		}
 	}
 }

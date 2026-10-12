@@ -289,8 +289,14 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 		m, location, modelWarnings, sizes, size, ratios = mm, loc, ws, sz, want, rt
 		return nil
 	}
-	if err := pick(req.Model); err != nil {
-		return nil, err
+	// With model omitted, a refinement pass uses the previous pass's model,
+	// known only once the stitched image's provenance is verified, so a
+	// default that cannot be tiled is refused after that check.
+	defaultErr := pick(req.Model)
+	if defaultErr != nil {
+		if _, ok := s.outputName(req.Image); !ok || strings.TrimSpace(req.Model) != "" {
+			return nil, defaultErr
+		}
 	}
 	var warnings []string
 	// Decoding and cutting a large image takes seconds: stop between the
@@ -343,9 +349,14 @@ func (s *Service) TileImage(ctx context.Context, req TileImageRequest) (*TileIma
 	// A refinement pass keeps the model the stitched image was made with,
 	// unless the call names another; only a verified stitch is trusted.
 	if strings.TrimSpace(req.Model) == "" && prevModel != "" {
-		if err := pick(prevModel); err != nil {
+		if err := pick(prevModel); err == nil {
+			defaultErr = nil
+		} else if defaultErr == nil {
 			warnings = append(warnings, fmt.Sprintf("the previous pass's model %s cannot be used (%v), so this pass uses %s", prevModel, err, m.ID))
 		}
+	}
+	if defaultErr != nil {
+		return nil, defaultErr
 	}
 	warnings = append(slices.Clone(modelWarnings), warnings...)
 	// Each tile is edited with its crop plus, on the first pass only, the
@@ -1391,10 +1402,7 @@ func decodeImage(in *store.Input, what string, limit int) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	if format == "jpeg" {
-		img = orient(img, jpegOrientation(in.Data))
-	}
-	return img, nil
+	return orient(img, exifOrientation(format, in.Data)), nil
 }
 
 // decodeShrunk is decodeImage for an image only needed small: it is
@@ -1410,10 +1418,7 @@ func decodeShrunk(in *store.Input, what string, limit, maxPx int) (image.Image, 
 	if f := max(b.Dx(), b.Dy()) / maxPx; f >= 2 {
 		img = shrink(img, f)
 	}
-	if format == "jpeg" {
-		img = orient(img, jpegOrientation(in.Data))
-	}
-	return img, b.Dx() * b.Dy(), nil
+	return orient(img, exifOrientation(format, in.Data)), b.Dx() * b.Dy(), nil
 }
 
 func decodeRaw(in *store.Input, what string, limit int) (image.Image, string, error) {

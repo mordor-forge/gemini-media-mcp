@@ -1,6 +1,7 @@
 package media
 
 import (
+	"bytes"
 	"encoding/binary"
 	"image"
 
@@ -37,6 +38,38 @@ func jpegOrientation(b []byte) int {
 			return tiffOrientation(seg[6:])
 		}
 		i += 2 + n
+	}
+	return 1
+}
+
+// webpOrientation returns the EXIF orientation (1-8) stored in a WebP's
+// EXIF chunk, or 1 when there is none; the WebP decoder ignores it too.
+func webpOrientation(b []byte) int {
+	if len(b) < 12 || string(b[:4]) != "RIFF" || string(b[8:12]) != "WEBP" {
+		return 1
+	}
+	for i := 12; i+8 <= len(b); {
+		n := int(binary.LittleEndian.Uint32(b[i+4:]))
+		if n > len(b)-i-8 {
+			return 1
+		}
+		if string(b[i:i+4]) == "EXIF" {
+			// Some writers keep the JPEG APP1 prefix.
+			return tiffOrientation(bytes.TrimPrefix(b[i+8:i+8+n], []byte("Exif\x00\x00")))
+		}
+		i += 8 + n + n&1 // chunks are padded to an even length
+	}
+	return 1
+}
+
+// exifOrientation returns the EXIF orientation of an image decoded as
+// format, or 1 for formats that carry none.
+func exifOrientation(format string, b []byte) int {
+	switch format {
+	case "jpeg":
+		return jpegOrientation(b)
+	case "webp":
+		return webpOrientation(b)
 	}
 	return 1
 }

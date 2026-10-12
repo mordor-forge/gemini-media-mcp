@@ -48,13 +48,16 @@ func ParseRatios(names []string) []Ratio {
 		}
 		fw, err1 := strconv.ParseFloat(strings.TrimSpace(w), 64)
 		fh, err2 := strconv.ParseFloat(strings.TrimSpace(h), 64)
-		if err1 != nil || err2 != nil || fw <= 0 || fh <= 0 {
+		if err1 != nil || err2 != nil || !finitePositive(fw) || !finitePositive(fh) || !finitePositive(fw/fh) {
 			continue
 		}
 		out = append(out, Ratio{Name: n, Value: fw / fh})
 	}
 	return out
 }
+
+// finitePositive is false for zero, negatives, NaN and infinity.
+func finitePositive(f float64) bool { return f > 0 && !math.IsInf(f, 1) }
 
 // Tile is one planned crop.
 type Tile struct {

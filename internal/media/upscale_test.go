@@ -1330,6 +1330,38 @@ func TestStitchTilesRefusesTransparentTiles(t *testing.T) {
 }
 
 // A refinement pass without a model keeps the one pass 1 used.
+// With a default model that cannot be tiled, a refinement pass that omits
+// model still uses the previous pass's model; a first pass is refused.
+func TestRefinementIgnoresAnUntileableDefault(t *testing.T) {
+	e := newEnv(t, nil, spend.Budget{})
+	src, err := catalog.NewSource("", map[string]string{catalog.Image: "nb2-lite"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.svc.catalog = src
+	truth := scene(512, 384, 37)
+	img := filepath.Join(t.TempDir(), "lite.png")
+	if err := os.WriteFile(img, encode(t, resized(truth, truth.Bounds(), 128, 96)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: img, Grid: 2, LongEdge: 1024}); apperr.KindOf(err) != apperr.Invalid {
+		t.Fatalf("first pass on the default: err = %v", err)
+	}
+	res, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: img, Grid: 2, LongEdge: 1024, Model: "pro"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := e.svc.StitchTiles(context.Background(), StitchTilesRequest{Job: res.Job, Tiles: fakeEdits(t, e, truth, 4, res)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	region := []TileRegion{{X: 0.3, Y: 0.3, Width: 0.2, Height: 0.25}}
+	res2, err := e.svc.TileImage(context.Background(), TileImageRequest{Image: out.File.URI, Regions: region})
+	if err != nil || res2.Pass != 2 || res2.Model != "gemini-3-pro-image" {
+		t.Fatalf("pass 2 without a model = %+v %v", res2, err)
+	}
+}
+
 func TestRefinementPassKeepsTheModel(t *testing.T) {
 	e := newEnv(t, nil, spend.Budget{})
 	truth := scene(512, 384, 31)

@@ -108,7 +108,7 @@ func TestRegions(t *testing.T) {
 }
 
 func TestParseRatiosSkipsJunk(t *testing.T) {
-	rs := ParseRatios([]string{"16:9", "x", "0:1", "3:2"})
+	rs := ParseRatios([]string{"16:9", "x", "0:1", "NaN:1", "1:NaN", "Inf:1", "1:+Inf", "1e308:1e-308", "1e-308:1e308", "-1:2", "3:2"})
 	if len(rs) != 2 || rs[0].Name != "16:9" || math.Abs(rs[1].Value-1.5) > 1e-9 {
 		t.Fatalf("ratios = %+v", rs)
 	}
