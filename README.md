@@ -6,6 +6,10 @@
 
 An MCP server for Google's generative media models: **images** (Nano Banana 2.1 / Pro), **video** (Veo 3.1 and Gemini Omni Flash), **speech** (Gemini 3.8 TTS) and **music** (Lyria 3.5). It ships as a single Go binary, speaks **stdio and Streamable HTTP** (MCP 2026-07-28), works with the **Gemini API or Vertex AI**, and comes with **agent skills** that teach agents the whole workflow, plus plugin packaging for Claude Code, Codex, Gemini CLI, VS Code/Copilot, Cursor and more.
 
+https://github.com/user-attachments/assets/f46970b3-82a6-4364-a40a-922103dbbc70
+
+*An agent using the server one tool at a time: images and edits, a video clip and its claymation restyle, a 768 px portrait tiled up to 8K, and an extended shot. The footage, the narration and the music all came from the server.*
+
 - **Current models, updated without a release.** A built-in catalog records IDs, aliases, lifecycle, parameters and prices. Retired models redirect to their replacement, and new model IDs work before the catalog knows them. You can override or extend the catalog with a hot-reloaded YAML file.
 - **Cost-aware.** Every result reports its estimated cost, and `estimate_cost` compares options before you spend. Spend is recorded in a ledger, capped by session, daily and monthly budgets, and calls above a threshold need explicit approval.
 - **Agent-friendly.** Each tool matches a workflow, and errors come back as `[kind] message + Hint`. Image results include inline previews, and outputs can be chained by URI. Video runs as async jobs with long-polling and progress notifications.
