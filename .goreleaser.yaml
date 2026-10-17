@@ -125,7 +125,7 @@ release:
   prerelease: auto
   name_template: "v{{ .Version }}"
   footer: |
-    **Install:** Claude Code `claude plugin marketplace add mordor-forge/gemini-media-mcp && claude plugin install gemini-media@mordor-forge` ·
+    **Install:** Claude Code `claude plugin marketplace add mordor-forge/claude-plugins && claude plugin install gemini-media@mordor-forge` ·
     Gemini CLI `gemini extensions install https://github.com/mordor-forge/gemini-media-mcp` ·
     any MCP client: put `gemini-media-mcp` from the archive for your platform on your PATH ·
     Claude Desktop: download `gemini-media-mcp-{{ .Version }}.mcpb` below.
