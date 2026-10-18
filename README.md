@@ -36,11 +36,12 @@ https://github.com/user-attachments/assets/f46970b3-82a6-4364-a40a-922103dbbc70
    The Gemini CLI extension, the Claude Desktop bundle and the Docker image include the binary, so they skip this step.
 3. **Add the server to your agent.** Every config below runs `gemini-media-mcp` from your PATH.
 
-   **Claude Code** (plugin: server plus skills):
+   **Claude Code** (plugin: server plus skills), from the shared [mordor-forge marketplace](https://github.com/mordor-forge/claude-plugins):
    ```
-   /plugin marketplace add mordor-forge/gemini-media-mcp
+   /plugin marketplace add mordor-forge/claude-plugins
    /plugin install gemini-media@mordor-forge
    ```
+   If you added `mordor-forge` from this repository before, switch with `/plugin marketplace remove mordor-forge` first. Your installed plugin keeps working either way.
    or just the server: `claude mcp add gemini-media -e GEMINI_API_KEY=... -- gemini-media-mcp`
 
    **Codex** (`~/.codex/config.toml`):

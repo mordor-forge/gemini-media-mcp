@@ -62,12 +62,18 @@ This writes `config.yaml` with mode 0600 to `~/.config/gemini-media-mcp/`
 
 ## Claude Code
 
-Plugin (MCP server + skills):
+Plugin (MCP server + skills), from the shared
+[mordor-forge marketplace](https://github.com/mordor-forge/claude-plugins),
+which also lists the trident (Tripo 3D) plugin:
 
 ```sh
-claude plugin marketplace add mordor-forge/gemini-media-mcp
+claude plugin marketplace add mordor-forge/claude-plugins
 claude plugin install gemini-media@mordor-forge
 ```
+
+Already added `mordor-forge` from this repository? Run
+`claude plugin marketplace remove mordor-forge` first. The repository's own
+`.claude-plugin/marketplace.json` stays for Codex, VS Code and `npx skills`.
 
 Installing from inside a session (`/plugin install gemini-media@mordor-forge`)
 opens a dialog for the API key (kept in your keychain), output directory and
